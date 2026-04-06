@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenet - Interactive Scenario Walkthrough</title>
+<style>
+:root {
+  --bg: #0a0e17; --surface: #131a2b; --surface2: #1a2340; --surface3: #0f1525;
+  --border: #253354; --text: #c8d6e5; --muted: #6b7fa3;
+  --blue: #4fa3f7; --green: #3ddc84; --orange: #ffad33; --purple: #b388ff;
+  --red: #ff6b6b; --cyan: #56d4e0; --pink: #ff79c6; --yellow: #f1fa8c;
+  --glow-blue: rgba(79,163,247,0.15); --glow-green: rgba(61,220,132,0.15);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden}
+
+/* Top bar */
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 32px;display:flex;align-items:center;gap:20px;position:sticky;top:0;z-index:100;backdrop-filter:blur(12px)}
+.topbar h1{font-size:16px;color:var(--blue)}
+.topbar h1 span{color:var(--muted);font-weight:400}
+.scenario-tabs{display:flex;gap:4px;margin-left:auto}
+.scenario-tab{padding:8px 18px;border-radius:6px;font-size:13px;cursor:pointer;color:var(--muted);transition:all .2s;border:1px solid transparent}
+.scenario-tab:hover{color:var(--text);background:var(--surface2)}
+.scenario-tab.active{color:var(--blue);background:var(--glow-blue);border-color:rgba(79,163,247,0.3)}
+
+/* Layout */
+.layout{display:grid;grid-template-columns:1fr 340px;min-height:calc(100vh - 54px)}
+.main-panel{padding:32px;overflow-y:auto}
+.side-panel{background:var(--surface);border-left:1px solid var(--border);padding:20px;overflow-y:auto;max-height:calc(100vh - 54px);position:sticky;top:54px}
+
+/* Timeline */
+.timeline{position:relative;padding-left:40px}
+.timeline::before{content:'';position:absolute;left:15px;top:0;bottom:0;width:2px;background:var(--border)}
+.step{position:relative;margin-bottom:8px;opacity:0.35;transition:all .4s;cursor:pointer}
+.step.active{opacity:1}
+.step.completed{opacity:0.7}
+.step .dot{position:absolute;left:-33px;top:14px;width:12px;height:12px;border-radius:50%;border:2px solid var(--border);background:var(--bg);transition:all .3s;z-index:1}
+.step.active .dot{border-color:var(--blue);background:var(--blue);box-shadow:0 0 12px rgba(79,163,247,0.5)}
+.step.completed .dot{border-color:var(--green);background:var(--green)}
+.step-content{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;transition:all .3s}
+.step.active .step-content{border-color:rgba(79,163,247,0.4);box-shadow:0 0 20px rgba(79,163,247,0.08)}
+.step-phase{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;font-weight:600}
+.step-title{font-size:15px;font-weight:600;margin-bottom:4px}
+.step-desc{font-size:13px;color:var(--muted);line-height:1.5}
+
+/* Phase colors */
+.phase-ideation .step-phase{color:var(--cyan)} .phase-ideation .dot{border-color:var(--cyan)}
+.phase-ideation.active .dot{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 12px rgba(86,212,224,0.5)}
+.phase-interview .step-phase{color:var(--purple)} .phase-interview .dot{border-color:var(--purple)}
+.phase-interview.active .dot{background:var(--purple);border-color:var(--purple);box-shadow:0 0 12px rgba(179,136,255,0.5)}
+.phase-spec .step-phase{color:var(--orange)} .phase-spec .dot{border-color:var(--orange)}
+.phase-spec.active .dot{background:var(--orange);border-color:var(--orange);box-shadow:0 0 12px rgba(255,173,51,0.5)}
+.phase-decomp .step-phase{color:var(--pink)} .phase-decomp .dot{border-color:var(--pink)}
+.phase-decomp.active .dot{background:var(--pink);border-color:var(--pink);box-shadow:0 0 12px rgba(255,121,198,0.5)}
+.phase-exec .step-phase{color:var(--green)} .phase-exec .dot{border-color:var(--green)}
+.phase-exec.active .dot{background:var(--green);border-color:var(--green);box-shadow:0 0 12px rgba(61,220,132,0.5)}
+.phase-eval .step-phase{color:var(--blue)} .phase-eval .dot{border-color:var(--blue)}
+.phase-eval.active .dot{background:var(--blue);border-color:var(--blue);box-shadow:0 0 12px rgba(79,163,247,0.5)}
+.phase-steer .step-phase{color:var(--yellow)} .phase-steer .dot{border-color:var(--yellow)}
+.phase-steer.active .dot{background:var(--yellow);border-color:var(--yellow);box-shadow:0 0 12px rgba(241,250,140,0.5)}
+.phase-failure .step-phase{color:var(--red)} .phase-failure .dot{border-color:var(--red)}
+.phase-failure.active .dot{background:var(--red);border-color:var(--red);box-shadow:0 0 12px rgba(255,107,107,0.5)}
+
+/* Detail panel */
+.detail-section{margin-bottom:20px}
+.detail-section h3{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:10px}
+.detail-section h2{font-size:18px;margin-bottom:12px;color:var(--blue)}
+
+/* Artifact cards */
+.artifact{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;font-size:13px;transition:all .4s}
+.artifact.new{border-color:rgba(61,220,132,0.4);animation:fadeSlideIn .5s ease}
+.artifact.modified{border-color:rgba(255,173,51,0.4);animation:fadeSlideIn .5s ease}
+.artifact .a-label{font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.artifact.new .a-label{color:var(--green)}
+.artifact.modified .a-label{color:var(--orange)}
+.artifact.existing .a-label{color:var(--muted)}
+.artifact .a-name{font-weight:600;font-size:13px;margin-bottom:2px}
+.artifact .a-path{color:var(--muted);font-size:11px;font-family:monospace}
+
+/* Chat simulation */
+.chat{background:var(--surface3);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:12px}
+.chat-header{padding:10px 14px;border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
+.chat-body{padding:14px;max-height:320px;overflow-y:auto}
+.msg{margin-bottom:12px;animation:fadeSlideIn .4s ease}
+.msg-user{display:flex;gap:10px;justify-content:flex-end}
+.msg-agent{display:flex;gap:10px}
+.msg-bubble{max-width:90%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.6}
+.msg-user .msg-bubble{background:rgba(79,163,247,0.15);border:1px solid rgba(79,163,247,0.25);border-bottom-right-radius:4px}
+.msg-agent .msg-bubble{background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:4px}
+.msg-label{font-size:10px;color:var(--muted);margin-bottom:3px}
+.msg-agent .msg-label{color:var(--purple)}
+.msg-user .msg-label{color:var(--blue);text-align:right}
+
+/* Visual flow */
+.visual-flow{background:var(--surface3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px}
+.vf-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px}
+.vf-nodes{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.vf-node{padding:6px 12px;border-radius:6px;font-size:12px;font-weight:500;border:1px solid var(--border);background:var(--surface2);transition:all .3s}
+.vf-node.active{border-color:var(--blue);color:var(--blue);box-shadow:0 0 8px rgba(79,163,247,0.2)}
+.vf-node.done{border-color:var(--green);color:var(--green);opacity:0.7}
+.vf-node.pending{opacity:0.3}
+.vf-arrow{color:var(--muted);font-size:14px}
+
+/* Progress meter */
+.meter{margin-bottom:16px}
+.meter-label{display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px}
+.meter-bar{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden}
+.meter-fill{height:100%;border-radius:3px;transition:width .6s ease}
+.meter-fill.blue{background:linear-gradient(90deg,var(--blue),var(--cyan))}
+.meter-fill.green{background:linear-gradient(90deg,var(--green),var(--cyan))}
+.meter-fill.orange{background:linear-gradient(90deg,var(--orange),var(--yellow))}
+.meter-fill.purple{background:linear-gradient(90deg,var(--purple),var(--pink))}
+
+/* Code preview */
+.code-preview{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.6;overflow-x:auto;margin:8px 0;white-space:pre}
+
+/* Controls */
+.controls{display:flex;gap:8px;margin-bottom:24px;align-items:center}
+.btn{padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text);transition:all .2s}
+.btn:hover{background:var(--surface2)}
+.btn-primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.btn-primary:hover{background:#3a8de0}
+.btn:disabled{opacity:0.3;cursor:not-allowed}
+.step-counter{color:var(--muted);font-size:13px;margin-left:auto}
+.speed-control{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.speed-control input{width:80px;accent-color:var(--blue)}
+
+/* DAG visualization */
+.dag{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.dag-row{display:flex;gap:6px;align-items:center}
+.dag-node{padding:5px 10px;border-radius:5px;font-size:11px;font-weight:600;border:1px solid var(--border);background:var(--surface2);min-width:80px;text-align:center;transition:all .3s}
+.dag-node.current{border-color:var(--blue);color:var(--blue);box-shadow:0 0 8px rgba(79,163,247,0.2)}
+.dag-node.done{border-color:var(--green);color:var(--green);opacity:0.8}
+.dag-node.blocked{border-color:var(--red);color:var(--red);opacity:0.6}
+.dag-node.pending{opacity:0.3}
+.dag-edge{color:var(--muted);font-size:11px}
+
+/* Confidence badge */
+.conf{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600}
+.conf-tested{background:rgba(61,220,132,0.15);color:var(--green)}
+.conf-impl{background:rgba(255,173,51,0.15);color:var(--orange)}
+.conf-decision{background:rgba(107,127,163,0.15);color:var(--muted)}
+
+/* Animations */
+@keyframes fadeSlideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.pulsing{animation:pulse 1.5s infinite}
+
+/* Auto-play indicator */
+.auto-indicator{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--green)}
+.auto-indicator .dot-anim{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1s infinite}
+
+@media(max-width:900px){.layout{grid-template-columns:1fr}.side-panel{display:none}}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Tenet <span>Scenario Walkthrough</span></h1>
+  <div class="scenario-tabs">
+    <div class="scenario-tab active" data-scenario="greenfield">Greenfield Project</div>
+    <div class="scenario-tab" data-scenario="brownfield">Brownfield + OAuth</div>
+    <div class="scenario-tab" data-scenario="midrun">Mid-Run Steer</div>
+    <div class="scenario-tab" data-scenario="failure">Failure & Recovery</div>
+    <div class="scenario-tab" data-scenario="dryrun">Dry Run: URL Shortener</div>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="main-panel" id="mainPanel">
+    <div class="controls">
+      <button class="btn" id="prevBtn" disabled>&larr; Prev</button>
+      <button class="btn btn-primary" id="nextBtn">Next &rarr;</button>
+      <button class="btn" id="autoBtn">Auto-play</button>
+      <div class="speed-control">
+        <span>Speed</span>
+        <input type="range" min="1" max="5" value="3" id="speedSlider">
+      </div>
+      <span class="step-counter" id="stepCounter">Step 1 / 1</span>
+    </div>
+    <div class="timeline" id="timeline"></div>
+  </div>
+  <div class="side-panel" id="sidePanel">
+    <div id="detailContent">
+      <div class="detail-section">
+        <h2>Welcome</h2>
+        <p style="color:var(--muted);font-size:14px;line-height:1.7">Click <strong>Next</strong> or use <strong>Auto-play</strong> to walk through a concrete scenario showing how Tenet works step by step.</p>
+        <p style="color:var(--muted);font-size:14px;line-height:1.7;margin-top:12px">Each step shows what happens, which artifacts are created or modified, and what the agent/user interaction looks like.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SCENARIOS = {
+  greenfield: {
+    title: "Greenfield: Build a Podcast Dashboard",
+    steps: [
+      {
+        phase: "ideation", title: "User Has an Idea",
+        desc: "A vague idea arrives: \"Build me a podcast dashboard\"",
+        detail: {
+          title: "Ideation Phase",
+          chat: [
+            {role:"user", text:"I want to build a podcast dashboard app. Something where I can manage and listen to my podcasts."},
+          ],
+          note: "The system detects this is a <strong>greenfield</strong> project (no existing codebase). Proceeds directly to Interview phase.",
+          artifacts: [{name:"(none yet)", path:"Project not initialized", status:"existing"}],
+          flow: [{label:"Ideation",state:"active"},{label:"Interview",state:"pending"},{label:"Spec",state:"pending"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "interview", title: "Interview Begins - Goal Clarity",
+        desc: "Socratic questioning to extract hidden assumptions",
+        detail: {
+          title: "Interview: Goal Clarity",
+          chat: [
+            {role:"agent", text:"Let's crystallize your idea. When you say \"podcast dashboard\" — who is using this? A single person managing their own subscriptions, or a team managing a podcast they produce?"},
+            {role:"user", text:"Just for me. A personal listener app."},
+            {role:"agent", text:"What's the ONE thing this must do well? Discovery, playback, or organization?"},
+            {role:"user", text:"Playback with good speed controls and resume capability. I listen during commutes."},
+          ],
+          note: "The interviewer focuses on <strong>Goal Clarity</strong> (weight 0.4). Currently at 0.5 — qualitative description exists but no concrete acceptance criteria yet.",
+          meters: [{label:"Goal Clarity", value:50, max:100, color:"purple"},{label:"Constraints", value:0, max:100, color:"orange"},{label:"Success Criteria", value:0, max:100, color:"blue"}],
+          ambiguity: {clarity: 0.20, gate: 0.80, pass: false},
+          artifacts: [{name:"interview/current.md", path:".tenet/interview/current.md", status:"new"}],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"active"},{label:"Spec",state:"pending"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "interview", title: "Interview - Building Scenarios",
+        desc: "Concrete user scenarios replace vague requirements",
+        detail: {
+          title: "Interview: Scenario Generation",
+          chat: [
+            {role:"agent", text:"Let me draft a concrete scenario. Tell me if this matches your vision:\n\n<em>\"Alice opens the app on her morning commute. She sees a 'Continue Listening' section with her half-finished episode at the top. She taps it — playback resumes within 1 second at 1.5x speed (her saved preference). She can adjust speed from the player bar without leaving the screen.\"</em>"},
+            {role:"user", text:"Yes! Exactly. Also add that she can see how much time is left at current speed."},
+            {role:"agent", text:"Great. Now let me generate an <strong>anti-scenario</strong> — what BAD looks like:\n\n<em>\"Alice opens the app and sees 50 episodes in a flat list. No resume section, no indication of what she was listening to. She has to scroll and guess.\"</em>\n\nDoes that capture what you want to avoid?"},
+            {role:"user", text:"Yep. Also add: the app should never auto-play the next episode without asking."},
+          ],
+          note: "Scenarios serve triple duty: (1) force concrete thinking during interview, (2) become testable acceptance criteria in spec, (3) agent walks through each during purpose alignment eval.",
+          meters: [{label:"Goal Clarity", value:70, max:100, color:"purple"},{label:"Constraints", value:30, max:100, color:"orange"},{label:"Success Criteria", value:70, max:100, color:"blue"}],
+          ambiguity: {clarity: 0.55, gate: 0.80, pass: false},
+          artifacts: [
+            {name:"interview/current.md", path:".tenet/interview/current.md", status:"modified"},
+            {name:"interview/scenarios.md", path:".tenet/interview/scenarios.md", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"active"},{label:"Spec",state:"pending"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "interview", title: "Visualization: Architecture & UI Mockups",
+        desc: "Agent generates visual artifacts to confirm understanding before building",
+        detail: {
+          title: "Visual Communication Artifacts",
+          chat: [
+            {role:"agent", text:"Before we finalize the spec, I've generated self-contained HTML visualizations for your review. Open them in your browser:\n\n- <code>visuals/dashboard-mockup.html</code> — Interactive UI mockup of the home dashboard\n- <code>visuals/architecture-overview.html</code> — System architecture diagram (SQLite → Model → API → React → Audio Player)\n- <code>visuals/playback-flow.html</code> — Data flow showing how playback state saves and resumes"},
+            {role:"user", text:"This is excellent. Keep the Continue Listening card prominent on mobile and make sure resume state writes on pause and tab close."},
+            {role:"agent", text:"Perfect. I'll incorporate those adjustments into the spec and constraints before decomposition."},
+          ],
+          note: "Visualizations aren't just for UI. They confirm shared understanding of architecture, data flow, and overall system design before implementation. <strong>If a picture helps the user understand what the agent is about to do, generate one.</strong> All visualizations are self-contained HTML files with embedded SVG/CSS. AI agents cannot generate PNG images, but HTML is their native medium — producing rich, interactive diagrams that open in any browser.",
+          artifacts: [
+            {name:"visuals/dashboard-mockup.html", path:".tenet/visuals/dashboard-mockup.html", status:"new"},
+            {name:"visuals/architecture-overview.html", path:".tenet/visuals/architecture-overview.html", status:"new"},
+            {name:"visuals/playback-flow.html", path:".tenet/visuals/playback-flow.html", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"active"},{label:"Visualization",state:"active"},{label:"Spec",state:"pending"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "interview", title: "Interview - Constraints & Gate Pass",
+        desc: "Ambiguity score drops below threshold — gate passes",
+        detail: {
+          title: "Interview: Ambiguity Gate Passes!",
+          chat: [
+            {role:"agent", text:"Let me check the remaining gaps:\n\n- <strong>Tech stack?</strong> Any preference?\n- <strong>Data storage?</strong> Local-only or cloud sync?\n- <strong>Platform?</strong> Web, mobile, or desktop?"},
+            {role:"user", text:"Web app, React + TypeScript. Local storage is fine for now, maybe add sync later. Use SQLite via a local API."},
+            {role:"agent", text:"Constraints locked:\n• React + TypeScript\n• SQLite backend\n• Web-first\n• No cloud sync in v1\n\nYour measurable success criteria:\n• Resume playback < 1s\n• Speed adjustment without page navigation\n• Time-remaining display at current speed\n\n<strong>Ambiguity Score: 0.15 (below 0.2 gate)</strong> ✓\nWe're clear to proceed to Spec generation."},
+          ],
+          note: "The gate is <strong>artifact-anchored</strong>: acceptance scenarios exist (0.7), constraints formalized (1.0), measurable criteria defined (1.0). No LLM self-assessment — artifact existence is deterministic.",
+          meters: [{label:"Goal Clarity", value:70, max:100, color:"purple"},{label:"Constraints", value:100, max:100, color:"orange"},{label:"Success Criteria", value:100, max:100, color:"blue"}],
+          ambiguity: {clarity: 0.85, gate: 0.80, pass: true},
+          artifacts: [
+            {name:"interview/current.md", path:".tenet/interview/current.md", status:"modified"},
+            {name:"interview/scenarios.md", path:".tenet/interview/scenarios.md", status:"modified"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"done"},{label:"Spec",state:"active"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "spec", title: "Spec + Harness Generated",
+        desc: "Crystallized output: what to build and operational constraints",
+        detail: {
+          title: "Spec & Harness Generation",
+          code: `# Spec: Podcast Dashboard v1\n\n## Acceptance Criteria\n- [ ] Resume playback < 1s from saved position\n- [ ] Variable speed: 0.5x to 3.0x in 0.25 steps\n- [ ] Time-remaining at current speed\n- [ ] "Continue Listening" section on home\n- [ ] No auto-play next episode\n\n## Properties (for property-based testing)\n- playbackPosition: always 0 <= pos <= duration\n- speedAdjustment: display_time = remaining / speed\n- parse(serialize(episode)) == episode`,
+          code2: `# Harness: Quality Contract\n\n## Formatting & Linting\nformatter: prettier (--single-quote --trailing-comma all)\nlinter: eslint (strict mode, zero warnings)\nenforcement: violations fail eval\n\n## Testing Requirements\nunit_tests: required for all new code\ne2e_tests: required for user-facing features\ncoverage: >= 80% for new code\ntest_framework: vitest (unit), playwright (e2e)\n\n## Architecture Rules\n- No circular dependencies\n- Database access only through model layer\n- All components must have TypeScript types (no any)\n- Error responses follow consistent JSON schema\n\n## Code Principles\n- Prefer composition over inheritance\n- Functions do one thing\n- Explicit over implicit`,
+          artifacts: [
+            {name:"spec/current.md", path:".tenet/spec/current.md", status:"new"},
+            {name:"spec/scenarios.md", path:".tenet/spec/scenarios.md", status:"new"},
+            {name:"spec/anti-scenarios.md", path:".tenet/spec/anti-scenarios.md", status:"new"},
+            {name:"spec/properties.md", path:".tenet/spec/properties.md", status:"new"},
+            {name:"harness/current.md", path:".tenet/harness/current.md", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"done"},{label:"Spec",state:"done"},{label:"Decompose",state:"active"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "decomp", title: "Dependency Graph Created",
+        desc: "Spec split into jobs small enough for single agent sessions",
+        detail: {
+          title: "Recursive Decomposition",
+          note: "Each job represents a logically cohesive unit of work. Jobs are decomposed based on complexity, context requirements, and natural interface boundaries — keeping them small enough that the agent operates within comfortable context window limits without quality degradation.",
+          dag: [
+            {id:"J001",label:"JOB-001: Data Models",state:"pending",deps:[]},
+            {id:"J002",label:"JOB-002: Audio Player Core",state:"pending",deps:[]},
+            {id:"J003",label:"JOB-003: Podcast Feed Parser",state:"pending",deps:[]},
+            {id:"J004",label:"JOB-004: Episode List UI",state:"pending",deps:["J001"]},
+            {id:"J005",label:"JOB-005: Player Controls UI",state:"pending",deps:["J002"]},
+            {id:"J006",label:"JOB-006: Resume & History",state:"pending",deps:["J001","J002"]},
+            {id:"J007",label:"JOB-007: Home Dashboard",state:"pending",deps:["J004","J005","J006"]},
+            {id:"J008",label:"JOB-008: Integration Tests",state:"pending",deps:["J007"]},
+          ],
+          jobCode: `# JOB-001: Data Models\n\n## Goal\nDefine SQLite schema and TypeScript types\nfor episodes, podcasts, playback state.\n\n## Scope\n- Schema definition (schema.sql)\n- TypeScript types (types.ts)\n- Model layer with CRUD operations\n- Unit tests for all models\n\n## Quality Gates\n- All models must have TypeScript types\n- Unit test coverage for CRUD operations\n- Schema must match spec data requirements\n\n## Dependencies: none`,
+          artifacts: [
+            {name:"planning/decomposition.md", path:".tenet/planning/decomposition.md", status:"new"},
+            {name:"planning/graph.json", path:".tenet/planning/graph.json", status:"new"},
+            {name:"jobs/JOB-001.md", path:".tenet/jobs/JOB-001.md", status:"new"},
+            {name:"jobs/JOB-002.md ... JOB-008.md", path:".tenet/jobs/", status:"new"},
+            {name:"status/job-queue.md", path:".tenet/status/job-queue.md", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"done"},{label:"Spec",state:"done"},{label:"Decompose",state:"done"},{label:"Execute",state:"active"}],
+        }
+      },
+      {
+        phase: "exec", title: "Bootstrap Compiler Runs for JOB-001",
+        desc: "Compiled context generated — not raw files, a minimal view",
+        detail: {
+          title: "Context Compilation for JOB-001",
+          note: "Instead of loading 5+ raw files, the <strong>bootstrap compiler</strong> produces a single optimized document. It filters by relevance, recency, confidence, and places the job's objectives at the END (todo recitation) to exploit the U-shaped attention curve.",
+           code: `# Compiled Context: JOB-001\n\n## Harness (stable prefix — cached)\nquality_contract: enforced\nformatter: prettier\nlinter: eslint (strict, zero warnings)\ncoverage_target: >= 80% for new code\n\n## Spec Excerpt\n- Episode: title, feed_url, duration, position\n- Podcast: name, feed_url, image_url\n- PlaybackState: episode_id, position, speed\n\n## Interfaces Expected (from decomposition)\n- JOB-004 expects: Episode[], Podcast[] types\n- JOB-006 expects: PlaybackState read/write\n\n## Steer Messages: (none)\n## Lessons: (none — first job)\n\n## >>> CURRENT OBJECTIVES <<<\n1. Define SQLite schema for podcasts, episodes\n2. Create TypeScript types matching schema\n3. Write model layer with CRUD operations\n4. Write tests for all models`,
+          artifacts: [
+            {name:"runs/JOB-001/compiled-context.md", path:".tenet/runs/JOB-001/compiled-context.md", status:"new"},
+          ],
+          flow: [{label:"Compile",state:"active"},{label:"Author",state:"pending"},{label:"Mech Eval",state:"pending"},{label:"Critic",state:"pending"},{label:"Complete",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Author Session: JOB-001",
+        desc: "Agent implements data models in a fresh session",
+        detail: {
+          title: "Author Run: JOB-001 (Data Models)",
+          note: "The author session receives ONLY the compiled context. It writes code, tests, and updates knowledge docs with <strong>confidence tags</strong>.",
+          code: `// src/models/schema.sql\nCREATE TABLE podcasts (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL,\n  feed_url TEXT UNIQUE NOT NULL,\n  image_url TEXT\n);\n\nCREATE TABLE episodes (\n  id INTEGER PRIMARY KEY,\n  podcast_id INTEGER REFERENCES podcasts(id),\n  title TEXT NOT NULL,\n  audio_url TEXT NOT NULL,\n  duration INTEGER NOT NULL  -- seconds\n);\n\nCREATE TABLE playback_state (\n  episode_id INTEGER PRIMARY KEY REFERENCES episodes(id),\n  position INTEGER DEFAULT 0,\n  speed REAL DEFAULT 1.0\n);`,
+          knowledgeWrite: {concern:"data-model", confidence:"implemented-and-tested", text:"Schema: podcasts, episodes, playback_state tables. Position stored as integer seconds. Speed as REAL (0.5-3.0)."},
+          artifacts: [
+            {name:"knowledge/data-model.md", path:".tenet/knowledge/data-model.md", status:"new"},
+            {name:"runs/JOB-001/attempt-01.md", path:".tenet/runs/JOB-001/attempt-01.md", status:"new"},
+          ],
+          flow: [{label:"Compile",state:"done"},{label:"Author",state:"active"},{label:"Mech Eval",state:"pending"},{label:"Critic",state:"pending"},{label:"Complete",state:"pending"}],
+        }
+      },
+      {
+        phase: "eval", title: "Mechanical Eval: JOB-001",
+        desc: "Zero-cost: lint, build, type-check, tests — all pass",
+        detail: {
+          title: "Stage 1: Mechanical Eval",
+          code: `$ npm run typecheck\n✓ No errors found\n\n$ npm run lint\n✓ 0 warnings, 0 errors\n\n$ npm run test -- --filter models\n✓ podcasts CRUD (4 tests)\n✓ episodes CRUD (5 tests)\n✓ playback state read/write (3 tests)\n\n12 tests passed, 0 failed`,
+          note: "<strong>Zero LLM cost.</strong> Catches ~60-80% of issues. Since this passes, we proceed to Stage 1.5 (property-based testing).",
+          artifacts: [
+            {name:"runs/JOB-001/eval-01.md", path:".tenet/runs/JOB-001/eval-01.md", status:"new"},
+          ],
+          flow: [{label:"Compile",state:"done"},{label:"Author",state:"done"},{label:"Mech Eval",state:"active"},{label:"Props",state:"pending"},{label:"Critic",state:"pending"},{label:"Complete",state:"pending"}],
+        }
+      },
+      {
+        phase: "eval", title: "Property-Based Testing: JOB-001",
+        desc: "Auto-generated fuzz tests verify spec properties",
+        detail: {
+          title: "Stage 1.5: Property-Based Testing",
+          note: "Properties were defined during the <strong>SPEC phase</strong> (before implementation), so the agent can't tailor them to pass its own code.",
+          code: `// Property: parse(serialize(episode)) == episode\nfc.assert(\n  fc.property(\n    episodeArb,\n    (ep) => deepEqual(deserialize(serialize(ep)), ep)\n  )\n);\n// ✓ Passed 1000 inputs\n\n// Property: 0 <= position <= duration\nfc.assert(\n  fc.property(\n    fc.integer({min:0, max:360000}),\n    fc.integer({min:0, max:360000}),\n    (pos, dur) => {\n      const state = createState(pos, Math.max(pos, dur));\n      return state.position >= 0 && state.position <= state.duration;\n    }\n  )\n);\n// ✓ Passed 1000 inputs`,
+          artifacts: [],
+          flow: [{label:"Compile",state:"done"},{label:"Author",state:"done"},{label:"Mech Eval",state:"done"},{label:"Props",state:"active"},{label:"Critic",state:"pending"},{label:"Complete",state:"pending"}],
+        }
+      },
+      {
+        phase: "eval", title: "Critic Session: JOB-001",
+        desc: "Separate session reviews with ONLY spec + diff — no author reasoning",
+        detail: {
+          title: "Stage 3: Critic Eval (Separate Session)",
+          chat: [
+            {role:"agent", label:"CRITIC", text:"Reviewing JOB-001 against spec...\n\n<strong>Spec compliance:</strong> ✓ All data types match spec\n<strong>Anti-scenario check:</strong> ✓ No flat-list anti-pattern possible from data layer alone\n<strong>Missing tests:</strong> What happens when position > duration? Spec says 0 <= pos <= duration but no constraint in schema.\n<strong>Interface check:</strong> JOB-004 expects Episode[] — the type export is present. JOB-006 expects PlaybackState read/write — confirmed."},
+            {role:"agent", label:"CRITIC", text:"<strong>Finding:</strong> The schema allows position > duration (no CHECK constraint). Recommend adding: CHECK(position >= 0 AND position <= duration)\n\n<strong>Verdict:</strong> PASS with 1 minor finding. Note: per zero-findings policy, I re-examined from security and integration angles — the CHECK constraint issue is the only legitimate finding."},
+          ],
+          note: "The critic has an <strong>information disadvantage by design</strong>. It received the code diff and spec — NOT the author's reasoning, tests, or knowledge docs. It found a real gap the author missed. The critic follows the <strong>zero-findings rule</strong>: if zero issues are found, the critic must re-analyze from a different angle or explicitly justify why. This prevents rubber-stamp reviews.",
+          artifacts: [
+            {name:"runs/JOB-001/critic-01.md", path:".tenet/runs/JOB-001/critic-01.md", status:"new"},
+          ],
+          flow: [{label:"Compile",state:"done"},{label:"Author",state:"done"},{label:"Mech Eval",state:"done"},{label:"Props",state:"done"},{label:"Critic",state:"active"},{label:"Complete",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "JOB-001 Complete! Status Updated",
+        desc: "Job marked done, knowledge promoted, next job picked",
+        detail: {
+          title: "Job Complete - Handoff",
+          note: "The critic's finding (missing CHECK constraint) is applied. Validated learnings are promoted to knowledge docs. Status is updated. <strong>This is the checkpoint</strong> — if the process crashes, it can resume from here.",
+          code: `# Status\n\n## Current run\n- Jobs completed: 1/8\n- Jobs remaining: 7\n- Current job: JOB-002 (Audio Player Core)\n- Elapsed: 28m\n- Steer inbox: empty\n\n## Completed\n- [done] JOB-001: Data Models (1 attempt)`,
+          artifacts: [
+            {name:"status/current.md", path:".tenet/status/current.md", status:"modified"},
+            {name:"knowledge/data-model.md", path:".tenet/knowledge/data-model.md", status:"modified"},
+            {name:"lessons/current.md", path:".tenet/lessons/current.md", status:"modified"},
+          ],
+          dag: [
+            {id:"J001",label:"JOB-001: Data Models",state:"done",deps:[]},
+            {id:"J002",label:"JOB-002: Audio Player",state:"current",deps:[]},
+            {id:"J003",label:"JOB-003: Feed Parser",state:"pending",deps:[]},
+            {id:"J004",label:"JOB-004: Episode List UI",state:"pending",deps:["J001"]},
+            {id:"J005",label:"JOB-005: Player Controls",state:"pending",deps:["J002"]},
+            {id:"J006",label:"JOB-006: Resume & History",state:"pending",deps:["J001","J002"]},
+            {id:"J007",label:"JOB-007: Home Dashboard",state:"pending",deps:["J004","J005","J006"]},
+            {id:"J008",label:"JOB-008: Integration",state:"pending",deps:["J007"]},
+          ],
+          flow: [{label:"JOB-001",state:"done"},{label:"JOB-002",state:"active"},{label:"JOB-003",state:"pending"},{label:"...",state:"pending"},{label:"JOB-008",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Jobs Progress... JOB-006 Compiles Context",
+        desc: "Later jobs get richer compiled context with knowledge from earlier jobs",
+        detail: {
+          title: "Compiled Context Grows Richer",
+          note: "JOB-006 (Resume & History) depends on JOB-001 and JOB-002. Its compiled context includes <strong>high-confidence knowledge</strong> from both completed jobs — but only entries tagged <code>[implemented-and-tested]</code>.",
+          code: `# Compiled Context: JOB-006\n\n## Knowledge (high-confidence only)\n\n### data-model [implemented-and-tested]\nSchema: podcasts, episodes, playback_state.\nPosition stored as integer seconds.\nCHECK(position >= 0 AND position <= duration).\n\n### audio-player [implemented-and-tested]\nHowler.js wrapper. Exposes: play(url, pos),\npause(), setSpeed(n), onTimeUpdate(cb).\nResume tested at < 800ms cold start.\n\n## Interfaces from JOB-001, JOB-002\n- PlaybackState { episode_id, position, speed }\n- AudioPlayer.play(url, position): Promise<void>\n- AudioPlayer.setSpeed(speed: number): void\n\n## >>> CURRENT OBJECTIVES <<<\n1. Implement resume-from-position logic\n2. Persist playback state on pause/close\n3. "Continue Listening" query\n4. Test resume < 1s end-to-end`,
+          artifacts: [
+            {name:"runs/JOB-006/compiled-context.md", path:".tenet/runs/JOB-006/compiled-context.md", status:"new"},
+          ],
+          dag: [
+            {id:"J001",label:"JOB-001: Data Models",state:"done",deps:[]},
+            {id:"J002",label:"JOB-002: Audio Player",state:"done",deps:[]},
+            {id:"J003",label:"JOB-003: Feed Parser",state:"done",deps:[]},
+            {id:"J004",label:"JOB-004: Episode List",state:"done",deps:["J001"]},
+            {id:"J005",label:"JOB-005: Player Controls",state:"done",deps:["J002"]},
+            {id:"J006",label:"JOB-006: Resume",state:"current",deps:["J001","J002"]},
+            {id:"J007",label:"JOB-007: Dashboard",state:"pending",deps:["J004","J005","J006"]},
+            {id:"J008",label:"JOB-008: Integration",state:"pending",deps:["J007"]},
+          ],
+          flow: [{label:"Compile",state:"active"},{label:"Author",state:"pending"},{label:"Eval",state:"pending"},{label:"Complete",state:"pending"}],
+        }
+      },
+      {
+        phase: "eval", title: "Integration Eval After Group Completes",
+        desc: "After JOB-004+005+006, check: do the pieces work together?",
+        detail: {
+          title: "Integration Evaluation",
+          note: "After a <strong>dependency group</strong> completes, an integration eval runs. It loads all completed pieces and checks the interfaces declared during decomposition.",
+          chat: [
+            {role:"agent", label:"INTEGRATOR", text:"Running integration check for group [JOB-004, JOB-005, JOB-006]...\n\n✓ Episode List renders episodes from data model\n✓ Player Controls connect to Audio Player\n✓ Resume restores position from PlaybackState\n✓ Speed display shows time-remaining / speed\n\n<strong>Scenario walkthrough:</strong>\n\"Alice opens app → sees Continue Listening → taps → resumes at 1.5x in < 1s → sees time remaining\"\n✓ All steps verified\n\n<strong>Anti-scenario check:</strong>\n\"Flat list with no organization\" → ✗ Not possible (Continue Listening section exists)\n\n<strong>Verdict: PASS</strong>"},
+          ],
+          artifacts: [
+            {name:"runs/integration-group-2/eval.md", path:".tenet/runs/integration-group-2/eval.md", status:"new"},
+          ],
+          dag: [
+            {id:"J001",label:"JOB-001",state:"done",deps:[]},
+            {id:"J002",label:"JOB-002",state:"done",deps:[]},
+            {id:"J003",label:"JOB-003",state:"done",deps:[]},
+            {id:"J004",label:"JOB-004",state:"done",deps:["J001"]},
+            {id:"J005",label:"JOB-005",state:"done",deps:["J002"]},
+            {id:"J006",label:"JOB-006",state:"done",deps:["J001","J002"]},
+            {id:"J007",label:"JOB-007: Dashboard",state:"current",deps:["J004","J005","J006"]},
+            {id:"J008",label:"JOB-008: Integration",state:"pending",deps:["J007"]},
+          ],
+          flow: [{label:"Group eval",state:"active"},{label:"JOB-007",state:"pending"},{label:"JOB-008",state:"pending"},{label:"Done",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "All Jobs Complete!",
+        desc: "8/8 jobs done. Final status written. Project delivered.",
+        detail: {
+          title: "Project Complete",
+          code: `# Status\n\n## Run Complete\n- Total jobs: 8/8 ✓\n- Total attempts: 9 (1 retry on JOB-005)\n- Elapsed: 4h 12m\n- Steer inbox: empty\n\n## All scenarios verified:\n- [✓] Resume playback < 1s\n- [✓] Speed adjustment without navigation\n- [✓] Time-remaining at current speed\n- [✓] Continue Listening on home\n- [✓] No auto-play next\n\n## Anti-scenarios avoided:\n- [✓] No flat list\n- [✓] No empty state confusion`,
+          artifacts: [
+            {name:"status/current.md", path:".tenet/status/current.md", status:"modified"},
+            {name:"All knowledge docs", path:".tenet/knowledge/", status:"modified"},
+            {name:"lessons/current.md", path:".tenet/lessons/current.md", status:"modified"},
+          ],
+          dag: [
+            {id:"J001",label:"JOB-001",state:"done"},{id:"J002",label:"JOB-002",state:"done"},
+            {id:"J003",label:"JOB-003",state:"done"},{id:"J004",label:"JOB-004",state:"done"},
+            {id:"J005",label:"JOB-005",state:"done"},{id:"J006",label:"JOB-006",state:"done"},
+            {id:"J007",label:"JOB-007",state:"done"},{id:"J008",label:"JOB-008",state:"done"},
+          ],
+          flow: [{label:"All 8 Jobs",state:"done"},{label:"Integration",state:"done"},{label:"Done!",state:"active"}],
+        }
+      },
+    ]
+  },
+
+  dryrun: {
+    title: "Dry Run: URL Shortener",
+    steps: [
+      {
+        phase: "ideation", title: "Ideation + Mode Detection",
+        desc: "A concrete feature request is classified as standard mode",
+        detail: {
+          title: "Mode Detection (Greenfield, Standard)",
+          chat: [
+            {role:"user", text:"Build me a URL shortener. Simple web app — enter a URL, get a short link, redirect works."},
+          ],
+          note: "The request is <strong>greenfield</strong>. Complexity is moderate and pattern is well-understood, so the system selects <strong>standard mode</strong> (not full, not quick).",
+          code: `# .tenet/runs/intake/mode-detection.md\n\nrequest: \"Build me a URL shortener. Simple web app — enter a URL, get a short link, redirect works.\"\n\nclassification:\n  project_type: greenfield\n  complexity: moderate\n  novelty: low (known product pattern)\n  expected_surface_area: multi-file (api + storage + form + tests)\n\nmode_decision:\n  selected: standard\n  rejected:\n    - quick (too many files/interfaces for single-pass edit)\n    - full (not ambiguous enough for long Socratic interview)\n\nnext_step: brief clarification interview`,
+          artifacts: [
+            {name:"runs/intake/mode-detection.md", path:".tenet/runs/intake/mode-detection.md", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"active"},{label:"Interview",state:"pending"},{label:"Spec",state:"pending"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "interview", title: "Brief Clarification (Standard Mode)",
+        desc: "Abbreviated interview resolves key ambiguities in one pass",
+        detail: {
+          title: "Quick Clarifications + Ambiguity Check",
+          chat: [
+            {role:"agent", text:"Quick clarifications: (1) Custom short codes or random? (2) Analytics/click tracking? (3) Tech stack preference? (4) Expiration on links?"},
+            {role:"user", text:"Random codes, no analytics, Node.js + SQLite, no expiration"},
+          ],
+          note: "Standard mode skips long interview docs. Clarifications are folded directly into the spec draft once ambiguity clears.",
+          ambiguity: {clarity: 0.86, gate: 0.80, pass: true},
+          code: `# .tenet/runs/intake/clarification.md\n\nanswers:\n  short_code_strategy: random\n  analytics: none\n  stack: Node.js + SQLite\n  expiration: none\n\nambiguity_check:\n  goal_clarity: high\n  constraints_clarity: high\n  acceptance_testability: high\n  result: pass\n\nspec_generation: proceed_now\ninterview_doc_created: false  # standard-mode shortcut`,
+          artifacts: [
+            {name:"runs/intake/clarification.md", path:".tenet/runs/intake/clarification.md", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"active"},{label:"Spec",state:"pending"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "spec", title: "Spec Generated",
+        desc: "The acceptance contract is written to .tenet/spec/current.md",
+        detail: {
+          title: "File Written: .tenet/spec/current.md",
+          code: `# Spec: URL Shortener v1\n\n## Acceptance Criteria\n- [ ] POST /shorten with { url: string } returns { shortCode: string, shortUrl: string }\n- [ ] GET /:shortCode redirects (301) to original URL\n- [ ] Short codes are 6-character alphanumeric, random\n- [ ] Invalid short codes return 404\n- [ ] Invalid URLs rejected with 400\n\n## Scenario\nUser visits the web form. Pastes \"https://example.com/very/long/path\".\nClicks \"Shorten\". Sees \"http://localhost:3000/abc123\".\nCopies it. Opens in new tab. Lands on original page.\n\n## Anti-scenario\nUser pastes a URL. Gets an error with no explanation.\nUser clicks a short link. Gets a blank page or 500 error.`,
+          artifacts: [
+            {name:"spec/current.md", path:".tenet/spec/current.md", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"done"},{label:"Spec",state:"active"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "spec", title: "Harness Generated",
+        desc: "Quality contract and architecture rules are locked in",
+        detail: {
+          title: "File Written: .tenet/harness/current.md",
+          code: `# Harness: Quality Contract\n\n## Formatting & Linting\nformatter: prettier (default settings)\nlinter: eslint (recommended config)\nenforcement: violations fail eval\n\n## Testing Requirements\nunit_tests: required for URL validation, shortcode generation, redirect logic\nintegration_tests: required for full POST→GET flow\ntest_framework: vitest\n\n## Architecture Rules\n- Routes in src/routes/, models in src/models/, utils in src/utils/\n- No business logic in route handlers (delegate to services)\n- All DB access through model layer\n\n## Code Principles\n- TypeScript strict mode\n- Input validation on all endpoints\n- Consistent error response format: { error: string, status: number }`,
+          artifacts: [
+            {name:"harness/current.md", path:".tenet/harness/current.md", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"done"},{label:"Spec",state:"active"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "spec", title: "Visualization — Architecture HTML",
+        desc: "Self-contained architecture diagram is generated",
+        detail: {
+          title: "File Written: .tenet/visuals/architecture.html",
+          note: "The visualization is HTML+SVG: Client → Express Routes → URL Service → SQLite, plus redirect path back to browser.",
+          code: `<!doctype html>\n<html>\n<head><meta charset=\"utf-8\"><title>URL Shortener Architecture</title></head>\n<body>\n  <svg width=\"880\" height=\"260\" viewBox=\"0 0 880 260\">\n    <rect x=\"20\" y=\"90\" width=\"140\" height=\"60\" rx=\"8\"/><text x=\"90\" y=\"125\" text-anchor=\"middle\">Client</text>\n    <rect x=\"220\" y=\"90\" width=\"180\" height=\"60\" rx=\"8\"/><text x=\"310\" y=\"125\" text-anchor=\"middle\">Express Routes</text>\n    <rect x=\"460\" y=\"90\" width=\"150\" height=\"60\" rx=\"8\"/><text x=\"535\" y=\"125\" text-anchor=\"middle\">URL Service</text>\n    <rect x=\"670\" y=\"90\" width=\"150\" height=\"60\" rx=\"8\"/><text x=\"745\" y=\"125\" text-anchor=\"middle\">SQLite</text>\n    <text x=\"310\" y=\"60\" text-anchor=\"middle\">POST /shorten</text>\n    <text x=\"310\" y=\"190\" text-anchor=\"middle\">GET /:shortCode → 301 redirect</text>\n  </svg>\n</body>\n</html>`,
+          artifacts: [
+            {name:"visuals/architecture.html", path:".tenet/visuals/architecture.html", status:"new"},
+          ],
+          flow: [{label:"Ideation",state:"done"},{label:"Interview",state:"done"},{label:"Spec",state:"active"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "decomp", title: "Decomposition — Just 2 Jobs",
+        desc: "Small standard-mode project is split into two jobs",
+        detail: {
+          title: "Jobs Planned",
+          dag: [
+            {id:"J001",label:"JOB-001: Core Backend",state:"current",deps:[]},
+            {id:"J002",label:"JOB-002: Frontend + Integration",state:"pending",deps:["J001"]},
+          ],
+          jobCode: `# JOB-001: Core Backend\n\n## Goal\nImplement URL shortening and redirect logic.\n\n## Scope\n- SQLite schema for URLs (id, original_url, short_code, created_at)\n- Shortcode generation (6-char alphanumeric)\n- POST /shorten endpoint\n- GET /:shortCode redirect endpoint\n- Unit tests for all above\n\n## Quality Gates\n- All endpoints return correct status codes\n- Shortcodes are unique (collision handling)\n- Invalid URLs rejected before storage\n- TypeScript strict, no any\n\n## Dependencies: none`,
+          code: `# .tenet/jobs/JOB-002.md\n\n## Goal\nImplement frontend form and validate full user flow.\n\n## Scope\n- Web form: input URL, submit to POST /shorten\n- Render shortUrl output with copy affordance\n- Integration test for POST /shorten + GET /:shortCode redirect path\n\n## Dependencies\n- Requires JOB-001 endpoints to be complete`,
+          artifacts: [
+            {name:"jobs/JOB-001.md", path:".tenet/jobs/JOB-001.md", status:"new"},
+            {name:"jobs/JOB-002.md", path:".tenet/jobs/JOB-002.md", status:"new"},
+            {name:"status/current.md", path:".tenet/status/current.md", status:"new"},
+          ],
+          flow: [{label:"Spec",state:"done"},{label:"Decompose",state:"active"},{label:"Execute",state:"pending"},{label:"Eval",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Bootstrap Compiler — JOB-001 Context",
+        desc: "An optimized context bundle is compiled for the author",
+        detail: {
+          title: "File Written: .tenet/runs/JOB-001/compiled-context.md",
+          code: `# Compiled Context: JOB-001\n\n## Harness (stable prefix)\nquality_contract: enforced\nformatter: prettier\nlinter: eslint\ncoverage: unit tests required\n\n## Spec Excerpt\n- POST /shorten → { shortCode, shortUrl }\n- GET /:shortCode → 301 redirect\n- 6-char alphanumeric random codes\n- SQLite storage\n\n## >>> CURRENT OBJECTIVES <<<\n1. Create SQLite schema for URL storage\n2. Implement shortcode generator (6-char, unique)\n3. Implement POST /shorten endpoint\n4. Implement GET /:shortCode redirect\n5. Write unit tests for all above`,
+          artifacts: [
+            {name:"runs/JOB-001/compiled-context.md", path:".tenet/runs/JOB-001/compiled-context.md", status:"new"},
+          ],
+          flow: [{label:"Compile",state:"active"},{label:"Author",state:"pending"},{label:"Mech Eval",state:"pending"},{label:"Critic",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Author Session — JOB-001",
+        desc: "Backend schema, routes, and tests are implemented",
+        detail: {
+          title: "Implementation + Knowledge Write",
+          code: `// src/models/urlModel.ts\nexport const schema = \`\nCREATE TABLE IF NOT EXISTS urls (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  original_url TEXT NOT NULL,\n  short_code TEXT NOT NULL UNIQUE,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n\`;\n\n// src/services/shortCode.ts\nimport crypto from 'node:crypto';\nconst ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';\nexport function generateShortCode(): string {\n  const bytes = crypto.randomBytes(6);\n  return Array.from(bytes, b => ALPHABET[b % ALPHABET.length]).join('');\n}\n\n// src/routes/shorten.ts\nrouter.post('/shorten', async (req, res) => { /* insert + return shortUrl */ });\nrouter.get('/:shortCode', async (req, res) => { /* lookup + 301 redirect */ });`,
+          knowledgeWrite: {concern:"url-shortening", confidence:"implemented-and-tested", text:"SQLite table: urls (id, original_url, short_code, created_at). Short codes: 6-char [a-zA-Z0-9], generated with crypto.randomBytes. Collision retry: up to 3 attempts."},
+          artifacts: [
+            {name:"knowledge/url-shortening.md", path:".tenet/knowledge/url-shortening.md", status:"new"},
+            {name:"runs/JOB-001/attempt-01.md", path:".tenet/runs/JOB-001/attempt-01.md", status:"new"},
+          ],
+          flow: [{label:"Compile",state:"done"},{label:"Author",state:"active"},{label:"Mech Eval",state:"pending"},{label:"Critic",state:"pending"}],
+        }
+      },
+      {
+        phase: "eval", title: "Mechanical Eval",
+        desc: "Formatter, linter, and tests run against harness requirements",
+        detail: {
+          title: "File Written: .tenet/runs/JOB-001/eval-01.md",
+          code: `# Mechanical Eval: JOB-001\n\n$ npm run format:check\n✓ prettier check passed\n\n$ npm run lint\n✓ eslint passed\n\n$ npm run test -- --filter url\n✓ URL validation (3)\n✓ shortcode generation (3)\n✓ redirect logic (2)\n\n8 passed, 0 failed\n\nharness_compliance:\n  formatting: pass\n  linting: pass\n  required_unit_tests: pass`,
+          artifacts: [
+            {name:"runs/JOB-001/eval-01.md", path:".tenet/runs/JOB-001/eval-01.md", status:"new"},
+          ],
+          flow: [{label:"Compile",state:"done"},{label:"Author",state:"done"},{label:"Mech Eval",state:"active"},{label:"Critic",state:"pending"}],
+        }
+      },
+      {
+        phase: "eval", title: "Critic Session",
+        desc: "Spec-vs-diff review catches a missing validation requirement",
+        detail: {
+          title: "Critic Finding: URL Validation Gap",
+          chat: [
+            {role:"agent", label:"CRITIC", text:"Reviewing JOB-001 against spec and diff only.\n\nFinding: No URL validation middleware is present. Spec requires invalid URLs to return 400. Current POST /shorten stores any string.\n\nPer zero-findings policy, I re-checked from security angle as well — same gap confirmed (potential malformed URL handling issue)."},
+          ],
+          code: `# .tenet/runs/JOB-001/critic-01.md\n\nverdict: changes_requested\n\nfindings:\n  - id: CRIT-001\n    severity: medium\n    title: Missing URL validation\n    spec_ref: \"Invalid URLs rejected with 400\"\n    evidence: \"No validation middleware/function in POST /shorten path\"\n\nzero_findings_policy:\n  applied: true\n  secondary_angle: security-input-validation\n  additional_findings: none`,
+          artifacts: [
+            {name:"runs/JOB-001/critic-01.md", path:".tenet/runs/JOB-001/critic-01.md", status:"new"},
+          ],
+          flow: [{label:"Compile",state:"done"},{label:"Author",state:"done"},{label:"Mech Eval",state:"done"},{label:"Critic",state:"active"}],
+        }
+      },
+      {
+        phase: "exec", title: "Fix Applied + JOB-001 Complete",
+        desc: "Validation is added, re-evaluated, and backend job is closed",
+        detail: {
+          title: "Status Updated",
+          code: `# .tenet/runs/JOB-001/fix-01.md\n\n## Applied Fix\n- Added validateUrl(input) using WHATWG URL parser\n- POST /shorten now returns:\n  - 400 { error: \"Invalid URL\", status: 400 } when parsing fails\n\n## Re-eval\n- prettier: pass\n- eslint: pass\n- vitest: 9/9 pass`,
+          code2: `# .tenet/status/current.md\n\n# Status\n- Jobs completed: 1/2\n- Current: JOB-002 (Frontend + Integration)`,
+          artifacts: [
+            {name:"runs/JOB-001/fix-01.md", path:".tenet/runs/JOB-001/fix-01.md", status:"new"},
+            {name:"status/current.md", path:".tenet/status/current.md", status:"modified"},
+          ],
+          dag: [
+            {id:"J001",label:"JOB-001: Core Backend",state:"done",deps:[]},
+            {id:"J002",label:"JOB-002: Frontend + Integration",state:"current",deps:["J001"]},
+          ],
+          flow: [{label:"Fix",state:"done"},{label:"Re-eval",state:"done"},{label:"JOB-001 Complete",state:"active"},{label:"JOB-002",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "JOB-002 + Integration Eval",
+        desc: "Frontend form ships and end-to-end flow is verified",
+        detail: {
+          title: "Frontend + End-to-End Scenario Pass",
+          code: `# .tenet/runs/JOB-002/compiled-context.md\n\n## >>> CURRENT OBJECTIVES <<<\n1. Build form UI to submit URL\n2. Display shortUrl response\n3. Add integration test for POST /shorten then GET /:shortCode\n\n# .tenet/runs/JOB-002/eval-01.md\n\nscenario_walkthrough:\n  - User pastes URL\n  - Clicks Shorten\n  - Sees short link\n  - Opens short link\n  - Redirected to original URL\nresult: pass`,
+          chat: [
+            {role:"agent", label:"INTEGRATOR", text:"Integration verified: User pastes URL → clicks Shorten → sees short link → opens it → redirected. All acceptance criteria hold."},
+          ],
+          artifacts: [
+            {name:"runs/JOB-002/compiled-context.md", path:".tenet/runs/JOB-002/compiled-context.md", status:"new"},
+            {name:"runs/JOB-002/eval-01.md", path:".tenet/runs/JOB-002/eval-01.md", status:"new"},
+          ],
+          flow: [{label:"JOB-002 Author",state:"done"},{label:"Integration Eval",state:"active"},{label:"Project Complete",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Project Complete",
+        desc: "Final .tenet state shows every artifact produced",
+        detail: {
+          title: "Final Directory + Final Status",
+          code: `.tenet/\n├── index.md                    # auto-generated TOC\n├── spec/current.md             # URL shortener spec\n├── harness/current.md          # quality contract\n├── knowledge/url-shortening.md # confidence-tagged learnings\n├── status/current.md           # 2/2 jobs done\n├── steer/inbox.md              # empty (no steers needed)\n├── visuals/architecture.html   # system architecture\n├── jobs/JOB-001.md\n├── jobs/JOB-002.md\n└── runs/\n    ├── JOB-001/compiled-context.md\n    ├── JOB-001/eval-01.md\n    └── JOB-002/compiled-context.md`,
+          code2: `# .tenet/status/current.md\n\n# Status\n- Jobs completed: 2/2\n- Jobs remaining: 0\n- Current: none\n- Run result: complete\n\n## Completed\n- [done] JOB-001: Core Backend\n- [done] JOB-002: Frontend + Integration\n\n## Acceptance Criteria\n- [x] POST /shorten returns shortCode + shortUrl\n- [x] GET /:shortCode returns 301 redirect\n- [x] 6-char random alphanumeric short codes\n- [x] Invalid short codes return 404\n- [x] Invalid URLs rejected with 400`,
+          artifacts: [
+            {name:"index.md", path:".tenet/index.md", status:"new"},
+            {name:"status/current.md", path:".tenet/status/current.md", status:"modified"},
+          ],
+          flow: [{label:"Spec",state:"done"},{label:"Decompose",state:"done"},{label:"JOB-001",state:"done"},{label:"JOB-002",state:"done"},{label:"Complete",state:"active"}],
+        }
+      },
+    ]
+  },
+
+  brownfield: {
+    title: "Brownfield: Add OAuth to Existing App",
+    steps: [
+      {
+        phase: "ideation", title: "User Request on Existing Codebase",
+        desc: "\"Add OAuth support to our existing Express API\"",
+        detail: {
+          title: "Brownfield Detection",
+          chat: [
+            {role:"user", text:"I need to add OAuth support to our existing Express API. We already have basic username/password auth."},
+          ],
+          note: "System detects an <strong>existing codebase</strong> (brownfield). Before interview, it must understand what already exists. Triggers <strong>Stage 0: Brownfield Onboarding</strong>.",
+          artifacts: [],
+          flow: [{label:"Detect",state:"active"},{label:"Scan 0a",state:"pending"},{label:"Scan 0b",state:"pending"},{label:"Scan 0c",state:"pending"},{label:"Interview",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Stage 0a: Skeleton Scan",
+        desc: "Quick structural analysis — minutes, not hours",
+        detail: {
+          title: "Skeleton Scan (minutes)",
+          code: `# Project Overview\n\nLanguage: TypeScript (Express.js)\nPackage manager: npm\nFiles: 847 files, ~45K LoC\nTest framework: Jest\nCI: GitHub Actions\nDatabase: PostgreSQL + Prisma ORM\n\nKey directories:\n  src/routes/       - 23 route files\n  src/middleware/    - 8 middleware files\n  src/models/       - 12 Prisma models\n  src/services/     - 15 service files\n  tests/            - 156 test files`,
+          note: "<strong>Stage 0a</strong> captures structure only — no semantic understanding. Directory map, languages, packages, CI, entry points. Output is purely structural.",
+          artifacts: [
+            {name:"knowledge/project-overview.md", path:".tenet/knowledge/project-overview.md", status:"new"},
+          ],
+          flow: [{label:"Detect",state:"done"},{label:"Scan 0a",state:"active"},{label:"Scan 0b",state:"pending"},{label:"Scan 0c",state:"pending"},{label:"Interview",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Stage 0b: Targeted Deep Scan",
+        desc: "Only auth-related files scanned — not the whole codebase",
+        detail: {
+          title: "Targeted Scan: Auth Subsystem",
+          note: "User said \"OAuth\" → scan ONLY auth-related files: middleware, session models, routes, config. <strong>Not the other 800 files.</strong>",
+          code: `# Scanned files (auth-related):\nsrc/middleware/auth.ts        - JWT validation\nsrc/middleware/session.ts     - Express session\nsrc/routes/auth.ts            - login/register/logout\nsrc/models/User.ts            - Prisma User model\nsrc/services/authService.ts   - password hashing, JWT\nsrc/config/auth.ts            - JWT secret, expiry\ntests/auth/                   - 12 test files`,
+          knowledgeWrite: {concern:"auth", confidence:"observed_from_existing_code", text:"Current auth: JWT-based. Tokens issued on login, validated in middleware. No refresh tokens. Session stored in express-session with Redis."},
+          artifacts: [
+            {name:"knowledge/auth.md", path:".tenet/knowledge/auth.md", status:"new"},
+          ],
+          flow: [{label:"Detect",state:"done"},{label:"Scan 0a",state:"done"},{label:"Scan 0b",state:"active"},{label:"Scan 0c",state:"pending"},{label:"Interview",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Stage 0c: Interface Extraction",
+        desc: "Public contracts extracted for the dependency graph",
+        detail: {
+          title: "Interface Extraction",
+          code: `# Extracted Auth Interfaces\n\n## Routes\nPOST /auth/login    → { token: string }\nPOST /auth/register → { user: User }\nPOST /auth/logout   → { success: boolean }\n\n## Middleware\nauthMiddleware(req, res, next)\n  - Reads: Authorization header (Bearer token)\n  - Sets: req.user = { id, email, role }\n\n## Models\nUser { id, email, passwordHash, role, createdAt }\n\n## Services\nauthService.hashPassword(pw): string\nauthService.verifyPassword(pw, hash): boolean\nauthService.generateToken(user): string\nauthService.validateToken(token): User | null`,
+          note: "These interfaces are what the dependency graph will reference. Any job that touches auth knows exactly what contracts exist. Knowledge is tagged <code>[observed_from_existing_code]</code> — it's real, but not verified by our tests yet.",
+          artifacts: [
+            {name:"knowledge/auth.md", path:".tenet/knowledge/auth.md", status:"modified"},
+            {name:"planning/decomposition.md", path:".tenet/planning/decomposition.md", status:"new"},
+          ],
+          flow: [{label:"Detect",state:"done"},{label:"Scan 0a",state:"done"},{label:"Scan 0b",state:"done"},{label:"Scan 0c",state:"done"},{label:"Interview",state:"active"}],
+        }
+      },
+      {
+        phase: "interview", title: "Interview (with existing context)",
+        desc: "Interviewer already knows the codebase structure",
+        detail: {
+          title: "Brownfield Interview",
+          chat: [
+            {role:"agent", text:"I've scanned your auth subsystem. You currently use JWT without refresh tokens. For OAuth, I need to clarify:\n\n1. Which providers? Google, GitHub, both?\n2. Should OAuth <strong>replace</strong> password auth or be an <strong>additional</strong> option?\n3. Your current User model has passwordHash. OAuth users won't have one — how should we handle that?\n4. PKCE flow or implicit grant?"},
+            {role:"user", text:"Google only for now, additional option alongside password. OAuth users get a null passwordHash. PKCE for sure."},
+            {role:"agent", text:"Your current authMiddleware reads JWT from Bearer header. OAuth will also issue JWTs, so existing middleware should work. But we need:\n• OAuth callback route\n• Google provider config\n• User model: add googleId, authProvider fields\n• Migration for schema change\n\nShall I add a danger zone for the existing auth middleware? Changes there could break all auth."},
+            {role:"user", text:"Yes, mark the existing middleware as danger zone. Only extend, don't rewrite."},
+          ],
+          note: "The brownfield interview is <strong>much more concrete</strong> than greenfield because the system already knows the codebase. It can ask specific questions about existing interfaces.",
+          artifacts: [
+            {name:"interview/current.md", path:".tenet/interview/current.md", status:"new"},
+            {name:"harness/current.md", path:".tenet/harness/current.md", status:"new"},
+          ],
+          flow: [{label:"Scan",state:"done"},{label:"Interview",state:"active"},{label:"Spec",state:"pending"},{label:"Decompose",state:"pending"},{label:"Execute",state:"pending"}],
+        }
+      },
+      {
+        phase: "decomp", title: "Jobs Decomposed with Danger Zones",
+        desc: "Harness protects existing auth middleware",
+        detail: {
+          title: "Brownfield Decomposition",
+          dag: [
+            {id:"J001",label:"JOB-001: Schema Migration",state:"pending",deps:[]},
+            {id:"J002",label:"JOB-002: Google OAuth Config",state:"pending",deps:[]},
+            {id:"J003",label:"JOB-003: OAuth Routes",state:"pending",deps:["J001","J002"]},
+            {id:"J004",label:"JOB-004: PKCE Flow",state:"pending",deps:["J003"]},
+            {id:"J005",label:"JOB-005: Tests + Integration",state:"pending",deps:["J004"]},
+          ],
+          code: `# Harness: Quality Contract\n\n## Danger Zones (do not modify)\n- src/middleware/auth.ts\n- src/middleware/session.ts\n\n## Requires Review\n- Schema migration changes\n- Changes to existing API routes\n\n## Testing Requirements\nunit_tests: required for all new code\nintegration_tests: required for OAuth flow\nexisting_tests: must not break (regression)\n\n## Architecture Rules\n- Extend auth, don't rewrite\n- New OAuth routes must follow existing route patterns\n- All OAuth endpoints must validate PKCE parameters`,
+          note: "The harness <strong>protects existing working code</strong>. The agent cannot modify auth.ts middleware — only create new middleware alongside it. Schema changes require approval.",
+          artifacts: [
+            {name:"planning/decomposition.md", path:".tenet/planning/decomposition.md", status:"modified"},
+            {name:"jobs/JOB-001..005.md", path:".tenet/jobs/", status:"new"},
+          ],
+          flow: [{label:"Scan",state:"done"},{label:"Interview",state:"done"},{label:"Spec",state:"done"},{label:"Decompose",state:"done"},{label:"Execute",state:"active"}],
+        }
+      },
+    ]
+  },
+
+  midrun: {
+    title: "Mid-Run Steer: User Changes Direction",
+    steps: [
+      {
+        phase: "exec", title: "Agent is Working on JOB-005...",
+        desc: "Hour 3 of execution. 5 of 8 jobs complete.",
+        detail: {
+          title: "Agent Working Autonomously",
+          dag: [
+            {id:"J001",label:"JOB-001",state:"done"},{id:"J002",label:"JOB-002",state:"done"},
+            {id:"J003",label:"JOB-003",state:"done"},{id:"J004",label:"JOB-004",state:"done"},
+            {id:"J005",label:"JOB-005: Player UI",state:"current"},
+            {id:"J006",label:"JOB-006",state:"pending"},{id:"J007",label:"JOB-007",state:"pending"},
+            {id:"J008",label:"JOB-008",state:"pending"},
+          ],
+          code: `# Status (hour 3)\n\n- Jobs completed: 4/8\n- Current: JOB-005 (Player Controls UI)\n- Elapsed: 3h 05m\n- Steer inbox: empty`,
+          note: "The agent is on hour 3, happily working on player controls. The user hasn't intervened since the interview phase.",
+          flow: [{label:"JOB-001-004",state:"done"},{label:"JOB-005",state:"active"},{label:"JOB-006-008",state:"pending"}],
+        }
+      },
+      {
+        phase: "steer", title: "User Writes a Context Message",
+        desc: "User drops info into steer/inbox.md without stopping the agent",
+        detail: {
+          title: "Async Steer: Context Message",
+          chat: [
+            {role:"user", label:"STEER INBOX", text:"Our users have been complaining about the existing mobile web experience. Make sure the player controls are touch-friendly with large tap targets (min 44px)."},
+          ],
+          code: `# steer/inbox.md\n\n## MSG-001 [2026-04-03 14:30] [STATUS: received]\nOur users have been complaining about the existing\nmobile web experience. Make sure the player controls\nare touch-friendly with large tap targets (min 44px).`,
+          note: "This is a <strong>context message</strong> (no prefix). The agent doesn't read it immediately — it checks at the next natural checkpoint (after current job's eval). The message is auto-tagged with affected jobs.",
+          artifacts: [
+            {name:"steer/inbox.md", path:".tenet/steer/inbox.md", status:"modified"},
+          ],
+          flow: [{label:"User writes",state:"active"},{label:"Agent finishes JOB-005",state:"pending"},{label:"Reads steer",state:"pending"},{label:"Folds into context",state:"pending"}],
+        }
+      },
+      {
+        phase: "steer", title: "Agent Finishes JOB-005, Reads Steer",
+        desc: "At checkpoint: agent discovers steer message, classifies it",
+        detail: {
+          title: "Steer Processing at Checkpoint",
+          chat: [
+            {role:"agent", label:"ORCHESTRATOR", text:"Checkpoint reached. Checking steer inbox...\n\n<strong>Message found:</strong> Mobile UX concern re: touch targets\n<strong>Classification:</strong> CONTEXT (no prefix)\n<strong>Affected jobs:</strong> [JOB-005: Player UI, JOB-007: Dashboard]\n\nJOB-005 just completed — this info will be folded into the compiled context for JOB-007 (Dashboard). The player controls from JOB-005 may need a follow-up job if they don't already meet the 44px requirement.\n\nAdding to compiled context for remaining jobs."},
+          ],
+          code: `# steer/inbox.md\n\n## MSG-001 [2026-04-03 14:30] [STATUS: acted_on]\nOur users have been complaining about the existing\nmobile web experience. Make sure the player controls\nare touch-friendly with large tap targets (min 44px).\n> Agent: Acknowledged. JOB-005 already completed — touch target concern folded into JOB-007 compiled context. Follow-up job may be created for JOB-005 if 44px requirement not already met.`,
+          note: "Context messages are <strong>merged into compiled context</strong> for affected pending jobs. The orchestrator tags the message with relevant job IDs automatically. Since JOB-005 is done, a follow-up job may be created.",
+          artifacts: [
+            {name:"steer/processed.md", path:".tenet/steer/processed.md", status:"modified"},
+            {name:"steer/inbox.md", path:".tenet/steer/inbox.md", status:"modified"},
+          ],
+          flow: [{label:"User writes",state:"done"},{label:"JOB-005 done",state:"done"},{label:"Reads steer",state:"active"},{label:"Folds into context",state:"pending"}],
+        }
+      },
+      {
+        phase: "steer", title: "User Sends a Directive",
+        desc: "DIRECTIVE: prefix triggers queue reordering",
+        detail: {
+          title: "Async Steer: Directive",
+          chat: [
+            {role:"user", label:"STEER INBOX", text:"DIRECTIVE: Skip the admin dashboard (JOB-007) for now. Focus on getting playback rock-solid first. Add a stress test job for the audio player."},
+            {role:"agent", label:"ORCHESTRATOR", text:"<strong>Directive received.</strong>\n\n• JOB-007 (Dashboard) moved to backlog\n• New JOB-009 created: Audio Player Stress Test\n• JOB-009 inserted into queue after JOB-006\n• Spec updated: Dashboard is now post-v1\n\n<strong>Cascade check triggered:</strong>\n• Spec ↔ Queue alignment: ✓ (dashboard removed from v1 scope)\n• No contradictions found"},
+          ],
+          code: `# steer/inbox.md\n\n## MSG-002 [2026-04-03 15:30] [STATUS: resolved]\nDIRECTIVE: Skip the admin dashboard (JOB-007) for now...\n> Agent: Queue reordered. JOB-007 moved to backlog. New JOB-009 created. Cascade check passed.`,
+          note: "Directives change the execution plan. The orchestrator <strong>reorders the job queue</strong>, may create new jobs, and triggers a cascade check to ensure spec/queue alignment.",
+          dag: [
+            {id:"J001",label:"JOB-001",state:"done"},{id:"J002",label:"JOB-002",state:"done"},
+            {id:"J003",label:"JOB-003",state:"done"},{id:"J004",label:"JOB-004",state:"done"},
+            {id:"J005",label:"JOB-005",state:"done"},
+            {id:"J006",label:"JOB-006: Resume",state:"current"},
+            {id:"J009",label:"JOB-009: Stress Test",state:"pending"},
+            {id:"J008",label:"JOB-008: Integration",state:"pending"},
+            {id:"J007",label:"JOB-007: Dashboard",state:"blocked"},
+          ],
+          artifacts: [
+            {name:"jobs/JOB-009.md", path:".tenet/jobs/JOB-009.md", status:"new"},
+            {name:"status/job-queue.md", path:".tenet/status/job-queue.md", status:"modified"},
+            {name:"status/backlog.md", path:".tenet/status/backlog.md", status:"modified"},
+            {name:"spec/current.md", path:".tenet/spec/current.md", status:"modified"},
+          ],
+          flow: [{label:"Directive",state:"done"},{label:"Queue reorder",state:"done"},{label:"Cascade check",state:"active"},{label:"Continue",state:"pending"}],
+        }
+      },
+      {
+        phase: "steer", title: "Emergency: Production Issue!",
+        desc: "EMERGENCY: prefix halts execution immediately",
+        detail: {
+          title: "Emergency Steer",
+          chat: [
+            {role:"user", label:"STEER INBOX", text:"EMERGENCY: The audio player is causing memory leaks in Safari. Users report the browser tab crashing after 30 minutes of playback."},
+            {role:"agent", label:"ORCHESTRATOR", text:"<strong>🚨 EMERGENCY — Immediate halt</strong>\n\nAll pending jobs paused.\n\nCreating blocking incident job:\n• JOB-INCIDENT-001: Safari Memory Leak\n• Priority: CRITICAL\n• Inserted at top of queue\n• All other jobs blocked until resolved\n\nAgent will investigate the audio player implementation from JOB-002 and the Howler.js wrapper."},
+          ],
+          code: `# steer/inbox.md\n\n## MSG-003 [2026-04-03 16:00] [STATUS: acknowledged]\nEMERGENCY: The audio player is causing memory leaks in Safari...\n> Agent: EMERGENCY received. All jobs halted. Incident job JOB-INCIDENT-001 created at top of queue.`,
+          note: "Emergencies bypass the normal flow. The agent <strong>halts immediately</strong>, creates a blocking incident job, and everything else waits. This is the only steer type that interrupts mid-job.",
+          artifacts: [
+            {name:"jobs/JOB-INCIDENT-001.md", path:".tenet/jobs/JOB-INCIDENT-001.md", status:"new"},
+            {name:"status/current.md", path:".tenet/status/current.md", status:"modified"},
+          ],
+          flow: [{label:"EMERGENCY",state:"active"},{label:"Halt all",state:"active"},{label:"Incident job",state:"active"},{label:"Fix",state:"pending"},{label:"Resume",state:"pending"}],
+        }
+      },
+    ]
+  },
+
+  failure: {
+    title: "Failure & Recovery: Stagnation Handling",
+    steps: [
+      {
+        phase: "exec", title: "JOB-004 Author Run: Attempt 1",
+        desc: "Agent tries to implement WebSocket reconnection logic",
+        detail: {
+          title: "First Attempt",
+          chat: [
+            {role:"agent", label:"AUTHOR", text:"Implementing WebSocket reconnection with exponential backoff...\n\nWriting: src/services/wsReconnect.ts\nWriting: tests/wsReconnect.test.ts"},
+          ],
+          flow: [{label:"Attempt 1",state:"active"},{label:"Eval",state:"pending"},{label:"Attempt 2?",state:"pending"}],
+        }
+      },
+      {
+        phase: "eval", title: "Mechanical Eval Fails",
+        desc: "Tests fail — reconnection timing is wrong",
+        detail: {
+          title: "Eval Failure: Stage 1 (Mechanical)",
+          code: `$ npm run test -- --filter wsReconnect\n\n✗ reconnects after disconnect (timeout)\n  Expected: reconnect within 1000ms\n  Actual: reconnect after 3200ms\n  \n✗ respects max retry limit\n  Expected: stop after 5 retries\n  Actual: continued to 8 retries\n\n2 failed, 1 passed`,
+          note: "Stage 1 fails. <strong>No token spend on deeper eval.</strong> Agent enters the Reflect step before retrying.",
+          flow: [{label:"Attempt 1",state:"done"},{label:"Mech Eval ✗",state:"active"},{label:"Reflect",state:"pending"},{label:"Attempt 2",state:"pending"}],
+        }
+      },
+      {
+        phase: "failure", title: "Reflect Step (NOT immediate retry)",
+        desc: "Agent analyzes root cause before trying again",
+        detail: {
+          title: "Reflect: Root Cause Analysis",
+          chat: [
+            {role:"agent", label:"REFLECT", text:"<strong>What failed:</strong> Reconnection timing and retry limits\n\n<strong>Root cause:</strong> I used setTimeout with cumulative delay calculation, but the backoff multiplier compounds faster than expected. The base delay of 200ms × 2^n reaches 3200ms by attempt 4.\n\n<strong>Pattern check (lessons.md):</strong> No prior similar failures.\n\n<strong>Alternative approaches:</strong>\n1. Use a capped backoff: min(delay × 2^n, maxDelay)\n2. Use a library (reconnecting-websocket)\n\n<strong>Recommendation:</strong> Approach 1 — add cap at 1000ms. Simple fix, maintains our code."},
+          ],
+          note: "The reflect step produces <strong>root cause analysis</strong>, not just \"the test failed.\" It generates alternatives and recommends the next approach. The failure trace <strong>stays in session context</strong> (error preservation).",
+          flow: [{label:"Attempt 1 ✗",state:"done"},{label:"Reflect",state:"active"},{label:"Attempt 2",state:"pending"},{label:"Eval",state:"pending"}],
+        }
+      },
+      {
+        phase: "exec", title: "Attempt 2: Fix Applied",
+        desc: "Agent applies the recommended fix from reflection",
+        detail: {
+          title: "Retry with Reflection Context",
+          note: "The retry session includes the <strong>failure trace and reflection</strong> in its context. The agent can see exactly what went wrong and the recommended approach. This is the \"leave wrong turns in context\" principle.",
+          code: `// Fix: Add delay cap\nconst delay = Math.min(\n  baseDelay * Math.pow(2, attempt),\n  maxDelay  // cap at 1000ms\n);\n\n// Fix: Enforce max retries\nif (attempt >= maxRetries) {\n  this.emit('max-retries-exceeded');\n  return;\n}`,
+          flow: [{label:"Attempt 1 ✗",state:"done"},{label:"Reflect",state:"done"},{label:"Attempt 2",state:"active"},{label:"Eval",state:"pending"}],
+        }
+      },
+      {
+        phase: "eval", title: "Attempt 2: All Evals Pass!",
+        desc: "Mechanical + property + critic all pass",
+        detail: {
+          title: "Full Eval Pipeline Passes",
+          code: `Stage 1 (Mechanical): ✓ 3/3 tests pass\nStage 1.5 (Property): ✓ delay always <= maxDelay\n                      ✓ retries always <= maxRetries\nStage 3 (Critic): ✓ No spec mismatches found\n\nVERDICT: PASS`,
+          note: "Lesson learned is promoted to lessons.md only now (at job completion, not during failure).",
+          artifacts: [
+            {name:"lessons/current.md", path:".tenet/lessons/current.md", status:"modified"},
+          ],
+          flow: [{label:"Attempt 1 ✗",state:"done"},{label:"Reflect",state:"done"},{label:"Attempt 2 ✓",state:"done"},{label:"All evals ✓",state:"active"}],
+        }
+      },
+      {
+        phase: "failure", title: "Scenario: What if it keeps failing?",
+        desc: "3 consecutive failures → stagnation detected → persona rotation",
+        detail: {
+          title: "Stagnation Detection",
+          chat: [
+            {role:"agent", label:"DETECTOR", text:"<strong>⚠ Stagnation detected on JOB-007</strong>\n\n• Same test failing for 3 consecutive attempts\n• Edit-revert cycle detected (similar diffs)\n• Token spend: 4,200 tokens with no progress\n\nSwitching to <strong>Researcher</strong> persona:\n\"Stop coding. Read the docs and source code for the library we're using. The issue might be in our understanding, not our code.\""},
+            {role:"agent", label:"RESEARCHER", text:"Found it. The library's API changed in v3.0. We're calling .connect() but it was renamed to .open(). The migration guide is at...\n\nFix: Replace .connect() with .open() everywhere."},
+          ],
+          note: "After 3 failures, the agent doesn't retry harder — it <strong>switches thinking mode</strong>. The Researcher persona focuses on reading docs instead of writing code. If still stuck after 2 more attempts, it <strong>halts and waits for user steer</strong>.",
+          flow: [{label:"Attempt 1 ✗",state:"done"},{label:"Attempt 2 ✗",state:"done"},{label:"Attempt 3 ✗",state:"done"},{label:"Persona Switch",state:"active"},{label:"Researcher tries",state:"pending"}],
+        }
+      },
+      {
+        phase: "failure", title: "Persistent Stagnation: Halt & Ask",
+        desc: "If persona rotation fails too — halt, don't burn hours",
+        detail: {
+          title: "Halt & Request User Steer",
+          chat: [
+            {role:"agent", label:"ORCHESTRATOR", text:"<strong>JOB-007 blocked after 5 attempts</strong> (3 original + 2 after persona rotation)\n\nActions taken:\n1. Git stash to last known good state\n2. Failure pattern logged in lessons.md\n3. Job marked as \"blocked\" in status.md\n4. Moving to next independent job (JOB-008)\n\n<strong>Steer request for user:</strong>\n\"JOB-007 (Dashboard layout) is blocked. The CSS grid layout breaks on Safari < 16 due to a subgrid support gap. I tried:\n• Flexbox fallback (breaks column alignment)\n• CSS @supports query (not granular enough)\n• PostCSS plugin (build errors)\n\nHow should I proceed? Options:\nA) Drop Safari < 16 support\nB) Use a different layout approach entirely\nC) Skip this job, move to next\""},
+          ],
+          note: "The agent <strong>doesn't burn 8 more hours on a dead end</strong>. It halts the blocked job, moves to the next independent one, and gives the user a clear summary of what was tried and why it failed. The pipeline keeps moving.",
+          dag: [
+            {id:"J007",label:"JOB-007: Dashboard",state:"blocked"},
+            {id:"J008",label:"JOB-008: Integration",state:"current"},
+          ],
+          artifacts: [
+            {name:"status/current.md", path:".tenet/status/current.md", status:"modified"},
+            {name:"lessons/current.md", path:".tenet/lessons/current.md", status:"modified"},
+            {name:"steer/inbox.md", path:".tenet/steer/inbox.md", status:"modified"},
+          ],
+          flow: [{label:"5 attempts ✗",state:"done"},{label:"Halt JOB-007",state:"done"},{label:"Move to JOB-008",state:"active"},{label:"Wait for user",state:"pending"}],
+        }
+      },
+    ]
+  }
+};
+
+// --- App State ---
+let currentScenario = 'greenfield';
+let currentStep = 0;
+let autoPlaying = false;
+let autoTimer = null;
+
+function getSteps() { return SCENARIOS[currentScenario].steps; }
+
+function renderTimeline() {
+  const steps = getSteps();
+  const tl = document.getElementById('timeline');
+  tl.innerHTML = steps.map((s, i) => `
+    <div class="step phase-${s.phase} ${i === currentStep ? 'active' : i < currentStep ? 'completed' : ''}" data-index="${i}" onclick="goToStep(${i})">
+      <div class="dot"></div>
+      <div class="step-content">
+        <div class="step-phase">${s.phase}</div>
+        <div class="step-title">${s.title}</div>
+        <div class="step-desc">${s.desc}</div>
+      </div>
+    </div>
+  `).join('');
+  updateControls();
+  renderDetail();
+  // Scroll active step into view
+  setTimeout(() => {
+    const active = tl.querySelector('.step.active');
+    if (active) active.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }, 100);
+}
+
+function renderDetail() {
+  const step = getSteps()[currentStep];
+  const d = step.detail;
+  const panel = document.getElementById('detailContent');
+  let html = '';
+
+  html += `<div class="detail-section"><h2>${d.title}</h2></div>`;
+
+  // Flow
+  if (d.flow) {
+    html += `<div class="visual-flow"><div class="vf-title">Pipeline Stage</div><div class="vf-nodes">`;
+    d.flow.forEach((n, i) => {
+      if (i > 0) html += `<span class="vf-arrow">&rarr;</span>`;
+      html += `<div class="vf-node ${n.state}">${n.label}</div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // DAG
+  if (d.dag) {
+    html += `<div class="visual-flow"><div class="vf-title">Job Dependency Graph</div><div class="dag">`;
+    d.dag.forEach(n => {
+      html += `<div class="dag-row"><div class="dag-node ${n.state}">${n.label}</div></div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Meters
+  if (d.meters) {
+    d.meters.forEach(m => {
+      const pct = Math.round((m.value / m.max) * 100);
+      html += `<div class="meter"><div class="meter-label"><span>${m.label}</span><span>${m.value}/${m.max}</span></div><div class="meter-bar"><div class="meter-fill ${m.color}" style="width:${pct}%"></div></div></div>`;
+    });
+  }
+
+  // Ambiguity
+  if (d.ambiguity) {
+    const a = d.ambiguity;
+    const pct = Math.round(a.clarity * 100);
+    const gatePct = Math.round(a.gate * 100);
+    html += `<div class="visual-flow"><div class="vf-title">Ambiguity Gate</div>`;
+    html += `<div class="meter"><div class="meter-label"><span>Clarity Score</span><span style="color:${a.pass ? 'var(--green)' : 'var(--orange)'}">${(a.clarity).toFixed(2)} ${a.pass ? '&ge;' : '<'} ${a.gate} ${a.pass ? '&#10003;' : '&#10007;'}</span></div>`;
+    html += `<div class="meter-bar" style="position:relative"><div class="meter-fill ${a.pass ? 'green' : 'orange'}" style="width:${pct}%"></div><div style="position:absolute;left:${gatePct}%;top:-2px;bottom:-2px;width:2px;background:var(--text)"></div></div></div>`;
+    html += `</div>`;
+  }
+
+  // Chat
+  if (d.chat) {
+    html += `<div class="chat"><div class="chat-header">Conversation</div><div class="chat-body">`;
+    d.chat.forEach(m => {
+      const cls = m.role === 'user' ? 'msg-user' : 'msg-agent';
+      const label = m.label || (m.role === 'user' ? 'You' : 'Agent');
+      html += `<div class="msg ${cls}"><div><div class="msg-label">${label}</div><div class="msg-bubble">${m.text}</div></div></div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Note
+  if (d.note) {
+    html += `<div style="background:rgba(79,163,247,0.08);border:1px solid rgba(79,163,247,0.2);border-radius:8px;padding:12px;margin-bottom:12px;font-size:13px;line-height:1.6">${d.note}</div>`;
+  }
+
+  // Code
+  if (d.code) {
+    html += `<div class="code-preview">${escHtml(d.code)}</div>`;
+  }
+  if (d.code2) {
+    html += `<div class="code-preview">${escHtml(d.code2)}</div>`;
+  }
+  if (d.jobCode) {
+    html += `<div class="code-preview">${escHtml(d.jobCode)}</div>`;
+  }
+
+  // Knowledge write
+  if (d.knowledgeWrite) {
+    const kw = d.knowledgeWrite;
+    const confCls = kw.confidence.includes('tested') ? 'conf-tested' : kw.confidence.includes('impl') || kw.confidence.includes('observed') ? 'conf-impl' : 'conf-decision';
+    html += `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px">`;
+    html += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">Knowledge Write</div>`;
+    html += `<div style="font-weight:600;margin-bottom:4px">knowledge/${kw.concern}.md <span class="conf ${confCls}">${kw.confidence}</span></div>`;
+    html += `<div style="font-size:13px;color:var(--muted)">${kw.text}</div></div>`;
+  }
+
+  // Artifacts
+  if (d.artifacts && d.artifacts.length > 0) {
+    html += `<div class="detail-section"><h3>Artifacts</h3>`;
+    d.artifacts.forEach(a => {
+      html += `<div class="artifact ${a.status}"><div class="a-label">${a.status === 'new' ? '+ Created' : a.status === 'modified' ? '~ Modified' : 'Existing'}</div><div class="a-name">${a.name}</div><div class="a-path">${a.path}</div></div>`;
+    });
+    html += `</div>`;
+  }
+
+  panel.innerHTML = html;
+}
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function goToStep(i) {
+  const steps = getSteps();
+  if (i < 0 || i >= steps.length) return;
+  currentStep = i;
+  renderTimeline();
+}
+
+function updateControls() {
+  const steps = getSteps();
+  document.getElementById('prevBtn').disabled = currentStep === 0;
+  document.getElementById('nextBtn').disabled = currentStep === steps.length - 1;
+  document.getElementById('stepCounter').textContent = `Step ${currentStep + 1} / ${steps.length}`;
+}
+
+document.getElementById('nextBtn').addEventListener('click', () => goToStep(currentStep + 1));
+document.getElementById('prevBtn').addEventListener('click', () => goToStep(currentStep - 1));
+
+// Auto-play
+document.getElementById('autoBtn').addEventListener('click', function() {
+  if (autoPlaying) {
+    clearInterval(autoTimer);
+    autoPlaying = false;
+    this.textContent = 'Auto-play';
+    this.classList.remove('btn-primary');
+  } else {
+    autoPlaying = true;
+    this.innerHTML = '<span class="auto-indicator"><span class="dot-anim"></span> Playing</span>';
+    this.classList.add('btn-primary');
+    const speed = 6 - document.getElementById('speedSlider').value; // invert: higher slider = faster
+    autoTimer = setInterval(() => {
+      if (currentStep < getSteps().length - 1) {
+        goToStep(currentStep + 1);
+      } else {
+        clearInterval(autoTimer);
+        autoPlaying = false;
+        document.getElementById('autoBtn').textContent = 'Auto-play';
+        document.getElementById('autoBtn').classList.remove('btn-primary');
+      }
+    }, speed * 1200);
+  }
+});
+
+// Scenario tabs
+document.querySelectorAll('.scenario-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.scenario-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentScenario = tab.dataset.scenario;
+    currentStep = 0;
+    if (autoPlaying) {
+      clearInterval(autoTimer);
+      autoPlaying = false;
+      document.getElementById('autoBtn').textContent = 'Auto-play';
+      document.getElementById('autoBtn').classList.remove('btn-primary');
+    }
+    renderTimeline();
+  });
+});
+
+// Keyboard navigation
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); goToStep(currentStep + 1); }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); goToStep(currentStep - 1); }
+  if (e.key === ' ') { e.preventDefault(); document.getElementById('autoBtn').click(); }
+});
+
+// Init
+renderTimeline();
+</script>
+</body>
+</html>

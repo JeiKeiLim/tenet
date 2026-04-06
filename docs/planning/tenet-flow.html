@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tenet System Flow</title>
+    <style>
+        :root {
+            --bg-base: #000000;
+            --bg-surface: #0d1117;
+            --bg-node: #161b22;
+            --border-subtle: #30363d;
+            --text-light: #e6edf3;
+            --text-muted: #8b949e;
+            
+            --phase-blue: #4fa3f7;
+            --phase-purple: #a78bfa;
+            --phase-green: #3fb950;
+            --phase-orange: #d29922;
+            --phase-red: #f85149;
+            --phase-teal: #2dd4bf;
+            
+            --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, monospace;
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-light);
+            font-family: var(--font-sans);
+            overflow: hidden;
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Sidebar Legend & Mechanisms */
+        .sidebar {
+            width: 320px;
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border-subtle);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            overflow-y: auto;
+            z-index: 10;
+        }
+
+        .brand {
+            font-family: var(--font-mono);
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -1px;
+            color: var(--text-light);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand::before {
+            content: '';
+            display: block;
+            width: 16px;
+            height: 16px;
+            background: var(--text-light);
+            border-radius: 2px;
+        }
+
+        .section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            font-family: var(--font-mono);
+        }
+
+        .legend-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .mechanism-card {
+            background: var(--bg-node);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 13px;
+            color: var(--text-muted);
+            transition: all 0.2s ease;
+        }
+
+        .mechanism-card:hover {
+            border-color: var(--text-light);
+            color: var(--text-light);
+        }
+
+        .mechanism-card h4 {
+            color: var(--text-light);
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+
+        /* Main Canvas */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: radial-gradient(circle at 50% 50%, var(--bg-surface) 0%, var(--bg-base) 100%);
+            cursor: grab;
+        }
+
+        .canvas-container:active {
+            cursor: grabbing;
+        }
+
+        #flow-canvas {
+            width: 3000px;
+            height: 2000px;
+            position: absolute;
+            transform-origin: 0 0;
+        }
+
+        /* SVG Styles */
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .edge {
+            fill: none;
+            stroke: var(--border-subtle);
+            stroke-width: 2;
+            transition: stroke 0.3s, stroke-width 0.3s;
+        }
+
+        .edge.animated {
+            stroke-dasharray: 6;
+            animation: dash 1s linear infinite;
+        }
+
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -12;
+            }
+        }
+
+        .node-container {
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .node-container:hover {
+            transform: scale(1.02);
+        }
+
+        .node-bg {
+            fill: var(--bg-node);
+            stroke: var(--border-subtle);
+            stroke-width: 1.5;
+            rx: 8;
+        }
+
+        .node-container:hover .node-bg {
+            stroke: var(--text-light);
+            filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.1));
+        }
+
+        .node-label {
+            font-family: var(--font-sans);
+            font-size: 14px;
+            font-weight: 600;
+            fill: var(--text-light);
+            pointer-events: none;
+        }
+
+        .node-sub {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            fill: var(--text-muted);
+            pointer-events: none;
+        }
+
+        /* Custom phase colors for borders/glows applied via JS */
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="brand">TENET</div>
+        
+        <div>
+            <div class="section-title">Phases</div>
+            <div class="legend-grid">
+                <div class="legend-item"><div class="legend-color" style="background: var(--phase-blue)"></div> Ideation / Interview</div>
+                <div class="legend-item"><div class="legend-color" style="background: var(--phase-purple)"></div> Spec / Harness</div>
+                <div class="legend-item"><div class="legend-color" style="background: var(--phase-green)"></div> Execution</div>
+                <div class="legend-item"><div class="legend-color" style="background: var(--phase-orange)"></div> Evaluation</div>
+                <div class="legend-item"><div class="legend-color" style="background: var(--phase-red)"></div> Failure / Recovery</div>
+                <div class="legend-item"><div class="legend-color" style="background: var(--phase-teal)"></div> Steer / Bootstrap</div>
+            </div>
+        </div>
+
+        <div>
+            <div class="section-title">Supporting Mechanisms</div>
+            
+            <div class="mechanism-card">
+                <h4>Async Steer</h4>
+                <p>inbox.md lifecycle: received → acknowledged → acted_on → resolved</p>
+            </div>
+            
+            <div class="mechanism-card">
+                <h4>Bootstrap Compiler</h4>
+                <p>Filter by relevance → Order by recency → Inject interfaces → Append objectives</p>
+            </div>
+            
+            <div class="mechanism-card">
+                <h4>Document Architecture</h4>
+                <p>Strict .tenet/ layout with architectural invariants enforced</p>
+            </div>
+            
+            <div class="mechanism-card">
+                <h4>Health & Cascades</h4>
+                <p>Periodic audit for orphans. Cascade checks: doc↔doc, code↔doc, trajectory↔purpose</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="canvas-container" id="canvas-container">
+        <svg id="flow-canvas">
+            <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border-subtle)" />
+                </marker>
+                <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--phase-blue)" />
+                </marker>
+                <marker id="arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--phase-purple)" />
+                </marker>
+                <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--phase-green)" />
+                </marker>
+                <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--phase-orange)" />
+                </marker>
+                <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--phase-red)" />
+                </marker>
+                <filter id="glow">
+                    <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                    <feMerge>
+                        <feMergeNode in="coloredBlur"/>
+                        <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                </filter>
+            </defs>
+            <g id="edges-layer"></g>
+            <g id="nodes-layer"></g>
+        </svg>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('flow-canvas');
+        const nodesLayer = document.getElementById('nodes-layer');
+        const edgesLayer = document.getElementById('edges-layer');
+        
+        // Data structure
+        const nodes = [
+            // Layer 1: Entry
+            { id: 'mode-full', label: 'Full Mode', sub: 'No context. Complete lifecycle.', x: 400, y: 50, w: 220, h: 60, color: 'var(--text-light)' },
+            { id: 'mode-std', label: 'Standard Mode', sub: 'Partial context. Skip interview.', x: 700, y: 50, w: 220, h: 60, color: 'var(--text-light)' },
+            { id: 'mode-quick', label: 'Quick Mode', sub: 'Full context. Direct execution.', x: 1000, y: 50, w: 220, h: 60, color: 'var(--text-light)' },
+
+            // Layer 2: Crystallization
+            { id: 'ideation', label: 'Ideation', sub: 'Initial user input', x: 400, y: 160, w: 220, h: 60, color: 'var(--phase-blue)' },
+            { id: 'interview', label: 'Interview', sub: 'Socratic + Ontological', x: 400, y: 260, w: 220, h: 60, color: 'var(--phase-blue)' },
+            { id: 'gate', label: 'Ambiguity Gate', sub: 'Clarity ≥ 0.8 (G:0.4, C:0.3, S:0.3)', x: 400, y: 360, w: 220, h: 60, color: 'var(--phase-purple)' },
+            { id: 'visuals', label: 'Visual Artifacts', sub: 'Generates HTML mocks', x: 400, y: 460, w: 220, h: 60, color: 'var(--phase-purple)' },
+            { id: 'spec', label: 'Spec + Harness', sub: 'Quality Contract definition', x: 400, y: 560, w: 220, h: 60, color: 'var(--phase-purple)' },
+            { id: 'dag', label: 'Dependency Graph', sub: 'DAG of jobs to execute', x: 400, y: 660, w: 220, h: 60, color: 'var(--phase-purple)' },
+
+            // Layer 3: Execution Loop
+            { id: 'pick-job', label: 'Pick Next Job', sub: 'From DAG', x: 700, y: 660, w: 220, h: 60, color: 'var(--phase-green)' },
+            { id: 'compiler', label: 'Bootstrap Compiler', sub: 'Compile context for agent', x: 700, y: 760, w: 220, h: 60, color: 'var(--phase-teal)' },
+            { id: 'author', label: 'Author Session', sub: 'Dev Phase', x: 700, y: 860, w: 220, h: 60, color: 'var(--phase-green)' },
+            
+            // Eval Pipeline
+            { id: 'eval-mech', label: '1. Mechanical Eval', sub: 'Lint / Build / Test', x: 700, y: 960, w: 220, h: 60, color: 'var(--phase-orange)' },
+            { id: 'eval-prop', label: '1.5. Property Eval', sub: 'Property-based tests', x: 700, y: 1060, w: 220, h: 60, color: 'var(--phase-orange)' },
+            { id: 'eval-spec', label: '2. Spec Compliance', sub: 'Author evaluates vs spec', x: 700, y: 1160, w: 220, h: 60, color: 'var(--phase-orange)' },
+            { id: 'eval-purp', label: '3. Purpose Alignment', sub: 'Critic: Zero-findings rule', x: 700, y: 1260, w: 220, h: 60, color: 'var(--phase-orange)' },
+            { id: 'eval-self', label: '4. Self-questioning', sub: 'Final sanity check', x: 700, y: 1360, w: 220, h: 60, color: 'var(--phase-orange)' },
+
+            // Success Path
+            { id: 'learn', label: 'Learn', sub: 'Update docs, confidence tags', x: 1000, y: 1360, w: 220, h: 60, color: 'var(--phase-teal)' },
+            { id: 'steer', label: 'Check Steer Inbox', sub: 'Process async messages', x: 1000, y: 1260, w: 220, h: 60, color: 'var(--phase-teal)' },
+            
+            // Failure Path
+            { id: 'fix', label: 'Direct Fix', sub: 'Minor mechanical errors', x: 400, y: 960, w: 220, h: 60, color: 'var(--phase-red)' },
+            { id: 'reflect', label: 'Reflect', sub: 'Analyze spec/purpose failure', x: 400, y: 1210, w: 220, h: 60, color: 'var(--phase-red)' },
+            { id: 'stagnation', label: 'Stagnation (3 fails)', sub: 'Persona Rotation', x: 100, y: 1210, w: 220, h: 60, color: 'var(--phase-red)' },
+            { id: 'halt', label: 'Persistent (5 fails)', sub: 'Halt, move on, request steer', x: 100, y: 1360, w: 220, h: 60, color: 'var(--phase-red)' }
+        ];
+
+        const edges = [
+            // Entry
+            { from: 'mode-full', to: 'ideation' },
+            { from: 'mode-std', to: 'spec' },
+            { from: 'mode-quick', to: 'pick-job' },
+            
+            // Crystallization
+            { from: 'ideation', to: 'interview' },
+            { from: 'interview', to: 'gate' },
+            { from: 'gate', to: 'visuals', label: 'PASS' },
+            { from: 'gate', to: 'interview', label: 'FAIL', path: 'left' },
+            { from: 'visuals', to: 'spec' },
+            { from: 'spec', to: 'dag' },
+            { from: 'dag', to: 'pick-job' },
+
+            // Execution
+            { from: 'pick-job', to: 'compiler' },
+            { from: 'compiler', to: 'author' },
+            { from: 'author', to: 'eval-mech' },
+            { from: 'eval-mech', to: 'eval-prop' },
+            { from: 'eval-prop', to: 'eval-spec' },
+            { from: 'eval-spec', to: 'eval-purp' },
+            { from: 'eval-purp', to: 'eval-self' },
+
+            // Success
+            { from: 'eval-self', to: 'learn', label: 'PASS' },
+            { from: 'learn', to: 'steer' },
+            { from: 'steer', to: 'pick-job' },
+
+            // Failure routes
+            { from: 'eval-mech', to: 'fix', label: 'FAIL' },
+            { from: 'eval-prop', to: 'fix', label: 'FAIL' },
+            { from: 'fix', to: 'eval-mech' },
+            
+            { from: 'eval-spec', to: 'reflect', label: 'FAIL' },
+            { from: 'eval-purp', to: 'reflect', label: 'FAIL' },
+            { from: 'reflect', to: 'author' },
+            
+            { from: 'reflect', to: 'stagnation', label: '3x' },
+            { from: 'stagnation', to: 'author', label: 'Rotated' },
+            { from: 'stagnation', to: 'halt', label: '5x' }
+        ];
+
+        // Draw Nodes
+        nodes.forEach(n => {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('class', 'node-container');
+            g.setAttribute('transform', `translate(${n.x}, ${n.y})`);
+            g.setAttribute('id', `node-${n.id}`);
+
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('class', 'node-bg');
+            rect.setAttribute('width', n.w);
+            rect.setAttribute('height', n.h);
+            rect.style.stroke = n.color;
+            
+            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            label.setAttribute('class', 'node-label');
+            label.setAttribute('x', 20);
+            label.setAttribute('y', 26);
+            label.textContent = n.label;
+
+            const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            sub.setAttribute('class', 'node-sub');
+            sub.setAttribute('x', 20);
+            sub.setAttribute('y', 46);
+            sub.textContent = n.sub;
+
+            g.appendChild(rect);
+            g.appendChild(label);
+            g.appendChild(sub);
+            nodesLayer.appendChild(g);
+        });
+
+        // Draw Edges
+        edges.forEach(e => {
+            const fromNode = nodes.find(n => n.id === e.from);
+            const toNode = nodes.find(n => n.id === e.to);
+            if (!fromNode || !toNode) return;
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('class', 'edge');
+            
+            // Basic routing logic
+            let startX, startY, endX, endY, cp1x, cp1y, cp2x, cp2y;
+
+            // Vertical layout (standard)
+            if (fromNode.x === toNode.x && fromNode.y < toNode.y) {
+                startX = fromNode.x + fromNode.w / 2;
+                startY = fromNode.y + fromNode.h;
+                endX = toNode.x + toNode.w / 2;
+                endY = toNode.y - 4; // gap for arrow
+                cp1x = startX; cp1y = startY + 30;
+                cp2x = endX; cp2y = endY - 30;
+            } 
+            // Loop back left
+            else if (e.path === 'left') {
+                startX = fromNode.x;
+                startY = fromNode.y + fromNode.h / 2;
+                endX = toNode.x;
+                endY = toNode.y + toNode.h / 2;
+                cp1x = startX - 80; cp1y = startY;
+                cp2x = endX - 80; cp2y = endY;
+            }
+            // Horizontal left to right
+            else if (fromNode.y === toNode.y && fromNode.x < toNode.x) {
+                startX = fromNode.x + fromNode.w;
+                startY = fromNode.y + fromNode.h / 2;
+                endX = toNode.x - 4;
+                endY = toNode.y + toNode.h / 2;
+                cp1x = startX + 40; cp1y = startY;
+                cp2x = endX - 40; cp2y = endY;
+            }
+            // Horizontal right to left
+            else if (fromNode.y === toNode.y && fromNode.x > toNode.x) {
+                startX = fromNode.x;
+                startY = fromNode.y + fromNode.h / 2;
+                endX = toNode.x + toNode.w + 4;
+                endY = toNode.y + toNode.h / 2;
+                cp1x = startX - 40; cp1y = startY;
+                cp2x = endX + 40; cp2y = endY;
+            }
+            // Complex diagonals
+            else {
+                startX = fromNode.x + fromNode.w / 2;
+                startY = fromNode.y + (fromNode.y < toNode.y ? fromNode.h : 0);
+                endX = toNode.x + toNode.w / 2;
+                endY = toNode.y + (fromNode.y < toNode.y ? -4 : toNode.h + 4);
+                
+                cp1x = startX;
+                cp1y = startY + (fromNode.y < toNode.y ? 60 : -60);
+                cp2x = endX;
+                cp2y = endY + (fromNode.y < toNode.y ? -60 : 60);
+            }
+
+            path.setAttribute('d', `M ${startX} ${startY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${endX} ${endY}`);
+            
+            // Assign marker color based on node color
+            const strokeColor = fromNode.color;
+            path.style.stroke = strokeColor;
+            
+            if (strokeColor.includes('blue')) path.setAttribute('marker-end', 'url(#arrow-blue)');
+            else if (strokeColor.includes('purple')) path.setAttribute('marker-end', 'url(#arrow-purple)');
+            else if (strokeColor.includes('green')) path.setAttribute('marker-end', 'url(#arrow-green)');
+            else if (strokeColor.includes('orange')) path.setAttribute('marker-end', 'url(#arrow-orange)');
+            else if (strokeColor.includes('red')) path.setAttribute('marker-end', 'url(#arrow-red)');
+            else path.setAttribute('marker-end', 'url(#arrow)');
+
+            edgesLayer.appendChild(path);
+
+            if (e.label) {
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('x', (startX + endX) / 2 + 10);
+                text.setAttribute('y', (startY + endY) / 2);
+                text.setAttribute('fill', strokeColor);
+                text.setAttribute('font-size', '10px');
+                text.setAttribute('font-family', 'var(--font-mono)');
+                text.textContent = e.label;
+                edgesLayer.appendChild(text);
+            }
+        });
+
+        // Pan and Zoom logic
+        const container = document.getElementById('canvas-container');
+        let isDown = false;
+        let startX, startY, scrollLeft, scrollTop;
+        let scale = 1;
+
+        container.addEventListener('mousedown', (e) => {
+            isDown = true;
+            startX = e.pageX - container.offsetLeft;
+            startY = e.pageY - container.offsetTop;
+            scrollLeft = container.scrollLeft;
+            scrollTop = container.scrollTop;
+        });
+
+        container.addEventListener('mouseleave', () => isDown = false);
+        container.addEventListener('mouseup', () => isDown = false);
+
+        container.addEventListener('mousemove', (e) => {
+            if (!isDown) return;
+            e.preventDefault();
+            const x = e.pageX - container.offsetLeft;
+            const y = e.pageY - container.offsetTop;
+            const walkX = (x - startX);
+            const walkY = (y - startY);
+            container.scrollLeft = scrollLeft - walkX;
+            container.scrollTop = scrollTop - walkY;
+        });
+
+        container.addEventListener('wheel', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                scale = Math.min(Math.max(0.3, scale + delta), 2);
+                canvas.style.transform = `scale(${scale})`;
+            }
+        }, { passive: false });
+
+        // Center initially
+        container.scrollLeft = 200;
+        container.scrollTop = 0;
+    </script>
+</body>
+</html>

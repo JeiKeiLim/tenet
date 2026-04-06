@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenet Planning Docs Review Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2333;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent3: #d2a8ff;
+    --accent4: #f0883e;
+    --danger: #f85149;
+    --tag-bg: #1f2937;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 280px; min-width: 280px; background: var(--surface); border-right: 1px solid var(--border);
+    padding: 20px 0; overflow-y: auto; position: sticky; top: 0; height: 100vh;
+  }
+  .sidebar h1 { font-size: 18px; padding: 0 20px 16px; border-bottom: 1px solid var(--border); color: var(--accent); }
+  .sidebar h1 span { color: var(--text-muted); font-weight: 400; font-size: 12px; display: block; margin-top: 4px; }
+  .nav-section { padding: 12px 20px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
+  .nav-item {
+    display: block; padding: 8px 20px; color: var(--text-muted); text-decoration: none; font-size: 14px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { color: var(--accent); background: rgba(88,166,255,0.1); border-right: 2px solid var(--accent); }
+  .nav-item .badge {
+    display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 10px;
+    margin-left: 6px; vertical-align: middle;
+  }
+  .badge-new { background: rgba(63,185,80,0.2); color: var(--accent2); }
+  .badge-changed { background: rgba(240,136,62,0.2); color: var(--accent4); }
+
+  /* Main */
+  .main { flex: 1; padding: 32px 48px; max-width: 1100px; }
+  .main h2 { font-size: 28px; margin-bottom: 8px; }
+  .main h3 { font-size: 20px; margin: 24px 0 12px; color: var(--accent); }
+  .main h4 { font-size: 16px; margin: 16px 0 8px; color: var(--accent3); }
+  .main p, .main li { line-height: 1.7; margin-bottom: 8px; }
+  .main ul, .main ol { padding-left: 24px; }
+
+  /* Sections */
+  .section { display: none; }
+  .section.active { display: block; }
+
+  /* Cards */
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 20px; margin: 16px 0;
+  }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+    user-select: none;
+  }
+  .card-header h4 { margin: 0; color: var(--text); }
+  .card-header .toggle { color: var(--text-muted); font-size: 18px; transition: transform 0.2s; }
+  .card-header .toggle.open { transform: rotate(90deg); }
+  .card-body { margin-top: 16px; display: none; }
+  .card-body.open { display: block; }
+
+  /* Comparison grid */
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  .compare-col { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .compare-col h5 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .compare-col.chatgpt h5 { color: var(--accent2); }
+  .compare-col.claude h5 { color: var(--accent3); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th { text-align: left; padding: 10px 12px; background: var(--surface2); border: 1px solid var(--border); color: var(--accent); font-weight: 600; }
+  td { padding: 10px 12px; border: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: rgba(88,166,255,0.03); }
+
+  /* Tags */
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin: 2px 4px 2px 0; }
+  .tag-high { background: rgba(63,185,80,0.15); color: var(--accent2); }
+  .tag-medium { background: rgba(240,136,62,0.15); color: var(--accent4); }
+  .tag-low { background: rgba(139,148,158,0.15); color: var(--text-muted); }
+  .tag-effort-low { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .tag-effort-med { background: rgba(210,168,255,0.15); color: var(--accent3); }
+
+  /* Code blocks */
+  pre {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 14px 16px; font-size: 13px; overflow-x: auto; margin: 12px 0;
+    font-family: 'SF Mono', 'Fira Code', monospace; line-height: 1.5;
+  }
+  code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
+  p code, li code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; }
+
+  /* Flow diagram */
+  .flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+  .flow-step {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 14px; font-size: 13px; font-weight: 500;
+  }
+  .flow-arrow { color: var(--text-muted); font-size: 18px; }
+  .flow-step.highlight { border-color: var(--accent); color: var(--accent); }
+
+  /* Stats bar */
+  .stats { display: flex; gap: 16px; margin: 20px 0; flex-wrap: wrap; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 20px; flex: 1; min-width: 140px; text-align: center;
+  }
+  .stat .num { font-size: 28px; font-weight: 700; color: var(--accent); }
+  .stat .label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  /* Diff highlight */
+  .added { background: rgba(63,185,80,0.1); border-left: 3px solid var(--accent2); padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  .removed { background: rgba(248,81,73,0.1); border-left: 3px solid var(--danger); padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  .changed { background: rgba(240,136,62,0.1); border-left: 3px solid var(--accent4); padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .tab {
+    padding: 10px 20px; font-size: 14px; color: var(--text-muted); cursor: pointer;
+    border-bottom: 2px solid transparent; transition: all 0.15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Search */
+  .search-box {
+    width: 100%; padding: 8px 12px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 14px; margin: 12px 20px; width: calc(100% - 40px);
+  }
+  .search-box:focus { outline: none; border-color: var(--accent); }
+  .search-box::placeholder { color: var(--text-muted); }
+
+  /* Progress bar */
+  .progress-bar { height: 6px; background: var(--surface2); border-radius: 3px; margin: 8px 0; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .highlight-box {
+    background: rgba(88,166,255,0.08); border: 1px solid rgba(88,166,255,0.3); border-radius: 8px;
+    padding: 16px; margin: 16px 0;
+  }
+  .concern-list { columns: 2; column-gap: 24px; }
+  .concern-list li { break-inside: avoid; }
+
+  @media (max-width: 900px) {
+    .sidebar { width: 220px; min-width: 220px; }
+    .main { padding: 20px; }
+    .compare-grid { grid-template-columns: 1fr; }
+    .concern-list { columns: 1; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <h1>Tenet Review <span>Planning Docs Dashboard</span></h1>
+  <input type="text" class="search-box" placeholder="Search sections..." id="searchBox">
+
+  <div class="nav-section">Overview</div>
+  <a class="nav-item active" data-section="overview">Executive Summary</a>
+  <a class="nav-item" data-section="evolution">Document Evolution</a>
+
+  <div class="nav-section">Core Design</div>
+  <a class="nav-item" data-section="philosophy">Design Philosophy</a>
+  <a class="nav-item" data-section="lifecycle">System Lifecycle</a>
+  <a class="nav-item" data-section="bootstrap">Bootstrap Compiler <span class="badge badge-new">NEW</span></a>
+  <a class="nav-item" data-section="execution">Execution Loop</a>
+
+  <div class="nav-section">Key Mechanisms</div>
+  <a class="nav-item" data-section="eval">Evaluation Pipeline</a>
+  <a class="nav-item" data-section="cascade">Cascade Checks <span class="badge badge-changed">3 types</span></a>
+  <a class="nav-item" data-section="steering">Async Steering</a>
+  <a class="nav-item" data-section="documents">Document Architecture</a>
+
+  <div class="nav-section">Improvements</div>
+  <a class="nav-item" data-section="research">Research Foundation</a>
+  <a class="nav-item" data-section="improvements">Priority Improvements</a>
+  <a class="nav-item" data-section="comparison">v0.2 vs v0.3 Comparison</a>
+
+  <div class="nav-section">Implementation</div>
+  <a class="nav-item" data-section="roadmap">Roadmap</a>
+  <a class="nav-item" data-section="risks">Risks & Open Questions</a>
+  <a class="nav-item" data-section="frameworks">Framework Comparison</a>
+</nav>
+
+<main class="main">
+
+<!-- OVERVIEW -->
+<div class="section active" id="overview">
+  <h2>Executive Summary</h2>
+  <p style="color:var(--text-muted);margin-bottom:20px;">Tenet: A markdown-native orchestration layer for many-session agent work</p>
+
+  <div class="stats">
+    <div class="stat"><div class="num">4</div><div class="label">Documents</div></div>
+    <div class="stat"><div class="num">3</div><div class="label">Versions (v0.1-v0.3)</div></div>
+    <div class="stat"><div class="num">12</div><div class="label">Key Improvements</div></div>
+    <div class="stat"><div class="num">14+</div><div class="label">Research Sources</div></div>
+  </div>
+
+  <h3>What is Tenet?</h3>
+  <p>A cross-platform AI agent plugin that enables <strong>12-hour autonomous development cycles</strong> with human steering, structured documentation, and recursive task decomposition. Target platforms: Claude Code, OpenAI Codex, OpenCode.</p>
+
+  <h3>Core Idea</h3>
+  <div class="flow">
+    <div class="flow-step highlight">Ideation</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step highlight">Interview</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step">Spec + Harness</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step">Dependency Graph</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step highlight">Dev Loop</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step">Done</div>
+  </div>
+  <p style="font-size:13px;color:var(--text-muted);margin-top:4px;">User Steer (async) can inject at any point during the Dev Loop</p>
+
+  <h3>Two Phases</h3>
+  <div class="compare-grid">
+    <div class="compare-col">
+      <h5 style="color:var(--accent4)">Crystallization (Human-Heavy)</h5>
+      <ul>
+        <li>Ideation &rarr; Interview &rarr; Spec + Harness &rarr; Dependency Graph</li>
+        <li>Goal: reduce ambiguity until autonomous execution is safe</li>
+        <li>Artifact-anchored ambiguity gate (Clarity &ge; 0.8)</li>
+      </ul>
+    </div>
+    <div class="compare-col">
+      <h5 style="color:var(--accent2)">Execution (Agent-Heavy)</h5>
+      <ul>
+        <li>The 12-hour dev loop through the dependency graph</li>
+        <li>Fresh sessions per job, compiled context bootstrap</li>
+        <li>Human steering as optional async input</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Key Principles (Final v0.3)</h3>
+  <ol>
+    <li><strong>Markdown files are the management layer</strong> &mdash; No databases, no proprietary formats</li>
+    <li><strong>Fresh sessions per job</strong> &mdash; Primary defense against error compounding and LLM context degradation</li>
+    <li><strong>Compiled context, not file dumps</strong> &mdash; Inspired by Google ADK</li>
+    <li><strong>Confidence-tagged knowledge</strong> &mdash; Combat memory drift</li>
+    <li><strong>Purpose alignment over spec compliance</strong> &mdash; Fill spec holes with intent</li>
+    <li><strong>Async human steering</strong> &mdash; Context / Directive / Emergency classification</li>
+    <li><strong>Leave wrong turns in context</strong> &mdash; Validated by Manus production experience</li>
+    <li><strong>Separate generation from validation</strong> &mdash; Author/Critic split</li>
+  </ol>
+</div>
+
+<!-- EVOLUTION -->
+<div class="section" id="evolution">
+  <h2>Document Evolution</h2>
+  <p>How the design evolved across four documents:</p>
+
+  <table>
+    <thead>
+      <tr><th>Document</th><th>Version</th><th>Role</th><th>Key Contribution</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>01_initial_prd.md</code></td>
+        <td>v0.1</td>
+        <td>Original PRD</td>
+        <td>Established core architecture: markdown-first, fresh sessions, 5-layer docs, async steer, 4-stage eval, dependency DAG</td>
+      </tr>
+      <tr>
+        <td><code>02_adverserial_review.md</code></td>
+        <td>Review</td>
+        <td>Adversarial critique</td>
+        <td>Identified 12 priority improvements: artifact-anchored scoring, bootstrap compiler, author/critic split, property testing, brownfield onboarding</td>
+      </tr>
+      <tr>
+        <td><code>03_..._by_chatgpt.md</code></td>
+        <td>v0.2</td>
+        <td>ChatGPT merge</td>
+        <td>Conservative merge. Research-backed with 10 references. Emphasized "many short sessions" framing. Added MVP scope definition.</td>
+      </tr>
+      <tr>
+        <td><code>03_..._by_claude.md</code></td>
+        <td>v0.3</td>
+        <td>Claude merge</td>
+        <td>Comprehensive merge. 14+ verified references. Added KV-cache optimization, SWE-bench failure data, todo recitation, production comparisons with Cursor/Devin.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>What Changed Between Versions</h3>
+
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>v0.1 &rarr; Adversarial Review: Foundational Critiques</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <div class="removed"><strong>Removed/Challenged:</strong> "Stay under 50% context" (unmeasurable), LLM self-scoring for ambiguity (circular), flat file loading at bootstrap, self-validation as eval</div>
+      <div class="added"><strong>Added:</strong> Artifact-anchored ambiguity scoring, complexity-based job sizing, bootstrap compiler concept, author/critic eval split, confidence-tagged knowledge, property-based testing stage, 3 typed cascade checks, staged brownfield onboarding, scenario + anti-scenario ACs</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>v0.2 (ChatGPT) vs v0.3 (Claude): Merge Approaches</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <table>
+        <thead><tr><th>Aspect</th><th>v0.2 (ChatGPT)</th><th>v0.3 (Claude)</th></tr></thead>
+        <tbody>
+          <tr><td>Framing</td><td>"Many short sessions, not one 12h run"</td><td>Retains "12-hour autonomous runs" as design goal</td></tr>
+          <tr><td>Research rigor</td><td>10 references, careful about unverifiable claims</td><td>14+ references, verified each claim, added nuance</td></tr>
+          <tr><td>35-min wall</td><td>Reframed as "operational default to tune"</td><td>Verified via Zylos + Chroma + Anthropic data</td></tr>
+          <tr><td>Manus claims</td><td>Could not find primary sources, weakened</td><td>Found and cited primary blog post</td></tr>
+          <tr><td>Implementation detail</td><td>Higher-level, artifact-class taxonomy</td><td>More concrete: KV-cache, SWE-bench data, production comparisons</td></tr>
+          <tr><td>Directory naming</td><td><code>.agent/</code></td><td><code>.tenet/</code> (project-specific)</td></tr>
+          <tr><td>MVP definition</td><td>3-tier MVP scope defined</td><td>6-phase roadmap (more granular)</td></tr>
+          <tr><td>New concepts</td><td>Artifact classes (reference/working/knowledge/run)</td><td>Todo recitation, KV-cache optimization, SWE-bench failure taxonomy</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- PHILOSOPHY -->
+<div class="section" id="philosophy">
+  <h2>Design Philosophy</h2>
+
+  <h3>The Error Compounding Problem</h3>
+  <div class="highlight-box">
+    <p><strong>The math is unforgiving:</strong> 95% per-step accuracy over 20 steps = only <strong>36%</strong> end-to-end success. At 100 steps, even 1% error rates &rarr; near-certain collapse.</p>
+  </div>
+
+  <h3>Three Types of Drift</h3>
+  <table>
+    <thead><tr><th>Drift Type</th><th>Definition</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Reasoning drift</strong></td>
+        <td>Small logical errors compound across turns</td>
+        <td>Fresh sessions per job</td>
+      </tr>
+      <tr>
+        <td><strong>Context drift</strong></td>
+        <td>Failed calls, verbose tracebacks crowd out signal</td>
+        <td>Bootstrap compiler filters for recency & relevance</td>
+      </tr>
+      <tr>
+        <td><strong>Memory drift</strong></td>
+        <td>Incomplete info at turn 20 becomes ground truth at turn 80</td>
+        <td>Confidence tags on all knowledge writes</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Confidence Tags</h3>
+  <pre>## Token refresh strategy [confidence: implemented-and-tested]
+Refresh tokens are rotated on each use.
+
+## Rate limiting approach [confidence: implemented-not-tested]
+Using token bucket algorithm with 100 req/min per user.
+
+## WebSocket reconnection [confidence: decision-only]
+Will use exponential backoff with jitter. Not yet implemented.</pre>
+
+  <p>Allowed values: <code>decision_only</code>, <code>implemented_not_tested</code>, <code>implemented_and_tested</code>, <code>observed_from_existing_code</code>, <code>superseded</code></p>
+</div>
+
+<!-- LIFECYCLE -->
+<div class="section" id="lifecycle">
+  <h2>System Lifecycle</h2>
+
+  <h3>Phase 0: Brownfield Detection</h3>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>Staged Brownfield Onboarding (3 stages)</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <table>
+        <thead><tr><th>Stage</th><th>What</th><th>Output</th><th>Effort</th></tr></thead>
+        <tbody>
+          <tr><td>0a: Skeleton scan</td><td>Directory structure, languages, packages, CI/CD</td><td><code>knowledge/project-overview.md</code></td><td>Minutes</td></tr>
+          <tr><td>0b: Targeted deep scan</td><td>Only subsystems relevant to the request</td><td><code>knowledge/&lt;concern&gt;.md</code></td><td>Scoped</td></tr>
+          <tr><td>0c: Interface extraction</td><td>Public contracts: APIs, models, events</td><td>Interface stubs in decomposition</td><td>Low</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+   <h3>Scale-Adaptive Execution Modes <span class="badge badge-new">NEW</span></h3>
+   <p>Not all work requires full crystallization. Execution overhead scales with task complexity:</p>
+   <table>
+     <thead><tr><th>Mode</th><th>Use Case</th><th>Pipeline</th><th>Quality Gate</th></tr></thead>
+     <tbody>
+       <tr>
+         <td><strong>Full Mode</strong></td>
+         <td>New features, major refactors, greenfield</td>
+         <td>Full interview → spec → decomposition → execution</td>
+         <td>Ambiguity ≥ 0.8</td>
+       </tr>
+       <tr>
+         <td><strong>Standard Mode</strong></td>
+         <td>Well-understood features, moderate complexity</td>
+         <td>Brief clarification → quick spec → execution (±1 job)</td>
+         <td>Harness + 2-3 scenarios</td>
+       </tr>
+       <tr>
+         <td><strong>Quick Mode</strong></td>
+         <td>Bug fixes, typos, config changes</td>
+         <td>Direct execution with harness enforcement; skip interview/spec/decomposition</td>
+         <td>Mechanical eval (lint/test)</td>
+       </tr>
+     </tbody>
+   </table>
+   <p><strong>Core principle:</strong> Harness quality enforcement (lint, format, test) applies at ALL modes. Only planning overhead scales down. Mechanical eval is non-negotiable.</p>
+
+   <h3>Phase 1: Crystallization (Interview)</h3>
+
+   <h4>Artifact-Anchored Ambiguity Gate</h4>
+  <p>The interview ends when enough <em>artifacts</em> exist, not when the user "feels done":</p>
+  <table>
+    <thead><tr><th>Dimension</th><th>Weight</th><th>Score 1.0</th><th>Score 0.5</th><th>Score 0.0</th></tr></thead>
+    <tbody>
+      <tr><td>Goal clarity</td><td>0.4</td><td>Written acceptance test exists</td><td>Qualitative description ("feels fast")</td><td>No goal stated</td></tr>
+      <tr><td>Constraints</td><td>0.3</td><td>Harness constraints + danger zones</td><td>Implicit ("use existing stack")</td><td>No constraints discussed</td></tr>
+      <tr><td>Success criteria</td><td>0.3</td><td>Measurable (&lt;1s load time)</td><td>Qualitative ("easy to use")</td><td>"I'll know it when I see it"</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Gate:</strong> Clarity &ge; 0.8 (Ambiguity &le; 0.2). Scoring is deterministic &mdash; artifact exists or doesn't.</p>
+
+  <h4>Interview Outputs</h4>
+  <ul>
+    <li>Transcript with decisions and rationale</li>
+    <li>Rejected alternatives (why NOT)</li>
+    <li>Ambiguity score history with artifact evidence</li>
+    <li><strong>Scenario-based acceptance criteria</strong> (concrete user stories)</li>
+    <li><strong>Anti-scenarios</strong> (what "bad" looks like)</li>
+    <li>Visual artifacts: self-contained HTML files (embedded SVG/CSS/JS, no external dependencies) in <code>.tenet/visuals/</code> for UI mockups, architecture diagrams, flow diagrams, and data model diagrams</li>
+  </ul>
+
+  <h3>Phase 2: Spec + Harness</h3>
+  <div class="compare-grid">
+    <div class="compare-col">
+      <h5 style="color:var(--accent)">Spec (WHAT to build)</h5>
+      <ul>
+        <li>Acceptance criteria per component</li>
+        <li>Scenario-based ACs</li>
+        <li>Measurable targets</li>
+        <li>Reference artifacts (self-contained HTML visualizations in <code>.tenet/visuals/</code>)</li>
+        <li>Property specifications (for property-based testing)</li>
+      </ul>
+    </div>
+    <div class="compare-col">
+      <h5 style="color:var(--accent4)">Harness (HOW to operate)</h5>
+      <ul>
+        <li>Danger zones (files/dirs never to modify)</li>
+        <li>Iron laws (invariants)</li>
+        <li>Code formatting &amp; linting rules (strictly enforced)</li>
+        <li>Unit test coverage requirements</li>
+        <li>E2E testing requirements</li>
+        <li>Architecture rules (no circular deps, validation middleware, etc.)</li>
+        <li>Code style principles (composition over inheritance, etc.)</li>
+        <li>Testing strategy (what must be tested, how)</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Phase 3: Dependency Graph</h3>
+  <h4>Complexity-Based Job Sizing</h4>
+  <pre>## Job decomposition criteria
+- Logical cohesion: one coherent concern per job
+- Context requirements: manageable context window load
+- Interface boundaries: natural split at well-defined APIs
+- Quality gates: testable acceptance criteria per job</pre>
+  <p>Jobs are decomposed based on logical cohesion, context requirements, and natural interface boundaries &mdash; keeping them small enough to avoid LLM quality degradation at long context lengths.</p>
+</div>
+
+<!-- BOOTSTRAP -->
+<div class="section" id="bootstrap">
+  <h2>Bootstrap Compiler</h2>
+  <div class="highlight-box">
+    <p><strong>New in v0.3:</strong> Instead of loading raw files, a compilation step produces a minimal Working Context per job. Inspired by Google ADK's "compiled context" architecture.</p>
+  </div>
+
+  <h3>Pipeline</h3>
+  <pre>Raw state (all .tenet/ files)
+  &rarr; Relevance filter: which files matter for THIS job?
+  &rarr; Recency filter: current vs. historical within each file?
+  &rarr; Interface extraction: only interfaces this job touches
+  &rarr; Confidence filter: prioritize [implemented-and-tested] over [decision-only]
+  &rarr; Steer integration: fold in pending steer messages for this job
+  &rarr; Todo recitation: append job objectives at END of context
+  &rarr; Working Context: single compiled document</pre>
+
+  <h3>Why Todo Recitation Matters</h3>
+  <p>Manus discovered that rewriting a todo list pushes the global plan into the model's <strong>recent attention span</strong>. This exploits the U-shaped attention curve (models attend well to beginning and end, poorly to middle) to keep current job goals in high-attention positions.</p>
+
+  <h3>KV-Cache Optimization</h3>
+  <p>KV-cache optimization reduces repeated prompt recomputation and improves long-run execution efficiency across sessions.</p>
+  <ul>
+    <li><strong>Stable prompt prefixes:</strong> Harness + system instructions occupy the same prefix across sessions</li>
+    <li><strong>Append-only contexts:</strong> Never rewrite earlier context within a session</li>
+    <li><strong>Cache breakpoints:</strong> Stable portion (harness, spec) first, then job-specific portion</li>
+  </ul>
+</div>
+
+<!-- EXECUTION -->
+<div class="section" id="execution">
+  <h2>Execution Loop</h2>
+
+  <h3>Loop Structure</h3>
+  <div class="flow">
+    <div class="flow-step">Pick Job</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step highlight">Compile Context</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step">Author Run</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step">Mechanical Eval</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step highlight">Critic Eval</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step">Learn</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step">Check Steer</div><span class="flow-arrow">&rarr;</span>
+    <div class="flow-step">Loop</div>
+  </div>
+  <p style="font-size:13px;color:var(--text-muted);">On failure: Reflect &rarr; Learn &rarr; Retry (failure trace stays in context)</p>
+
+  <h3>In-Session Checkpointing</h3>
+  <table>
+    <thead><tr><th>Threshold</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>Quality degradation signals</td><td>Agent should checkpoint (repeated failures, going in circles, re-reading same files)</td></tr>
+      <tr><td>Stagnation detected</td><td>Session restarts with progress snapshot + job spec</td></tr>
+      <tr><td>Repeated file reads</td><td>Immediate checkpoint (detects "Endless File Reading" pattern)</td></tr>
+    </tbody>
+  </table>
+
+   <h3>Error Preservation</h3>
+   <div class="changed">
+     <strong>Key insight (Manus):</strong> Keep failed actions and stack traces in the working context within a session. "Erasing failure removes evidence." Move to lessons.md only at job completion.
+   </div>
+
+   <h3>Catastrophic Recovery <span class="badge badge-new">NEW</span></h3>
+   <div class="highlight-box">
+     <p><strong>System resilience principle:</strong> Every failure state must be recoverable to the last committed checkpoint via git. The system is never corrupted beyond recovery.</p>
+   </div>
+   <table>
+     <thead><tr><th>Failure Type</th><th>Root Cause</th><th>Recovery Action</th></tr></thead>
+     <tbody>
+       <tr>
+         <td><strong>.tenet/ Corruption</strong></td>
+         <td>Partial write, merge conflict, or agent malfunction</td>
+         <td>Restore from git (`.tenet/` should be committed at every checkpoint)</td>
+       </tr>
+       <tr>
+         <td><strong>Harness Violation</strong></td>
+         <td>Agent ignores danger zone or iron laws</td>
+         <td>Immediate halt + EMERGENCY alert + wait for user + git revert to last checkpoint</td>
+       </tr>
+       <tr>
+         <td><strong>Broken Build State</strong></td>
+         <td>Code changes leave project non-compilable</td>
+         <td>Git stash to last passing checkpoint, retry or escalate with evidence</td>
+       </tr>
+     </tbody>
+   </table>
+   <p><strong>Invariant:</strong> <code>.tenet/</code> directory is part of version control. On session end, always `git add .tenet/` before proceeding. This ensures state snapshots are audit-trail compatible.</p>
+
+  <h3>Stagnation Detection & Persona Rotation</h3>
+  <table>
+    <thead><tr><th>Persona</th><th>Directive</th></tr></thead>
+    <tbody>
+      <tr><td>Hacker</td><td>"Make it work, elegance be damned"</td></tr>
+      <tr><td>Researcher</td><td>"Stop coding, read the docs and source code"</td></tr>
+      <tr><td>Simplifier</td><td>"Cut scope, return to MVP"</td></tr>
+      <tr><td>Architect</td><td>"Question the foundation &mdash; is the approach wrong?"</td></tr>
+      <tr><td>Contrarian</td><td>"Are we solving the wrong problem entirely?"</td></tr>
+    </tbody>
+  </table>
+  <p>After persona switch + 2 more attempts: <strong>halt and wait for user steer</strong>.</p>
+</div>
+
+<!-- EVAL -->
+<div class="section" id="eval">
+  <h2>Evaluation Pipeline</h2>
+
+  <div class="highlight-box">
+    <p><strong>Core principle:</strong> Never trust AI to both generate and validate. Generate and verify must be separate steps, ideally with different context.</p>
+  </div>
+
+  <h3>5-Stage Pipeline</h3>
+  <table>
+    <thead><tr><th>Stage</th><th>What</th><th>Key Innovation</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>1: Mechanical</strong></td>
+        <td>Lint, build, type-check, test suite</td>
+        <td>Catches 60-80% of issues</td>
+      </tr>
+      <tr>
+        <td><strong>1.5: Property-based</strong> <span class="badge badge-new">NEW</span></td>
+        <td>Auto-generated fuzz/property tests</td>
+        <td>Properties specified during SPEC phase, before implementation</td>
+      </tr>
+      <tr>
+        <td><strong>2: Spec compliance</strong></td>
+        <td>Check ACs, scope creep/reduction, doc-code sync</td>
+        <td>Doc-code sync check</td>
+      </tr>
+      <tr>
+        <td><strong>3: Purpose alignment</strong> <span class="badge badge-new">NEW</span></td>
+        <td>Critic session with adversarial framing</td>
+        <td>Critic gets spec + diff only, NOT author's reasoning; zero findings are suspicious and must be re-justified</td>
+      </tr>
+      <tr>
+        <td><strong>4: Self-questioning</strong></td>
+        <td>Structured categories: edge cases, security, performance...</td>
+        <td>3-5 questions per relevant category</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Author/Critic Split Details</h3>
+  <div class="compare-grid">
+    <div class="compare-col chatgpt">
+      <h5>Author Session Receives</h5>
+      <ul>
+        <li>Full compiled context</li>
+        <li>Knowledge docs</li>
+        <li>Previous attempt failures</li>
+        <li>Steer messages</li>
+      </ul>
+    </div>
+    <div class="compare-col claude">
+      <h5>Critic Session Receives</h5>
+      <ul>
+        <li>Spec / acceptance criteria / scenarios</li>
+        <li>Harness constraints</li>
+        <li>Code diff only</li>
+        <li>Anti-scenarios</li>
+        <li><strong>Zero-findings rule:</strong> if critic returns 0 findings, it must re-analyze from a different perspective or explicitly justify why zero is legitimate</li>
+        <li style="color:var(--danger)"><strong>NOT:</strong> author's reasoning, tests, or knowledge docs</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="changed">
+    <strong>Critic gate hardening:</strong> Zero findings is treated as suspicious, not automatically clean. The critic must either produce a second-pass analysis using a different framing (e.g., edge-case, security, integration, purpose) or provide explicit evidence-backed justification for a legitimate zero-findings outcome.
+  </div>
+
+  <h3>Self-Questioning Categories</h3>
+  <table>
+    <thead><tr><th>Category</th><th>Example Questions</th></tr></thead>
+    <tbody>
+      <tr><td>Edge cases</td><td>Empty input? Maximum size? Special characters?</td></tr>
+      <tr><td>Error paths</td><td>Network failure? File not found? Permission denied?</td></tr>
+      <tr><td>Integration</td><td>Does interface match dependent chunk expectations?</td></tr>
+      <tr><td>User-facing</td><td>What would a user see? Is the error message helpful?</td></tr>
+      <tr><td>Security</td><td>Input exploitation? Validating before use? Secrets exposed?</td></tr>
+      <tr><td>Performance</td><td>Does this scale? N+1 queries? Obvious optimizations?</td></tr>
+      <tr><td>Purpose</td><td>Does this serve the original goal, or just pass tests?</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- CASCADE -->
+<div class="section" id="cascade">
+  <h2>Three Types of Cascade Checks</h2>
+  <div class="changed">
+    <strong>Improvement over v0.1:</strong> The original PRD bundled all cascade operations into one vague "cascade check." The review correctly identified these as fundamentally different operations.
+  </div>
+
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>Type 1: Document-to-Document Alignment</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <ul>
+        <li><strong>Input:</strong> Two markdown docs (e.g., interview &harr; spec)</li>
+        <li><strong>Question:</strong> "Do these documents contradict each other?"</li>
+        <li><strong>Trigger:</strong> Any upstream document update</li>
+        <li><strong>Examples:</strong> interview vs spec, spec vs harness, scenario vs anti-scenario</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>Type 2: Code-to-Document Alignment</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <ul>
+        <li><strong>Input:</strong> Knowledge doc + the actual code it describes</li>
+        <li><strong>Question:</strong> "Does this document accurately describe what the code does?"</li>
+        <li><strong>Trigger:</strong> After every completed job</li>
+        <li><strong>Critical:</strong> Knowledge docs MUST reflect implementation reality</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>Type 3: Trajectory-to-Purpose Alignment (Drift Detection)</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <ul>
+        <li><strong>Input:</strong> Interview artifacts + status + recent knowledge changes</li>
+        <li><strong>Question:</strong> "Is the project still heading toward the original goal?"</li>
+        <li><strong>Trigger:</strong> Every N iterations (default 3), or after major steer directive</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- STEERING -->
+<div class="section" id="steering">
+  <h2>Async Human Steering</h2>
+
+  <h3>Mechanism</h3>
+  <p>User writes to <code>steer/inbox.md</code> at any time. Agent checks at natural checkpoints (after eval, before next job). Check is lightweight: compare file mtime without recompiling context.</p>
+
+  <h3>Message Classification</h3>
+  <table>
+    <thead><tr><th>Class</th><th>Prefix</th><th>Action</th><th>Timing</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Context</strong></td>
+        <td>(none &mdash; default)</td>
+        <td>Folded into next job's compiled context</td>
+        <td>No disruption</td>
+      </tr>
+      <tr>
+        <td><strong>Directive</strong></td>
+        <td><code>DIRECTIVE:</code></td>
+        <td>Updates queue ordering, may reopen spec alignment</td>
+        <td>After current job</td>
+      </tr>
+      <tr>
+        <td><strong>Emergency</strong></td>
+        <td><code>EMERGENCY:</code></td>
+        <td>Halt immediately, create blocking incident job</td>
+        <td>Immediate</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Multi-Job Tagging</h3>
+  <pre>## 2026-04-02 14:30 [affects: auth-oauth, auth-basic, api-endpoints]
+OAuth should use PKCE flow, not implicit grant</pre>
+  <p>Orchestrator auto-tags steer messages with affected job IDs. Untagged messages go to all pending jobs.</p>
+
+  <h3>Message Acknowledgment Tracking</h3>
+  <p>Each message in <code>steer/inbox.md</code> carries inline lifecycle status so the user can see processing state immediately: <code>received</code> &rarr; <code>acknowledged</code> &rarr; <code>acted_on</code> &rarr; <code>resolved</code>. The agent writes status transitions and responses directly in the same file.</p>
+  <pre>## 2026-04-06 10:12 [affects: api-auth] [status: acknowledged]
+DIRECTIVE: Enforce PKCE for OAuth public clients.
+
+Agent response (2026-04-06 10:14): Acknowledged. Reordered queue; adding auth hardening job.
+
+## 2026-04-06 11:05 [affects: api-auth] [status: acted_on]
+Agent response: Patch implemented and under evaluation.
+
+## 2026-04-06 11:22 [affects: api-auth] [status: resolved]
+Agent response: Merged with tests passing and docs updated.</pre>
+
+  <div class="changed">
+    <strong>Evolution from v0.1:</strong> Original had 4 types (course correction, spec change, pause/redirect, new feature) with URGENT prefix. v0.3 simplifies to 3 classes (context/directive/emergency) based on the insight that steer should usually be <em>context</em>, not commands.
+  </div>
+</div>
+
+<!-- DOCUMENTS -->
+<div class="section" id="documents">
+  <h2>Document Architecture</h2>
+
+  <h3>Directory Structure</h3>
+<pre>.tenet/
+├── index.md                # Auto-generated TOC: file list, timestamps, summaries, status indicators
+├── interview/
+│   ├── current.md          # Latest interview state (why)
+│   ├── scenarios.md        # User scenarios + anti-scenarios
+│   ├── visuals/            # Self-contained HTML visualizations (embedded SVG/CSS/JS)
+│   ├── changelog.md
+│   └── archive/
+├── spec/
+│   ├── current.md          # Live spec (what)
+│   ├── properties.md       # Property-based test specs
+│   ├── changelog.md
+│   └── archive/
+├── harness/
+│   ├── current.md          # Active constraints (how to operate)
+│   └── ...
+├── status/
+│   ├── status.md           # Current project state (where)
+│   ├── job-queue.md
+│   └── backlog.md
+├── knowledge/
+│   ├── decomposition.md    # Why jobs were split
+│   ├── &lt;concern&gt;.md        # Per-concern, confidence-tagged
+│   └── ...
+├── lessons/
+│   ├── current.md          # Active lessons
+│   └── archive/
+├── steer/
+│   ├── inbox.md            # User writes here
+│   └── processed.md
+└── bootstrap/
+    └── compiler.md         # Bootstrap compiler config</pre>
+
+  <h3>Layer Definitions</h3>
+  <table>
+    <thead><tr><th>Layer</th><th>Purpose</th><th>Updated By</th><th>Read By</th></tr></thead>
+    <tbody>
+      <tr><td>Interview</td><td>The "why"</td><td>User + interview agent</td><td>Drift correction, purpose eval</td></tr>
+      <tr><td>Spec</td><td>The "what"</td><td>User + spec agent</td><td>Job generation, eval, critic</td></tr>
+      <tr><td>Harness</td><td>The quality-enforcement contract for how to operate</td><td>User (usually once)</td><td>Every session (via compiler)</td></tr>
+      <tr><td>Status</td><td>The "where"</td><td>Agent (automated)</td><td>Bootstrap, job dispatch</td></tr>
+      <tr><td>Knowledge</td><td>The "how"</td><td>Agent during dev (confidence-tagged)</td><td>Sub-agents (via compiler)</td></tr>
+      <tr><td>Lessons</td><td>The "what we tried"</td><td>Agent after job completion</td><td>Reflection, future planning</td></tr>
+      <tr><td>Steer</td><td>The "user says"</td><td>User (anytime)</td><td>Agent at checkpoints, compiler</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Concern-Based Organization</h3>
+  <p>Knowledge docs are organized by <strong>concern</strong> (auth, data model, API), NOT by phase (requirements, architecture). When the agent implements auth, it reads <code>knowledge/auth.md</code> and writes back to the same file.</p>
+
+  <h3>Tiered Compaction</h3>
+<pre>current.md   &rarr; Always up to date. Agents read THIS.
+changelog.md &rarr; What changed and why. Append-only.
+archive/     &rarr; Summarized older changelogs.</pre>
+  <p>Trigger: When <code>changelog.md</code> exceeds 50 entries or ~10K tokens.</p>
+
+  <h3>Document Health Mechanisms</h3>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>Index + Periodic Health Audit</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <ul>
+        <li><strong><code>.tenet/index.md</code>:</strong> Auto-generated table of contents with file inventory, last-updated timestamps, short summaries, and status indicators.</li>
+        <li><strong>Orphan detection:</strong> Flags files not referenced by any active document chain.</li>
+        <li><strong>Staleness checks:</strong> Detects knowledge docs drifting out of sync with implementation.</li>
+        <li><strong>Missing update checks:</strong> Detects completed jobs without required documentation updates.</li>
+        <li><strong>Reference integrity:</strong> Catches broken cross-document references and invalid links.</li>
+        <li><strong>Steer responsiveness:</strong> Alerts on unacknowledged messages in <code>steer/inbox.md</code> aging beyond threshold.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- RESEARCH -->
+<div class="section" id="research">
+  <h2>Research Foundation</h2>
+
+  <h3>Verified Research Sources (v0.3)</h3>
+  <table>
+    <thead><tr><th>Source</th><th>Key Finding</th><th>Design Impact</th></tr></thead>
+    <tbody>
+      <tr><td>Zylos Research (2026)</td><td>35-min degradation wall; doubling duration quadruples failure rate</td><td>Fresh sessions, quality-driven checkpointing</td></tr>
+      <tr><td>Manus context engineering</td><td>Todo recitation, error preservation, KV-cache optimization</td><td>Bootstrap compiler, error preservation</td></tr>
+      <tr><td>Google ADK</td><td>Compiled context, storage/view separation, tiered compaction</td><td>Bootstrap compiler architecture</td></tr>
+      <tr><td>SWE-bench Pro</td><td>17% "Endless File Reading" failure; 35.6% context overflow</td><td>Stagnation detection, quality-driven checkpointing</td></tr>
+      <tr><td>Lost in the Middle (Stanford/Meta)</td><td>U-shaped attention: 30%+ accuracy drops for mid-context info</td><td>Todo recitation at end of context</td></tr>
+      <tr><td>Chroma (2025)</td><td>All 18 tested models degrade at every context length increment</td><td>Context minimization is universal need</td></tr>
+      <tr><td>Multi-agent debate (Du et al.)</td><td>Diverse perspectives improve reasoning accuracy</td><td>Author/critic split, persona rotation</td></tr>
+      <tr><td>Agentic PBT (NeurIPS 2025)</td><td>$5.56/bug report; 56% confirmed valid</td><td>Property-based testing as Stage 1.5</td></tr>
+      <tr><td>Anthropic agent autonomy</td><td>99.9th percentile turn doubled to 45min; median remains 45s</td><td>Long-run safety gates</td></tr>
+      <tr><td>Anthropic effective harnesses</td><td>Initializer/coding agent pattern, progress docs</td><td>Session bootstrap, harness design</td></tr>
+    </tbody>
+  </table>
+
+  <h3>SWE-bench Failure Taxonomy</h3>
+  <table>
+    <thead><tr><th>Model</th><th>Primary Failure</th><th>Rate</th></tr></thead>
+    <tbody>
+      <tr><td>Claude Sonnet 4</td><td>Context overflow</td><td>35.6%</td></tr>
+      <tr><td>Claude Sonnet 4</td><td>Endless file reading</td><td>17.0%</td></tr>
+      <tr><td>Gemini 2.5</td><td>Tool errors</td><td>38.8%</td></tr>
+      <tr><td>Gemini 2.5</td><td>Syntax errors</td><td>30.5%</td></tr>
+      <tr><td>Qwen3 32B</td><td>Tool errors</td><td>42.0%</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Citation Corrections (v0.3)</h3>
+  <table>
+    <thead><tr><th>Original Claim</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>"Prassanna Ravishankar drift taxonomy (Feb 2026)"</td><td style="color:var(--accent4)">Unverifiable &mdash; concepts kept as analytical framework without attribution</td></tr>
+      <tr><td>"Instruction centrifugation"</td><td style="color:var(--accent4)">Not established term &mdash; replaced with "lost-in-the-middle" effect</td></tr>
+      <tr><td>Zylos Research report</td><td style="color:var(--accent2)">Verified &mdash; real research organization</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- IMPROVEMENTS -->
+<div class="section" id="improvements">
+  <h2>Priority Improvements</h2>
+  <p>From the adversarial review, ordered by priority:</p>
+
+  <table>
+    <thead><tr><th>#</th><th>Improvement</th><th>Addresses</th><th>Impact</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>Artifact-anchored ambiguity scoring</td>
+        <td>Circular self-eval at interview gate</td>
+        <td><span class="tag tag-high">High</span></td>
+        <td><span class="tag tag-effort-low">Low</span></td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>Complexity-based job sizing</td>
+        <td>Unmeasurable job sizing heuristics</td>
+        <td><span class="tag tag-high">High</span></td>
+        <td><span class="tag tag-effort-low">Low</span></td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>Scenario + anti-scenario ACs</td>
+        <td>Taste gap in autonomous execution</td>
+        <td><span class="tag tag-high">High</span></td>
+        <td><span class="tag tag-effort-med">Medium</span></td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>Confidence-tagged knowledge writes</td>
+        <td>Memory drift across jobs</td>
+        <td><span class="tag tag-medium">Medium</span></td>
+        <td><span class="tag tag-effort-low">Low</span></td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>Bootstrap compiler (compiled context)</td>
+        <td>Context pollution at bootstrap</td>
+        <td><span class="tag tag-high">High</span></td>
+        <td><span class="tag tag-effort-med">Medium</span></td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>Author/critic session split</td>
+        <td>Self-validation trap</td>
+        <td><span class="tag tag-high">High</span></td>
+        <td><span class="tag tag-effort-med">Medium</span></td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>Quality-driven in-session checkpointing</td>
+        <td>Context degradation in long sessions</td>
+        <td><span class="tag tag-high">High</span></td>
+        <td><span class="tag tag-effort-med">Medium</span></td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>Three typed cascade checks</td>
+        <td>Vague cascade mechanism</td>
+        <td><span class="tag tag-medium">Medium</span></td>
+        <td><span class="tag tag-effort-low">Low</span></td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td>Steer reclassification</td>
+        <td>Race condition + ambiguity</td>
+        <td><span class="tag tag-medium">Medium</span></td>
+        <td><span class="tag tag-effort-low">Low</span></td>
+      </tr>
+      <tr>
+        <td>10</td>
+        <td>Staged brownfield onboarding</td>
+        <td>Phase 0 bootstrapping overhead</td>
+        <td><span class="tag tag-high">High</span></td>
+        <td><span class="tag tag-effort-med">Medium</span></td>
+      </tr>
+      <tr>
+        <td>11</td>
+        <td>Property-based testing (Stage 1.5)</td>
+        <td>Self-generated test blind spots</td>
+        <td><span class="tag tag-medium">Medium</span></td>
+        <td><span class="tag tag-effort-med">Medium</span></td>
+      </tr>
+       <tr>
+         <td>12</td>
+         <td>Divergent HTML visualization generation</td>
+         <td>UI taste during autonomous exec</td>
+         <td><span class="tag tag-medium">Medium</span></td>
+         <td><span class="tag tag-effort-med">Medium</span></td>
+       </tr>
+       <tr>
+         <td>13</td>
+         <td>Scale-adaptive execution modes <span class="badge badge-new">NEW</span></td>
+         <td>Planning overhead for trivial tasks</td>
+         <td><span class="tag tag-high">High</span></td>
+         <td><span class="tag tag-effort-low">Low</span></td>
+       </tr>
+       <tr>
+         <td>14</td>
+         <td>Catastrophic recovery framework <span class="badge badge-new">NEW</span></td>
+         <td>System-level resilience and corruption recovery</td>
+         <td><span class="tag tag-high">High</span></td>
+         <td><span class="tag tag-effort-med">Medium</span></td>
+       </tr>
+    </tbody>
+  </table>
+
+  <div class="highlight-box">
+    <p><strong>Priority guidance:</strong> Items 1-2 are foundation fixes (do first). Items 3-7 are highest-impact for genuine 12-hour runs. Items 8-12 are important but can iterate.</p>
+  </div>
+</div>
+
+<!-- COMPARISON -->
+<div class="section" id="comparison">
+  <h2>v0.2 (ChatGPT) vs v0.3 (Claude) Comparison</h2>
+
+  <h3>Positioning</h3>
+  <div class="compare-grid">
+    <div class="compare-col chatgpt">
+      <h5>v0.2 ChatGPT</h5>
+      <p>"Hours-long progress through many short, well-bounded sessions, not one magical 12-hour uninterrupted context."</p>
+      <p style="font-size:13px;color:var(--text-muted);">More conservative framing. Explicitly a non-goal: "Perfect fully autonomous software delivery with no human intervention ever."</p>
+    </div>
+    <div class="compare-col claude">
+      <h5>v0.3 Claude</h5>
+      <p>"12-hour autonomous development runs. Every component is infrastructure to keep the agent on track during extended autonomous operation."</p>
+      <p style="font-size:13px;color:var(--text-muted);">Retains ambitious framing. Adds production comparisons (Cursor: built browser in 1 week, Devin: 67% PR merge rate).</p>
+    </div>
+  </div>
+
+  <h3>Unique Contributions</h3>
+  <div class="compare-grid">
+    <div class="compare-col chatgpt">
+      <h5>Unique to v0.2</h5>
+      <ul>
+        <li><strong>Artifact classes:</strong> Reference / Working-state / Knowledge / Run (4 distinct classes)</li>
+        <li><strong>3-tier MVP scope:</strong> Concrete MVP-1, MVP-2, MVP-3 definition</li>
+        <li><strong>Knowledge entry schema:</strong> Frontmatter with source, files, owner_job fields</li>
+        <li><strong>Non-goals section:</strong> Explicit about what the system is NOT</li>
+        <li><strong>"Recommended positioning":</strong> "markdown-native orchestration layer" framing</li>
+      </ul>
+    </div>
+    <div class="compare-col claude">
+      <h5>Unique to v0.3</h5>
+      <ul>
+        <li><strong>Research verification section:</strong> Systematically verified each claim</li>
+        <li><strong>SWE-bench failure data:</strong> Specific failure rates per model</li>
+        <li><strong>KV-cache optimization:</strong> 100:1 ratio, cache breakpoints</li>
+        <li><strong>Todo recitation:</strong> Exploit U-shaped attention curve</li>
+        <li><strong>Production comparisons:</strong> Cursor, Devin, Anthropic multi-agent data</li>
+        <li><strong>Glossary:</strong> Formal term definitions</li>
+        <li><strong>Comprehensive reference table:</strong> 14 verified sources with URLs</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Agreement Points (Both versions align on)</h3>
+  <ul>
+    <li>Compiled context over raw file loading</li>
+    <li>Artifact-anchored ambiguity scoring (no LLM self-assessment)</li>
+    <li>Complexity-based job sizing with quality gates</li>
+    <li>Author/critic eval split</li>
+    <li>Confidence-tagged knowledge writes</li>
+    <li>Three typed cascade checks</li>
+    <li>Steer classification (context/directive/emergency)</li>
+    <li>Staged brownfield onboarding</li>
+    <li>Property-based testing</li>
+    <li>Scenario + anti-scenario acceptance criteria</li>
+  </ul>
+</div>
+
+<!-- ROADMAP -->
+<div class="section" id="roadmap">
+  <h2>Implementation Roadmap</h2>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="roadmap-claude">v0.3 (Claude) - 6 Phases</div>
+    <div class="tab" data-tab="roadmap-chatgpt">v0.2 (ChatGPT) - 3 MVPs</div>
+  </div>
+
+  <div class="tab-content active" id="roadmap-claude">
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>Phase 1: Core Skeleton (Foundation)</h4>
+        <span class="toggle open">&rsaquo;</span>
+      </div>
+      <div class="card-body open">
+        <ul>
+          <li><code>.tenet/</code> directory structure and templates</li>
+          <li>Interview agent with artifact-anchored ambiguity scoring</li>
+          <li>Scenario + anti-scenario acceptance criteria</li>
+          <li>Spec generation from interview output</li>
+          <li>Basic harness (default constraints)</li>
+          <li>SKILL.md packaging for Claude Code</li>
+          <li>Complexity-based job sizing</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>Phase 2: Execution Loop</h4>
+        <span class="toggle">&rsaquo;</span>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Job dispatcher with dependency graph</li>
+          <li>Dev &rarr; Eval &rarr; Learn loop</li>
+          <li>Mechanical eval (lint/build/test)</li>
+          <li>Confidence-tagged knowledge writes</li>
+          <li>Status tracking + checkpoint/resume</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>Phase 3: Bootstrap Compiler + Autonomous</h4>
+        <span class="toggle">&rsaquo;</span>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Bootstrap compilation pipeline</li>
+          <li>Quality-driven checkpointing</li>
+          <li>Multi-iteration looping + stagnation detection</li>
+          <li>Async steer with classification</li>
+          <li>Persona rotation</li>
+          <li>Stagnation detection + safety gates</li>
+          <li>Todo recitation</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>Phase 4: Advanced Eval</h4>
+        <span class="toggle">&rsaquo;</span>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Property-based testing (Stage 1.5)</li>
+          <li>Author/critic session split (Stage 3)</li>
+          <li>Self-questioning protocol (Stage 4)</li>
+          <li>Integration eval after dependency groups</li>
+          <li>Three typed cascade checks</li>
+          <li>Drift detection</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>Phase 5: Cross-Platform + Brownfield</h4>
+        <span class="toggle">&rsaquo;</span>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Codex adapter</li>
+          <li>OpenCode adapter</li>
+          <li>Unified installer</li>
+          <li>Staged brownfield onboarding</li>
+          <li>Divergent HTML visualization generation</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>Phase 6: Compaction + Long-Term</h4>
+        <span class="toggle">&rsaquo;</span>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Tiered document compaction</li>
+          <li>Long-running project support (months)</li>
+          <li>Doc audit (orphan detection, contradiction check)</li>
+          <li>Backlog management</li>
+          <li>KV-cache optimization</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-content" id="roadmap-chatgpt">
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>MVP-1: Core Loop</h4>
+        <span class="toggle open">&rsaquo;</span>
+      </div>
+      <div class="card-body open">
+        <ul>
+          <li>Artifact store</li>
+          <li>Interview/spec/harness templates</li>
+          <li>Staged brownfield scan</li>
+          <li>Job DAG creation</li>
+          <li>Compiled-context generation</li>
+          <li>Author execution loop</li>
+          <li>Mechanical eval</li>
+          <li>Status + knowledge updates</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>MVP-2: Eval + Steer</h4>
+        <span class="toggle">&rsaquo;</span>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Critic session</li>
+          <li>Typed alignment checks</li>
+          <li>Steer inbox with classification</li>
+          <li>Checkpoint/restart</li>
+          <li>Confidence-tagged knowledge</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header" onclick="toggleCard(this)">
+        <h4>MVP-3: Advanced</h4>
+        <span class="toggle">&rsaquo;</span>
+      </div>
+      <div class="card-body">
+        <ul>
+          <li>Property-based test hooks</li>
+          <li>Richer brownfield extraction</li>
+          <li>Cross-job risk scoring</li>
+          <li>Historical analytics for decomposition quality</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RISKS -->
+<div class="section" id="risks">
+  <h2>Risks & Open Questions</h2>
+
+  <h3>Key Risks</h3>
+  <table>
+    <thead><tr><th>Risk</th><th>Why It Matters</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td>Memory drift</td><td>Bad agent-authored docs become false ground truth</td><td>Provenance + confidence tags + code/doc alignment checks</td></tr>
+      <tr><td>Spec drift</td><td>Long runs optimize for local tasks, not user value</td><td>Trajectory-to-purpose checks + steer directives</td></tr>
+      <tr><td>Oversized jobs</td><td>Retries become expensive and noisy</td><td>Complexity-based decomposition + quality-driven checkpointing</td></tr>
+      <tr><td>Hidden acceptance criteria</td><td>Agent "fails correctly"</td><td>Require scenario artifacts + visible acceptance checks</td></tr>
+      <tr><td>Brownfield over-scanning</td><td>Context blow-up from unnecessary scanning</td><td>Staged onboarding + concern-scoped scans</td></tr>
+      <tr><td>Self-validation loops</td><td>Author misses own blind spots</td><td>Critic session + property-based checks</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Open Questions</h3>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>1. Ambiguity Gate Calibration</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <p>The 0.2 threshold may need tuning per project type (greenfield vs brownfield, frontend vs backend). Artifact-anchored approach reduces but doesn't eliminate subjectivity in level descriptors.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>2. Knowledge Doc Granularity</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <p>Rule of thumb: one file per bounded context (DDD sense). If a knowledge file exceeds 5K tokens, consider splitting by sub-concern.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>3. Parallel Job Execution</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <p>Current design assumes sequential. Cursor's experience: self-coordinating agents with shared files fail &mdash; need Planner/Worker hierarchy. Phase 6+ complexity.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>4. Model Selection Per Phase</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <p>Interview and purpose alignment may need frontier models. Mechanical dev may work with lighter-weight models. Cached inference economics can differ significantly from uncached paths.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>5. Critic Model Selection</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <p>Author/critic split works best with different models or at minimum different temperature/sampling. Same model with different context is better than nothing but may share blind spots.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>6. Property Specification Completeness</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <p>Properties must be specified before implementation, but users may not know all upfront. Allow iterative surfacing during interview; let harness accumulate them.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header" onclick="toggleCard(this)">
+      <h4>7. Team Collaboration</h4>
+      <span class="toggle">&rsaquo;</span>
+    </div>
+    <div class="card-body">
+      <p>Multiple users steering simultaneously or multiple agents on same project introduces coordination challenges beyond current single-user design.</p>
+    </div>
+  </div>
+</div>
+
+<!-- FRAMEWORKS -->
+<div class="section" id="frameworks">
+  <h2>Framework Comparison</h2>
+
+  <table>
+    <thead><tr><th>Feature</th><th>Tenet</th><th>Cursor BG Agent</th><th>Devin</th><th>Ouroboros</th></tr></thead>
+    <tbody>
+      <tr><td>Session mgmt</td><td>Fresh per job, quality-driven checkpointing</td><td>Planner/Worker hierarchy</td><td>Persistent, Slack-based</td><td>Configurable</td></tr>
+      <tr><td>Interview</td><td>Artifact-anchored ambiguity gate</td><td>None (task-based)</td><td>None (task-based)</td><td>Socratic + ontological</td></tr>
+      <tr><td>Decomposition</td><td>Recursive, complexity-based sizing</td><td>Recursive planner/sub-planner</td><td>Internal planning</td><td>Double Diamond</td></tr>
+      <tr><td>Eval</td><td>5-stage with author/critic</td><td>Judge agent at cycle end</td><td>Internal review</td><td>3-stage</td></tr>
+      <tr><td>Stagnation</td><td>Persona rotation + halt</td><td>Risk-averse detection</td><td>Unknown</td><td>Lateral thinking</td></tr>
+      <tr><td>User steering</td><td>Async classified inbox</td><td>Not documented</td><td>Slack messages</td><td>Synchronous</td></tr>
+      <tr><td>Documentation</td><td>6-layer, confidence-tagged</td><td>Minimal (git-based)</td><td>Not documented</td><td>Database (SQLite)</td></tr>
+      <tr><td>Brownfield</td><td>Staged scan</td><td>Full codebase understanding</td><td>Full codebase</td><td>Brownfield scanning</td></tr>
+      <tr><td>Drift detection</td><td>3-type cascade checks</td><td>Not documented</td><td>Not documented</td><td>Drift measurement</td></tr>
+      <tr><td>Context engineering</td><td>Compiled bootstrap, KV-cache</td><td>Agent-scoped</td><td>Not documented</td><td>Not documented</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Production Scale Reference Points</h3>
+  <div class="stats">
+    <div class="stat"><div class="num" style="font-size:20px">1M+ LoC</div><div class="label">Cursor: Built browser in ~1 week</div></div>
+    <div class="stat"><div class="num" style="font-size:20px">67%</div><div class="label">Devin PR merge rate</div></div>
+    <div class="stat"><div class="num" style="font-size:20px">90.2%</div><div class="label">Anthropic multi-agent improvement over single-agent</div></div>
+  </div>
+
+  <h3>Cross-Platform Support</h3>
+  <table>
+    <thead><tr><th>Platform</th><th>Instruction File</th><th>Skill Location</th><th>Session Model</th></tr></thead>
+    <tbody>
+      <tr><td>Claude Code</td><td>CLAUDE.md</td><td>.claude/skills/*/SKILL.md</td><td>Local CLI, persistent</td></tr>
+      <tr><td>Codex</td><td>AGENTS.md</td><td>.agents/skills/*/SKILL.md</td><td>Cloud sandbox, ephemeral</td></tr>
+      <tr><td>OpenCode</td><td>AGENTS.md</td><td>.opencode/skills/</td><td>Local, configurable</td></tr>
+    </tbody>
+  </table>
+</div>
+
+</main>
+
+<script>
+// Navigation
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    item.classList.add('active');
+    const section = document.getElementById(item.dataset.section);
+    if (section) section.classList.add('active');
+  });
+});
+
+// Collapsible cards
+function toggleCard(header) {
+  const body = header.nextElementSibling;
+  const toggle = header.querySelector('.toggle');
+  body.classList.toggle('open');
+  toggle.classList.toggle('open');
+}
+
+// Tabs
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const parent = tab.closest('.section');
+    parent.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    parent.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    const content = document.getElementById(tab.dataset.tab);
+    if (content) content.classList.add('active');
+  });
+});
+
+// Search
+document.getElementById('searchBox').addEventListener('input', function() {
+  const query = this.value.toLowerCase();
+  document.querySelectorAll('.nav-item').forEach(item => {
+    if (!query) {
+      item.style.display = '';
+      return;
+    }
+    const text = item.textContent.toLowerCase();
+    const sectionId = item.dataset.section;
+    const section = document.getElementById(sectionId);
+    const sectionText = section ? section.textContent.toLowerCase() : '';
+    item.style.display = (text.includes(query) || sectionText.includes(query)) ? '' : 'none';
+  });
+});
+</script>
+</body>
+</html>
