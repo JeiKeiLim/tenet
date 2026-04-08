@@ -4,8 +4,11 @@ This reference defines the mandatory interview phase for Tenet Full mode. Read a
 
 ## 1. Output File Path
 The interview transcript MUST be saved before proceeding to the next phase:
-- Path: `.tenet/interview/interview.md`
-- For subsequent rounds: `.tenet/interview/interview-round-N.md` (where N is the round number)
+- Path: `.tenet/interview/{date}-{feature}.md` (e.g. `.tenet/interview/2026-04-08-oauth.md`)
+- `{date}` is today's ISO date (YYYY-MM-DD), `{feature}` is a short slug derived from the project/feature name (e.g. "oauth", "payments", "user-dashboard")
+- Determine the feature slug early in the interview (from the user's description of what they want to build). Use lowercase, hyphen-separated words.
+- For subsequent rounds in the same session: append to the same file (add a new `## Round N` section)
+- For a new session on the same feature: create a new file with today's date — `resolveLatest()` will pick the most recent
 
 ## 2. Mandatory Question Categories
 Ask at least one question from each category in the first round.

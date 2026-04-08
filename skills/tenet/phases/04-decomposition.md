@@ -5,13 +5,15 @@
 - Initialize the status tracking system to manage the execution flow via MCP.
 
 ## 2. File Structure (STRICT)
-- **DECOMPOSITION**: `.tenet/spec/decomposition.md`
-- **JOB QUEUE**:     `.tenet/status/job-queue.md`
+- **DECOMPOSITION**: `.tenet/decomposition/{date}-{feature}.md` (e.g. `.tenet/decomposition/2026-04-08-oauth.md`)
+- **JOB QUEUE**:     `.tenet/status/job-queue.md` (auto-generated from DB)
 - **BACKLOG**:       `.tenet/status/backlog.md`
-- **STATUS**:        `.tenet/status/status.md`
+- **STATUS**:        `.tenet/status/status.md` (auto-generated from DB)
+
+Use the same `{feature}` slug established during the interview phase. `{date}` is today's ISO date (YYYY-MM-DD).
 
 ## 3. Decomposition Format
-The `decomposition.md` must include:
+The decomposition file must include:
 - **ASCII DAG**: Visual representation of job dependencies.
 - **Job Details**: For each job, specify ID, type, dependencies, deliverables, and verification criteria.
 - **Interface Contracts**: Define data/state boundaries between dependent jobs.
@@ -27,7 +29,7 @@ Populate `job-queue.md` immediately after decomposition:
 *Statuses: `pending`, `running`, `completed`, `failed`, `blocked`.*
 
 ## 5. Execution Protocol (CRITICAL)
-1. **Write Files First**: Finish writing `decomposition.md`, `job-queue.md`, `backlog.md`, and `status.md`.
+1. **Write Files First**: Finish writing the decomposition file, `backlog.md`. Status files (`job-queue.md`, `status.md`) are auto-generated from the DB.
 2. **Register Jobs**: Call `tenet_register_jobs` with all jobs from the DAG. This creates runtime entries so `tenet_continue()` can manage execution. Example:
    ```
    tenet_register_jobs({

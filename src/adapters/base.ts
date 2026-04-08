@@ -3,6 +3,7 @@ export interface AgentInvocation {
   context?: string;
   maxTurns?: number;
   workdir?: string;
+  allowedTools?: string[];
 }
 
 export interface AgentResponse {

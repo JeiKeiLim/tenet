@@ -11,6 +11,17 @@ type ClaudeJsonOutput = {
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
+const DEFAULT_ALLOWED_TOOLS = [
+  'Read',
+  'Write',
+  'Edit',
+  'Bash',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+];
+
 const stringifyOutput = (value: unknown): string => {
   if (typeof value === 'string') {
     return value;
@@ -36,9 +47,12 @@ export class ClaudeAdapter implements AgentAdapter {
     const prompt = invocation.context ? `${invocation.context}\n\n${invocation.prompt}` : invocation.prompt;
 
     return new Promise((resolve) => {
+      const tools = invocation.allowedTools ?? DEFAULT_ALLOWED_TOOLS;
+      const args = ['--print', '--output-format', 'json', '--allowedTools', tools.join(','), prompt];
+
       const child = spawn(
         'claude',
-        ['--print', '--output-format', 'json', prompt],
+        args,
         {
           cwd: invocation.workdir,
           stdio: ['ignore', 'pipe', 'pipe'],

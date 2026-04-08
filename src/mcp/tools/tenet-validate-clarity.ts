@@ -43,14 +43,38 @@ export const registerTenetValidateClarityTool = (
         'Dispatch a fresh agent to independently score the interview clarity. ' +
         'Call this AFTER writing the interview transcript. The agent reads ONLY the transcript ' +
         'and scores it without seeing the interview conversation. Returns pass/fail + gaps.',
-      inputSchema: z.object({}),
+      inputSchema: z.object({
+        feature: z.string().optional().describe('Feature slug to find the interview transcript (e.g. "oauth"). If omitted, uses the latest interview file or falls back to interview.md.'),
+      }),
     },
-    async () => {
+    async ({ feature }) => {
       const tenetPath = path.join(stateStore.projectPath, '.tenet');
-      const transcriptPath = path.join(tenetPath, 'interview', 'interview.md');
+      const interviewDir = path.join(tenetPath, 'interview');
+
+      let transcriptPath: string | undefined;
+
+      // Try feature-scoped first, then latest file in dir, then singleton fallback
+      if (feature && fs.existsSync(interviewDir)) {
+        const suffix = `-${feature}.md`;
+        const matches = fs.readdirSync(interviewDir).filter((f) => f.endsWith(suffix)).sort();
+        if (matches.length > 0) {
+          transcriptPath = path.join(interviewDir, matches[matches.length - 1]);
+        }
+      }
+
+      if (!transcriptPath && fs.existsSync(interviewDir)) {
+        const allMd = fs.readdirSync(interviewDir).filter((f) => f.endsWith('.md')).sort();
+        if (allMd.length > 0) {
+          transcriptPath = path.join(interviewDir, allMd[allMd.length - 1]);
+        }
+      }
+
+      if (!transcriptPath) {
+        transcriptPath = path.join(interviewDir, 'interview.md');
+      }
 
       if (!fs.existsSync(transcriptPath)) {
-        throw new Error('Interview transcript not found at .tenet/interview/interview.md — write it before validating');
+        throw new Error('Interview transcript not found — write it to .tenet/interview/{date}-{feature}.md before validating');
       }
 
       const transcript = fs.readFileSync(transcriptPath, 'utf8');

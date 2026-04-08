@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import type { ContinuationState, Job, JobResult, JobType, JobWaitResponse } from '../types/index.js';
 import { AdapterRegistry } from '../adapters/index.js';
 import type { AgentAdapter, AgentInvocation } from '../adapters/base.js';
@@ -371,6 +372,26 @@ export class JobManager {
       });
 
       if (response.success) {
+        // For dev jobs, verify the worker actually produced file changes
+        if (job.type === 'dev') {
+          const deliverableCheck = this.checkDeliverables(job);
+          if (!deliverableCheck.passed) {
+            this.stateStore.updateJob(jobId, {
+              status: 'failed',
+              completedAt: finishedAt,
+              lastHeartbeat: finishedAt,
+              error: deliverableCheck.reason,
+            });
+            this.stateStore.appendEvent(jobId, 'job_failed', {
+              adapter: adapter.name,
+              error: deliverableCheck.reason,
+              duration_ms: response.durationMs,
+              deliverable_check: 'failed',
+            });
+            return;
+          }
+        }
+
         this.stateStore.updateJob(jobId, {
           status: 'completed',
           completedAt: finishedAt,
@@ -464,6 +485,38 @@ export class JobManager {
       '',
       prompt,
     ].join('\n');
+  }
+
+  private checkDeliverables(job: Job): { passed: boolean; reason: string } {
+    const workdir = typeof job.params.workdir === 'string' ? job.params.workdir : this.stateStore.projectPath;
+
+    try {
+      const gitStatus = execSync('git status --porcelain', {
+        cwd: workdir,
+        encoding: 'utf8',
+        timeout: 5_000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+
+      const gitDiff = execSync('git diff --stat HEAD', {
+        cwd: workdir,
+        encoding: 'utf8',
+        timeout: 5_000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+
+      if (gitStatus.length === 0 && gitDiff.length === 0) {
+        return {
+          passed: false,
+          reason: 'Dev job completed but produced no file changes. Worker may have explored instead of implementing. Use tenet_retry_job with an enhanced prompt.',
+        };
+      }
+
+      return { passed: true, reason: '' };
+    } catch {
+      // If git is not available or workdir isn't a repo, skip the check
+      return { passed: true, reason: '' };
+    }
   }
 
   private progressLine(status: Job['status']): string {

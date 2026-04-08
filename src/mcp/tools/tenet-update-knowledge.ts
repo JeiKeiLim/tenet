@@ -25,9 +25,16 @@ export const registerTenetUpdateKnowledgeTool = (registerTool: RegisterTool, sta
         title: z.string().min(3).describe('Short descriptive title for the knowledge entry (3-8 words)'),
         job_id: z.string().uuid(),
         findings: z.record(z.string(), z.unknown()),
+        confidence: z.enum([
+          'implemented-and-tested',
+          'implemented-not-tested',
+          'decision-only',
+          'scanned-not-verified',
+        ]).optional().describe('Confidence tag for downstream weighting. Defaults to "decision-only".'),
       }),
     },
-    async ({ title, job_id, findings }) => {
+    async ({ title, job_id, findings, confidence }) => {
+      const confidenceTag = confidence ?? 'decision-only';
       const knowledgeDir = path.join(stateStore.projectPath, '.tenet', 'knowledge');
       fs.mkdirSync(knowledgeDir, { recursive: true });
 
@@ -47,6 +54,7 @@ export const registerTenetUpdateKnowledgeTool = (registerTool: RegisterTool, sta
         '',
         `source_job: ${job_id}`,
         `job_name: ${jobName}`,
+        `confidence: ${confidenceTag}`,
         `created: ${new Date().toISOString()}`,
         '',
         '## Findings',

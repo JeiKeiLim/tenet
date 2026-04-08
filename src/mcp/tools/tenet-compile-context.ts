@@ -13,6 +13,23 @@ const readIfExists = (filePath: string): string => {
 };
 
 /**
+ * List knowledge filenames (not contents) so agents can selectively read relevant ones.
+ * Filenames are self-descriptive dated slugs (e.g. 2026-04-08_auth-middleware-jwt-validation.md).
+ */
+const listKnowledgeFiles = (knowledgeDir: string): string => {
+  if (!fs.existsSync(knowledgeDir)) {
+    return '';
+  }
+
+  const files = fs.readdirSync(knowledgeDir).filter((f) => f.endsWith('.md')).sort();
+  if (files.length === 0) {
+    return '';
+  }
+
+  return files.map((f) => `- .tenet/knowledge/${f}`).join('\n');
+};
+
+/**
  * Resolve the latest document matching `$date-$feature.md` in a directory.
  * Files are sorted lexicographically (date prefix ensures chronological order),
  * and the last match (most recent) is returned.
@@ -69,11 +86,20 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         ? resolveLatest(path.join(tenetPath, 'interview'), feature)
         : '';
 
+      // Resolve scenarios: feature-scoped with fallback
+      const scenariosMd = feature
+        ? resolveLatest(path.join(tenetPath, 'spec'), `scenarios-${feature}`)
+            || resolveLatest(path.join(tenetPath, 'spec'), feature.replace(/^scenarios-/, ''))
+        : readIfExists(path.join(tenetPath, 'spec', 'scenarios.md'));
+
       // Project-wide documents (always singular)
       const harnessMd = readIfExists(path.join(tenetPath, 'harness', 'current.md'));
       const statusMd = readIfExists(path.join(tenetPath, 'status', 'status.md'));
       const steerInbox = readIfExists(path.join(tenetPath, 'steer', 'inbox.md'));
       const codebaseScanMd = readIfExists(path.join(tenetPath, 'bootstrap', 'codebase-scan.md'));
+
+      // Knowledge file listing (filenames only — agents read selectively)
+      const knowledgeListing = listKnowledgeFiles(path.join(tenetPath, 'knowledge'));
 
       const jobName = typeof job.params.name === 'string' ? job.params.name : 'unnamed';
       const jobPrompt = typeof job.params.prompt === 'string' ? job.params.prompt : '';
@@ -96,9 +122,11 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         '## Decomposition',
         decompositionMd,
         ...(interviewMd ? ['', '## Interview', interviewMd] : []),
+        ...(scenariosMd ? ['', '## Scenarios & Anti-Scenarios', scenariosMd] : []),
         '',
         '## Harness',
         harnessMd,
+        ...(knowledgeListing ? ['', '## Available Knowledge Files', 'Read any relevant files below before starting work:', knowledgeListing] : []),
         '',
         '## Status',
         statusMd,

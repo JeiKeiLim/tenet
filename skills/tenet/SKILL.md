@@ -127,7 +127,7 @@ Run before decomposition when in Full mode. Each step below requires reading a d
 - Use Socratic questions to expose assumptions, intent, and constraints.
 - Use ontological questions to separate root causes from symptoms.
 - MUST ask at least one question from each of the 8 mandatory categories.
-- MUST write transcript to `.tenet/interview/interview.md`.
+- MUST write transcript to `.tenet/interview/{date}-{feature}.md` (e.g. `2026-04-08-oauth.md`). Derive the feature slug from the user's project description early in the interview.
 - MUST call `tenet_validate_clarity()` to get an independent clarity score.
 - Wait for the validation result via `tenet_job_wait` + `tenet_job_result`.
 - If Clarity < 0.8: address the gaps identified in the validation result, then re-validate.
@@ -148,25 +148,24 @@ Do NOT re-validate clarity after the interview — later phases have their own v
 
 - Define concrete success scenarios.
 - Define explicit anti-scenarios (failure shapes to avoid).
-- Write to `.tenet/spec/scenarios.md`.
+- Write to `.tenet/spec/scenarios-{date}-{feature}.md`.
 - These become evaluation inputs.
 
 ### D) Spec + Harness generation
 
 **Read `phases/02-spec-and-harness.md` before executing.**
 
-- Write spec to `.tenet/spec/spec.md` (NOT `.tenet/spec.md`).
+- Write spec to `.tenet/spec/{date}-{feature}.md` (NOT `.tenet/spec.md` or `.tenet/spec/spec.md`).
 - Update harness at `.tenet/harness/current.md` (NOT `.tenet/harness.md`).
-- Write scenarios to `.tenet/spec/scenarios.md`.
+- Write scenarios to `.tenet/spec/scenarios-{date}-{feature}.md`.
 - Lock harness invariants after agreement.
 
 ### E) DAG decomposition
 
 **Read `phases/04-decomposition.md` before executing.**
 
-- Write decomposition to `.tenet/spec/decomposition.md` (NOT `.tenet/decomposition.md`).
-- Populate `.tenet/status/job-queue.md` with all jobs.
-- Update `.tenet/status/status.md` with mode, total jobs, current phase.
+- Write decomposition to `.tenet/decomposition/{date}-{feature}.md` (NOT `.tenet/spec/decomposition.md`).
+- Status files (`job-queue.md`, `status.md`) are auto-generated from the DB on state transitions.
 - Call `tenet_register_jobs` to load the DAG into the runtime queue.
 - Do NOT start execution until all status files are populated AND jobs are registered.
 
@@ -252,26 +251,31 @@ while True:
     # 7. Retrieve full output
     output = tenet_job_result(job_id=run.job_id)
 
-    # 8. Dispatch evaluation
-    eval_run = tenet_start_eval(job_id=job.id, output=output)
-    eval_check = BACKGROUND tenet_job_wait(job_id=eval_run.job_id)
+    # 8. Dispatch evaluation (author + critic)
+    eval = tenet_start_eval(job_id=job.id, output=output)
+    # This dispatches TWO jobs: author_eval and critic_eval
+    author_check = BACKGROUND tenet_job_wait(job_id=eval.author_eval_job_id)
+    critic_check = BACKGROUND tenet_job_wait(job_id=eval.critic_eval_job_id)
 
+    # Wait for both eval jobs
     eval_delay = 30
-    WHILE eval_check result is not terminal:
-        eval_result = COLLECT eval_check
+    WHILE author_check or critic_check not terminal:
         SLEEP eval_delay seconds
         eval_delay = min(eval_delay * 1.5, 120)
-        eval_check = BACKGROUND tenet_job_wait(
-            job_id=eval_run.job_id, cursor=eval_result.cursor
-        )
+        # Re-check whichever is not done
+        IF author_check not terminal:
+            author_check = BACKGROUND tenet_job_wait(job_id=eval.author_eval_job_id)
+        IF critic_check not terminal:
+            critic_check = BACKGROUND tenet_job_wait(job_id=eval.critic_eval_job_id)
 
-    eval_output = tenet_job_result(job_id=eval_run.job_id)
+    author_output = tenet_job_result(job_id=eval.author_eval_job_id)
+    critic_output = tenet_job_result(job_id=eval.critic_eval_job_id)
 
-    # 9. Act on eval result
-    IF eval_output.passed:
+    # 9. Act on eval results — BOTH must pass
+    IF author_output.passed AND critic_output.passed:
         tenet_update_knowledge(job_id=job.id, findings=output.findings)
     ELSE:
-        run_reflection(job, output, eval_output)
+        run_reflection(job, output, author_output, critic_output)
 
     # 10. Post-job steering checkpoint
     tenet_process_steer()
