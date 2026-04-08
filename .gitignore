@@ -14,6 +14,13 @@ tsconfig.tsbuildinfo
 # Test
 tenet-manual-test/
 
+# Generated project configs
+opencode.json
+
+# Ad-hoc debug scripts
+check-job*.mjs
+list-jobs.mjs
+
 # Environment
 .env
 .env.*

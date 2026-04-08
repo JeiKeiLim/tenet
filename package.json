@@ -1,0 +1,72 @@
+{
+  "name": "tenet",
+  "version": "0.1.0",
+  "description": "Cross-platform AI agent plugin for 12+ hour autonomous development cycles",
+  "type": "module",
+  "bin": {
+    "tenet": "./dist/cli/index.js",
+    "tenet-mcp": "./dist/mcp/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "templates"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./mcp": {
+      "import": "./dist/mcp/index.js",
+      "types": "./dist/mcp/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm run clean && pnpm run build"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "autonomous",
+    "mcp",
+    "claude",
+    "opencode",
+    "codex",
+    "copilot",
+    "development",
+    "orchestration"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@10.17.1",
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@modelcontextprotocol/server": "2.0.0-alpha.2",
+    "better-sqlite3": "^12.8.0",
+    "commander": "^14.0.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.2",
+    "@vitest/coverage-v8": "^4.1.2",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
+  }
+}
