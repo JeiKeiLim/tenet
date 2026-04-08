@@ -84,7 +84,13 @@ Rounds: [N]
 [Concise summary of project agreement]
 ```
 
-## 5. Anti-Skip Enforcement
+## 5. User Interaction Method
+- **ALWAYS prefer interactive prompts** (question dialog / modal) over inline text when asking interview questions.
+- Use the host agent's question/dialog tool (e.g. `AskUserQuestion`) to present each question individually and wait for the user's response.
+- Do NOT dump all questions as a text block and expect the user to answer inline — this creates a poor experience and makes it easy to miss questions.
+- If the host agent does not support interactive prompts, fall back to asking one question at a time in regular text and waiting for a response before proceeding to the next question.
+
+## 6. Anti-Skip Enforcement
 - Do NOT proceed to spec or harness generation until the transcript file is written and the clarity gate passes.
 - If the user says "just build it," you MUST still ask the minimum required questions and record the answers.
 

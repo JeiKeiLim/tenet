@@ -127,6 +127,7 @@ Run before decomposition when in Full mode. Each step below requires reading a d
 - Use Socratic questions to expose assumptions, intent, and constraints.
 - Use ontological questions to separate root causes from symptoms.
 - MUST ask at least one question from each of the 8 mandatory categories.
+- MUST use interactive prompts (question dialog/modal) to ask questions — do NOT dump questions as inline text. Ask one question at a time and wait for the user's answer.
 - MUST write transcript to `.tenet/interview/{date}-{feature}.md` (e.g. `2026-04-08-oauth.md`). Derive the feature slug from the user's project description early in the interview.
 - MUST call `tenet_validate_clarity()` to get an independent clarity score.
 - Wait for the validation result via `tenet_job_wait` + `tenet_job_result`.
