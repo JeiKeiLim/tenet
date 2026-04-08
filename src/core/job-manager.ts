@@ -213,6 +213,47 @@ export class JobManager {
     this.stateStore.appendEvent(jobId, 'job_cancelled');
   }
 
+  retryJob(jobId: string, enhancedPrompt?: string): Job {
+    const job = this.stateStore.getJob(jobId);
+    if (!job) {
+      throw new Error(`job not found: ${jobId}`);
+    }
+
+    if (job.status !== 'completed' && job.status !== 'failed') {
+      throw new Error(`job ${jobId} is ${job.status}, can only retry completed or failed jobs`);
+    }
+
+    if (job.retryCount >= job.maxRetries) {
+      throw new Error(`job ${jobId} has exhausted retries (${job.retryCount}/${job.maxRetries})`);
+    }
+
+    const params = { ...job.params };
+    if (enhancedPrompt) {
+      params.prompt = enhancedPrompt;
+    }
+
+    this.stateStore.updateJob(jobId, {
+      status: 'pending',
+      params,
+      startedAt: undefined,
+      completedAt: undefined,
+      lastHeartbeat: undefined,
+      error: undefined,
+      retryCount: job.retryCount + 1,
+    });
+    this.stateStore.appendEvent(jobId, 'job_retried', {
+      retry_count: job.retryCount + 1,
+      has_enhanced_prompt: !!enhancedPrompt,
+    });
+
+    const updated = this.stateStore.getJob(jobId);
+    if (!updated) {
+      throw new Error(`failed to load retried job: ${jobId}`);
+    }
+
+    return updated;
+  }
+
   continue(): ContinuationState {
     this.detectStalledJobs();
     const nextJob = this.stateStore.getNextRunnableJob();
@@ -383,7 +424,8 @@ export class JobManager {
   }
 
   private toInvocation(job: Job): AgentInvocation {
-    const prompt = typeof job.params.prompt === 'string' ? job.params.prompt : `Execute ${job.type} job ${job.id}`;
+    const rawPrompt = typeof job.params.prompt === 'string' ? job.params.prompt : `Execute ${job.type} job ${job.id}`;
+    const prompt = job.type === 'dev' ? this.withDevPreamble(rawPrompt, job) : rawPrompt;
     const context = typeof job.params.context === 'string' ? job.params.context : undefined;
 
     const maxTurnsRaw = job.params.maxTurns;
@@ -400,6 +442,28 @@ export class JobManager {
       maxTurns,
       workdir,
     };
+  }
+
+  private withDevPreamble(prompt: string, job: Job): string {
+    const retryNote = job.retryCount > 0
+      ? `\nThis is retry #${job.retryCount}. The previous attempt did not produce the expected deliverables. You MUST produce working code this time.\n`
+      : '';
+
+    return [
+      '## Deliverable Requirements',
+      '',
+      'You are a worker agent executing a development job. You MUST produce concrete deliverables:',
+      '- Write or modify source code files that implement the described feature',
+      '- Ensure the code compiles/passes type-checking',
+      '- Run existing tests to verify no regressions',
+      '- Do NOT just explore, research, or describe what could be done — actually implement it',
+      '',
+      'If the task is unclear, make reasonable assumptions and implement. Do not exit without producing code.',
+      retryNote,
+      '## Task',
+      '',
+      prompt,
+    ].join('\n');
   }
 
   private progressLine(status: Job['status']): string {

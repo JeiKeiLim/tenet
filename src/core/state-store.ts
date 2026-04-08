@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import type { Job, JobStatus, SteerMessage, SteerMessageStatus } from '../types/index.js';
+import { writeStatusFiles } from './status-writer.js';
 
 type JobRow = {
   id: string;
@@ -122,7 +123,17 @@ export class StateStore {
       return;
     }
 
-    const merged: Job = { ...current, ...updates, id: current.id, createdAt: current.createdAt };
+    // Explicit undefined values in updates should clear the field (not fall through to current)
+    const merged: Job = { ...current, id: current.id, createdAt: current.createdAt };
+    for (const key of Object.keys(updates) as Array<keyof Job>) {
+      if (key === 'id' || key === 'createdAt') continue;
+      (merged as unknown as Record<string, unknown>)[key] = updates[key];
+    }
+    // Fill remaining fields from current where not explicitly set
+    for (const key of Object.keys(current) as Array<keyof Job>) {
+      if (key in updates || key === 'id' || key === 'createdAt') continue;
+      (merged as unknown as Record<string, unknown>)[key] = current[key];
+    }
     this.db
       .prepare(
         `
@@ -159,6 +170,7 @@ export class StateStore {
 
     if (updates.status) {
       this.appendEvent(jobId, 'job_status_changed', { status: updates.status });
+      this.syncStatusFiles();
     }
   }
 
@@ -263,6 +275,21 @@ export class StateStore {
     this.db
       .prepare('INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
       .run(key, value);
+  }
+
+  syncStatusFiles(): void {
+    const allRows = this.db.prepare('SELECT * FROM jobs ORDER BY created_at ASC').all() as JobRow[];
+    const jobs = allRows.map((row) => this.toJob(row));
+
+    writeStatusFiles(this.projectPath, {
+      jobs,
+      completed: jobs.filter((j) => j.status === 'completed').length,
+      total: jobs.length,
+      running: jobs.filter((j) => j.status === 'running'),
+      failed: jobs.filter((j) => j.status === 'failed'),
+      pending: jobs.filter((j) => j.status === 'pending'),
+      blocked: jobs.filter((j) => j.status === 'blocked'),
+    });
   }
 
   close(): void {

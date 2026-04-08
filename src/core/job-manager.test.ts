@@ -83,11 +83,11 @@ describe('JobManager', () => {
     const result = manager.getJobResult(job.id);
     expect(result.status).toBe('completed');
     expect(result.job_id).toBe(job.id);
-    expect(result.output).toEqual({
-      adapter: 'mock-adapter',
-      output: 'ok:build feature',
-      duration_ms: 0,
-    });
+    const output = result.output as { adapter: string; output: string; duration_ms: number };
+    expect(output.adapter).toBe('mock-adapter');
+    expect(output.duration_ms).toBe(0);
+    expect(output.output).toContain('build feature');
+    expect(output.output).toContain('Deliverable Requirements');
   });
 
   it('cancels a running job', async () => {
