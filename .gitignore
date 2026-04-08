@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+tsconfig.tsbuildinfo
+
+# Runtime state
+.tenet/.state/
+
+# OS
+.DS_Store
+
+# Test
+tenet-manual-test/
+
+# Environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
