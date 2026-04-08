@@ -48,16 +48,21 @@ export class ClaudeAdapter implements AgentAdapter {
 
     return new Promise((resolve) => {
       const tools = invocation.allowedTools ?? DEFAULT_ALLOWED_TOOLS;
-      const args = ['--print', '--output-format', 'json', '--allowedTools', tools.join(','), prompt];
+      // Pass prompt via stdin because --allowedTools is variadic and swallows positional args
+      const args = ['--print', '--output-format', 'json', '--allowedTools', ...tools];
 
       const child = spawn(
         'claude',
         args,
         {
           cwd: invocation.workdir,
-          stdio: ['ignore', 'pipe', 'pipe'],
+          stdio: ['pipe', 'pipe', 'pipe'],
         },
       );
+
+      // Write prompt to stdin and close it
+      child.stdin.write(prompt);
+      child.stdin.end();
 
       let stdout = '';
       let stderr = '';
