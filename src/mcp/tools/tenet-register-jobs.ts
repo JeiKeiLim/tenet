@@ -18,10 +18,11 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
         'Call this ONCE after writing decomposition.md and job-queue.md. ' +
         'Each job becomes a pending SQLite entry that tenet_continue() can return.',
       inputSchema: z.object({
+        feature: z.string().min(1).describe('Feature slug (e.g. "oauth", "payments"). Used to resolve spec/decomposition docs.'),
         jobs: z.array(jobEntrySchema).min(1).describe('Array of jobs from the decomposition DAG'),
       }),
     },
-    async ({ jobs }) => {
+    async ({ feature, jobs }) => {
       const dagIdToDbId = new Map<string, string>();
 
       for (const entry of jobs) {
@@ -33,6 +34,7 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
             name: entry.name,
             prompt: entry.prompt,
             depends_on: entry.depends_on,
+            feature,
           },
           retryCount: 0,
           maxRetries: 3,

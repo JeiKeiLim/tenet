@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenet — Multi-Session Document Structure</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --orange: #d29922;
+    --purple: #bc8cff;
+    --cyan: #39d2c0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem;
+    line-height: 1.6;
+  }
+
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+  h2 { font-size: 1.15rem; color: var(--accent); margin: 2rem 0 1rem; }
+  h3 { font-size: 0.95rem; color: var(--text-muted); margin: 1.5rem 0 0.5rem; }
+  p, li { font-size: 0.85rem; color: var(--text-muted); }
+  p { margin-bottom: 0.75rem; }
+
+  .subtitle { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 2rem; }
+
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin: 1.5rem 0;
+  }
+
+  .column {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+
+  .column-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .badge {
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+  }
+  .badge-red { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-green { background: rgba(63,185,80,0.15); color: var(--green); }
+
+  /* File tree */
+  .tree { font-size: 0.8rem; line-height: 1.8; }
+  .tree-dir { color: var(--accent); font-weight: 600; }
+  .tree-file { color: var(--text); }
+  .tree-muted { color: var(--text-muted); font-style: italic; }
+  .tree-new { color: var(--green); }
+  .tree-danger { color: var(--red); }
+  .tree-singular { color: var(--orange); }
+  .tree-indent { padding-left: 1.25rem; }
+  .tree-indent2 { padding-left: 2.5rem; }
+
+  .annotation {
+    display: inline;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-left: 0.5rem;
+  }
+  .annotation-warn { color: var(--red); }
+  .annotation-ok { color: var(--green); }
+  .annotation-info { color: var(--cyan); }
+
+  /* Timeline */
+  .timeline {
+    position: relative;
+    margin: 1.5rem 0;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 18px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+
+  .tl-event {
+    position: relative;
+    padding-left: 48px;
+    padding-bottom: 1.5rem;
+  }
+
+  .tl-dot {
+    position: absolute;
+    left: 12px;
+    top: 4px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+  }
+  .tl-dot-green { border-color: var(--green); }
+  .tl-dot-orange { border-color: var(--orange); }
+  .tl-dot-purple { border-color: var(--purple); }
+
+  .tl-date { font-size: 0.75rem; color: var(--text-muted); }
+  .tl-title { font-size: 0.85rem; font-weight: 600; margin: 0.15rem 0; }
+  .tl-body { font-size: 0.8rem; color: var(--text-muted); }
+
+  .tl-files {
+    background: rgba(22,27,34,0.8);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-top: 0.5rem;
+    font-size: 0.78rem;
+    line-height: 1.7;
+  }
+
+  /* Resolve diagram */
+  .resolve-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1rem 0;
+  }
+
+  .resolve-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .resolve-num {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+  }
+
+  .resolve-text { font-size: 0.8rem; padding-top: 2px; }
+  .resolve-code {
+    font-family: inherit;
+    background: rgba(88,166,255,0.1);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.78rem;
+  }
+
+  /* Scope table */
+  .scope-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    margin: 1rem 0;
+  }
+  .scope-table th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .scope-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .scope-table tr:last-child td { border-bottom: none; }
+  .scope-feature { color: var(--green); }
+  .scope-project { color: var(--orange); }
+  .scope-auto { color: var(--cyan); }
+
+  /* Edge cases */
+  .case-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 0.75rem 0;
+  }
+  .case-q { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; }
+  .case-a { font-size: 0.8rem; color: var(--text-muted); }
+  .case-a code {
+    background: rgba(88,166,255,0.1);
+    color: var(--accent);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 2.5rem 0;
+  }
+
+  .key-point {
+    background: rgba(63,185,80,0.08);
+    border-left: 3px solid var(--green);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    font-size: 0.82rem;
+    border-radius: 0 6px 6px 0;
+  }
+
+  .warn-point {
+    background: rgba(248,81,73,0.08);
+    border-left: 3px solid var(--red);
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    font-size: 0.82rem;
+    border-radius: 0 6px 6px 0;
+  }
+
+  /* Interactive tabs */
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.82rem;
+    padding: 0.6rem 1.2rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+</style>
+</head>
+<body>
+
+<h1>Multi-Session Document Structure</h1>
+<div class="subtitle">How .tenet/ evolves across features and revisits over the lifetime of a project</div>
+
+<!-- ============================================ -->
+<h2>The Problem</h2>
+
+<div class="columns">
+  <div class="column">
+    <div class="column-title">
+      Current Structure
+      <span class="badge badge-red">overwrites</span>
+    </div>
+    <div class="tree">
+      <div class="tree-dir">.tenet/</div>
+      <div class="tree-indent">
+        <div class="tree-dir">spec/</div>
+        <div class="tree-indent2">
+          <span class="tree-danger">spec.md</span>
+          <span class="annotation annotation-warn">overwritten each run</span>
+        </div>
+        <div class="tree-indent2">
+          <span class="tree-danger">decomposition.md</span>
+          <span class="annotation annotation-warn">overwritten each run</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">interview/</div>
+        <div class="tree-indent2">
+          <span class="tree-danger">interview.md</span>
+          <span class="annotation annotation-warn">overwritten each run</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">harness/</div>
+        <div class="tree-indent2">
+          <span class="tree-file">current.md</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">knowledge/</div>
+        <div class="tree-indent2">
+          <span class="tree-file">2026-04-08_auth-jwt.md</span>
+          <span class="annotation annotation-ok">already date-prefixed</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">status/</div>
+        <div class="tree-indent2"><span class="tree-file">status.md</span></div>
+        <div class="tree-indent2"><span class="tree-file">job-queue.md</span></div>
+      </div>
+    </div>
+
+    <div class="warn-point">
+      Run 1: Build OAuth. <code>spec.md</code> documents OAuth.<br>
+      Run 2: Build Payments. <code>spec.md</code> is overwritten.<br>
+      OAuth knowledge is lost from spec. Only fragments survive in <code>knowledge/</code>.
+    </div>
+  </div>
+
+  <div class="column">
+    <div class="column-title">
+      New Structure
+      <span class="badge badge-green">accumulates</span>
+    </div>
+    <div class="tree">
+      <div class="tree-dir">.tenet/</div>
+      <div class="tree-indent">
+        <div class="tree-dir">spec/</div>
+        <div class="tree-indent2">
+          <span class="tree-new">2026-04-08-oauth.md</span>
+          <span class="annotation annotation-ok">preserved</span>
+        </div>
+        <div class="tree-indent2">
+          <span class="tree-new">2026-04-15-payments.md</span>
+        </div>
+        <div class="tree-indent2">
+          <span class="tree-new">2026-05-01-oauth.md</span>
+          <span class="annotation annotation-info">revisit: newer date</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">decomposition/</div>
+        <div class="tree-indent2">
+          <span class="tree-new">2026-04-08-oauth.md</span>
+        </div>
+        <div class="tree-indent2">
+          <span class="tree-new">2026-04-15-payments.md</span>
+        </div>
+        <div class="tree-indent2">
+          <span class="tree-new">2026-05-01-oauth.md</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">interview/</div>
+        <div class="tree-indent2">
+          <span class="tree-new">2026-04-08-oauth.md</span>
+        </div>
+        <div class="tree-indent2">
+          <span class="tree-new">2026-04-15-payments.md</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">harness/</div>
+        <div class="tree-indent2">
+          <span class="tree-singular">current.md</span>
+          <span class="annotation">project-wide, singular</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">knowledge/</div>
+        <div class="tree-indent2">
+          <span class="tree-file">2026-04-08_auth-jwt.md</span>
+        </div>
+        <div class="tree-indent2">
+          <span class="tree-file">2026-04-15_stripe-integration.md</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">status/</div>
+        <div class="tree-indent2">
+          <span class="tree-singular">status.md</span>
+          <span class="annotation">auto-generated from DB</span>
+        </div>
+        <div class="tree-indent2">
+          <span class="tree-singular">job-queue.md</span>
+          <span class="annotation">auto-generated from DB</span>
+        </div>
+      </div>
+      <div class="tree-indent">
+        <div class="tree-dir">steer/</div>
+        <div class="tree-indent2">
+          <span class="tree-singular">inbox.md</span>
+          <span class="annotation">project-wide, singular</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="key-point">
+      Every feature's crystallization artifacts are preserved.<br>
+      <code>ls .tenet/spec/</code> is the index. No maintenance needed.
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<hr class="divider">
+<h2>What Changes Scope</h2>
+
+<table class="scope-table">
+  <thead>
+    <tr>
+      <th>Directory</th>
+      <th>Scope</th>
+      <th>Naming</th>
+      <th>Who Writes</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>spec/</code></td>
+      <td><span class="scope-feature">per-feature</span></td>
+      <td><code>$date-$feature.md</code></td>
+      <td>Agent (crystallization phase)</td>
+      <td>One file per feature per run</td>
+    </tr>
+    <tr>
+      <td><code>decomposition/</code></td>
+      <td><span class="scope-feature">per-feature</span></td>
+      <td><code>$date-$feature.md</code></td>
+      <td>Agent (decomposition phase)</td>
+      <td>Moves out of <code>spec/</code> to its own dir</td>
+    </tr>
+    <tr>
+      <td><code>interview/</code></td>
+      <td><span class="scope-feature">per-feature</span></td>
+      <td><code>$date-$feature.md</code></td>
+      <td>Agent (interview phase)</td>
+      <td>Transcript + decisions</td>
+    </tr>
+    <tr>
+      <td><code>knowledge/</code></td>
+      <td><span class="scope-feature">per-finding</span></td>
+      <td><code>$date_$slug.md</code></td>
+      <td>MCP server (tenet_update_knowledge)</td>
+      <td>Already works this way. No change.</td>
+    </tr>
+    <tr>
+      <td><code>harness/</code></td>
+      <td><span class="scope-project">project-wide</span></td>
+      <td><code>current.md</code></td>
+      <td>User (manual)</td>
+      <td>Engineering constraints. Singular.</td>
+    </tr>
+    <tr>
+      <td><code>steer/</code></td>
+      <td><span class="scope-project">project-wide</span></td>
+      <td><code>inbox.md</code></td>
+      <td>User + Agent</td>
+      <td>Messages are project-scoped. Singular.</td>
+    </tr>
+    <tr>
+      <td><code>status/</code></td>
+      <td><span class="scope-auto">auto-generated</span></td>
+      <td><code>status.md</code>, <code>job-queue.md</code></td>
+      <td>MCP server (on state change)</td>
+      <td>Reflects current DB state. Always overwritten.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================ -->
+<hr class="divider">
+<h2>How It Evolves Over Time</h2>
+
+<p>A project using Tenet over 2 months, building 3 features with one revisit:</p>
+
+<div class="timeline">
+  <div class="tl-event">
+    <div class="tl-dot"></div>
+    <div class="tl-date">April 8, 2026</div>
+    <div class="tl-title">Run 1 — Build OAuth</div>
+    <div class="tl-body">User starts Tenet, interviews about OAuth, crystallizes spec, decomposes into jobs, executes.</div>
+    <div class="tl-files">
+      <span class="tree-new">+ interview/2026-04-08-oauth.md</span><br>
+      <span class="tree-new">+ spec/2026-04-08-oauth.md</span><br>
+      <span class="tree-new">+ decomposition/2026-04-08-oauth.md</span><br>
+      <span class="tree-new">+ knowledge/2026-04-08_oauth-pkce-flow.md</span><br>
+      <span class="tree-new">+ knowledge/2026-04-09_token-refresh-strategy.md</span><br>
+      <span class="tree-muted">  status/status.md — auto-updated</span><br>
+      <span class="tree-muted">  status/job-queue.md — auto-updated</span>
+    </div>
+  </div>
+
+  <div class="tl-event">
+    <div class="tl-dot tl-dot-green"></div>
+    <div class="tl-date">April 15, 2026</div>
+    <div class="tl-title">Run 2 — Build Payments</div>
+    <div class="tl-body">One week later. OAuth is done and committed. User starts a new feature. All OAuth documents are untouched.</div>
+    <div class="tl-files">
+      <span class="tree-new">+ interview/2026-04-15-payments.md</span><br>
+      <span class="tree-new">+ spec/2026-04-15-payments.md</span><br>
+      <span class="tree-new">+ decomposition/2026-04-15-payments.md</span><br>
+      <span class="tree-new">+ knowledge/2026-04-15_stripe-integration.md</span><br>
+      <span class="tree-new">+ knowledge/2026-04-16_webhook-retry-logic.md</span><br>
+      <span class="tree-muted">  spec/2026-04-08-oauth.md — still there, untouched</span><br>
+      <span class="tree-muted">  knowledge/2026-04-08_oauth-pkce-flow.md — still accessible</span>
+    </div>
+  </div>
+
+  <div class="tl-event">
+    <div class="tl-dot tl-dot-orange"></div>
+    <div class="tl-date">May 1, 2026</div>
+    <div class="tl-title">Run 3 — Revisit OAuth (add refresh token rotation)</div>
+    <div class="tl-body">
+      User needs to enhance OAuth. Starts Tenet with "oauth" as feature name again.
+      New date means new files — the April 8 originals are preserved for reference.
+    </div>
+    <div class="tl-files">
+      <span class="tree-new">+ interview/2026-05-01-oauth.md</span>
+      <span class="annotation annotation-info">new interview for the enhancement</span><br>
+      <span class="tree-new">+ spec/2026-05-01-oauth.md</span>
+      <span class="annotation annotation-info">updated spec, references the original</span><br>
+      <span class="tree-new">+ decomposition/2026-05-01-oauth.md</span><br>
+      <span class="tree-new">+ knowledge/2026-05-01_refresh-token-rotation.md</span><br>
+      <span class="tree-muted">  spec/2026-04-08-oauth.md — preserved as history</span><br>
+      <span class="tree-muted">  spec/2026-04-15-payments.md — untouched</span>
+    </div>
+  </div>
+
+  <div class="tl-event">
+    <div class="tl-dot tl-dot-purple"></div>
+    <div class="tl-date">May 10, 2026</div>
+    <div class="tl-title">Run 4 — Build Admin Dashboard</div>
+    <div class="tl-body">
+      Fourth feature. The .tenet/ directory now has complete history of all crystallization work.
+      A new team member can read the specs chronologically to understand how the project evolved.
+    </div>
+    <div class="tl-files">
+      <span class="tree-new">+ interview/2026-05-10-admin-dashboard.md</span><br>
+      <span class="tree-new">+ spec/2026-05-10-admin-dashboard.md</span><br>
+      <span class="tree-new">+ decomposition/2026-05-10-admin-dashboard.md</span><br>
+      <span class="tree-muted">  ... all previous files preserved ...</span>
+    </div>
+  </div>
+</div>
+
+<div class="key-point">
+  After 4 runs: <code>ls .tenet/spec/</code> shows 5 files (4 features, 1 revisit).
+  Every decision, every interview, every decomposition is preserved and git-trackable.
+  No index file needed — the filesystem tells the story chronologically.
+</div>
+
+<!-- ============================================ -->
+<hr class="divider">
+<h2>How <code>tenet_compile_context</code> Resolves Documents</h2>
+
+<p>When compiling context for a job, the MCP server needs to find the right spec, decomposition, and knowledge. Here's the resolution logic:</p>
+
+<div class="resolve-box">
+  <div class="resolve-step">
+    <div class="resolve-num">1</div>
+    <div class="resolve-text">
+      Job has <span class="resolve-code">feature: "oauth"</span> in its params
+      (set during <code>tenet_register_jobs</code>)
+    </div>
+  </div>
+  <div class="resolve-step">
+    <div class="resolve-num">2</div>
+    <div class="resolve-text">
+      Glob <span class="resolve-code">spec/*-oauth.md</span>
+      &rarr; finds <code>2026-04-08-oauth.md</code>, <code>2026-05-01-oauth.md</code>
+    </div>
+  </div>
+  <div class="resolve-step">
+    <div class="resolve-num">3</div>
+    <div class="resolve-text">
+      Sort by date prefix, pick <strong>latest</strong>
+      &rarr; <span class="resolve-code">spec/2026-05-01-oauth.md</span>
+    </div>
+  </div>
+  <div class="resolve-step">
+    <div class="resolve-num">4</div>
+    <div class="resolve-text">
+      Same for decomposition: <span class="resolve-code">decomposition/2026-05-01-oauth.md</span>
+    </div>
+  </div>
+  <div class="resolve-step">
+    <div class="resolve-num">5</div>
+    <div class="resolve-text">
+      Knowledge: glob <span class="resolve-code">knowledge/*oauth*</span> or <span class="resolve-code">knowledge/*token*</span>
+      — agent decides which are relevant by filename. Not all are loaded.
+    </div>
+  </div>
+  <div class="resolve-step">
+    <div class="resolve-num">6</div>
+    <div class="resolve-text">
+      Harness: always <span class="resolve-code">harness/current.md</span> (project-wide)
+    </div>
+  </div>
+</div>
+
+<div class="key-point">
+  No index.md, no DB initiative table, no "active feature" state.
+  The job knows its feature name &rarr; glob resolves the documents &rarr; date sorts pick the latest.
+</div>
+
+<!-- ============================================ -->
+<hr class="divider">
+<h2>Edge Cases</h2>
+
+<div class="case-card">
+  <div class="case-q">What if two features run on the same day?</div>
+  <div class="case-a">
+    The feature name differentiates: <code>2026-04-08-oauth.md</code> vs <code>2026-04-08-payments.md</code>.
+    Date is for chronological sorting, feature name is for identification.
+  </div>
+</div>
+
+<div class="case-card">
+  <div class="case-q">What if a feature name has spaces or special characters?</div>
+  <div class="case-a">
+    Slugified the same way knowledge files already are: <code>"Admin Dashboard"</code> &rarr; <code>admin-dashboard</code>.
+    The existing <code>slugify()</code> function in <code>tenet-update-knowledge.ts</code> handles this.
+  </div>
+</div>
+
+<div class="case-card">
+  <div class="case-q">What about knowledge files from a previous feature that are relevant to the current one?</div>
+  <div class="case-a">
+    Knowledge files are <strong>not scoped to a feature</strong> — they're project knowledge.
+    <code>knowledge/2026-04-08_oauth-pkce-flow.md</code> is available to all future features.
+    The agent selects relevant knowledge by filename when needed. This is the existing design.
+  </div>
+</div>
+
+<div class="case-card">
+  <div class="case-q">How does the agent know what feature name to use?</div>
+  <div class="case-a">
+    During the interview phase, the agent asks the user what they want to build.
+    The answer becomes the feature slug: <code>"I want to add OAuth support"</code> &rarr; feature: <code>oauth</code>.
+    This is set once at the start and flows through to all documents and jobs.
+  </div>
+</div>
+
+<div class="case-card">
+  <div class="case-q">What if I want to see all specs across all features?</div>
+  <div class="case-a">
+    <code>ls .tenet/spec/</code> — that's the index. Sorted by date automatically.
+    <code>git log --oneline .tenet/spec/</code> for commit history across all specs.
+    No generated index file needed.
+  </div>
+</div>
+
+<div class="case-card">
+  <div class="case-q">Does this scale to 50+ features over a year?</div>
+  <div class="case-a">
+    50 files in <code>spec/</code> is perfectly manageable — it's a directory, not a document.
+    <code>ls -la .tenet/spec/ | wc -l</code> tells you how many features you've built.
+    If it gets noisy, <code>ls .tenet/spec/*oauth*</code> filters instantly.
+    Git blame shows when each spec was written and by whom.
+  </div>
+</div>
+
+<div class="case-card">
+  <div class="case-q">What happens to the old singleton files during migration?</div>
+  <div class="case-a">
+    If <code>spec/spec.md</code> exists (old format), <code>tenet_compile_context</code> falls back to it.
+    New runs create <code>$date-$feature.md</code> files. The old <code>spec.md</code> stays until manually removed.
+    No breaking change — graceful migration.
+  </div>
+</div>
+
+<!-- ============================================ -->
+<hr class="divider">
+<h2>Code Changes Required</h2>
+
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab(event, 'tab-compile')">tenet_compile_context</button>
+  <button class="tab-btn" onclick="switchTab(event, 'tab-register')">tenet_register_jobs</button>
+  <button class="tab-btn" onclick="switchTab(event, 'tab-other')">Other Tools</button>
+  <button class="tab-btn" onclick="switchTab(event, 'tab-none')">No Change</button>
+</div>
+
+<div id="tab-compile" class="tab-panel active">
+  <h3>tenet_compile_context.ts</h3>
+  <p>The biggest change. Currently hardcodes <code>spec/spec.md</code>, <code>spec/decomposition.md</code>.</p>
+  <div class="resolve-box">
+    <p><strong>Before:</strong></p>
+    <pre style="color:var(--red);font-size:0.78rem;margin:0.5rem 0">const specMd = readIfExists(path.join(tenetPath, 'spec', 'spec.md'));
+const decompositionMd = readIfExists(path.join(tenetPath, 'spec', 'decomposition.md'));</pre>
+    <p style="margin-top:1rem"><strong>After:</strong></p>
+    <pre style="color:var(--green);font-size:0.78rem;margin:0.5rem 0">// Read feature name from job params
+const feature = job.params.feature as string | undefined;
+
+// Resolve latest document by $date-$feature glob pattern
+const specMd = feature
+  ? resolveLatest(path.join(tenetPath, 'spec'), feature)
+  : readIfExists(path.join(tenetPath, 'spec', 'spec.md'));   // fallback for old format
+
+const decompositionMd = feature
+  ? resolveLatest(path.join(tenetPath, 'decomposition'), feature)
+  : readIfExists(path.join(tenetPath, 'spec', 'decomposition.md'));
+
+const interviewMd = feature
+  ? resolveLatest(path.join(tenetPath, 'interview'), feature)
+  : '';</pre>
+    <p style="margin-top:1rem"><strong>resolveLatest(dir, feature):</strong></p>
+    <pre style="color:var(--cyan);font-size:0.78rem;margin:0.5rem 0">// Glob: dir/*-{feature}.md
+// Sort by filename (date prefix ensures chronological order)
+// Return content of last match (latest)
+// Return '' if no matches</pre>
+  </div>
+</div>
+
+<div id="tab-register" class="tab-panel">
+  <h3>tenet_register_jobs.ts</h3>
+  <p>Add <code>feature</code> field to job entry schema. This propagates to all jobs in the DAG.</p>
+  <div class="resolve-box">
+    <pre style="color:var(--green);font-size:0.78rem">// Input schema adds:
+feature: z.string().min(1).describe('Feature slug (e.g. "oauth", "payments")')
+
+// When creating jobs:
+params: {
+  dag_id: entry.id,
+  name: entry.name,
+  prompt: entry.prompt,
+  depends_on: entry.depends_on,
+  feature: input.feature,        // &larr; NEW: propagated to all jobs
+}</pre>
+  </div>
+</div>
+
+<div id="tab-other" class="tab-panel">
+  <h3>Interview / Spec writing (SKILL.md responsibility)</h3>
+  <p>
+    The SKILL.md instructions tell the agent how to write documents during crystallization.
+    These instructions change from "write to <code>spec/spec.md</code>" to
+    "write to <code>spec/$date-$feature.md</code>".
+  </p>
+  <p>
+    This is a SKILL.md change, not an MCP server code change.
+    The MCP server doesn't write specs or interviews — the agent does.
+  </p>
+  <div class="resolve-box">
+    <p><strong>Decomposition directory:</strong> Move from <code>spec/decomposition.md</code> to <code>decomposition/$date-$feature.md</code>.
+    This separates decomposition from spec (they're different artifacts with different purposes).</p>
+  </div>
+</div>
+
+<div id="tab-none" class="tab-panel">
+  <h3>No changes needed</h3>
+  <div class="resolve-box" style="line-height:2">
+    <span class="tree-file">knowledge/</span> — already uses <code>$date_$slug.md</code> naming<br>
+    <span class="tree-file">harness/current.md</span> — project-wide, stays singular<br>
+    <span class="tree-file">steer/inbox.md</span> — project-wide, stays singular<br>
+    <span class="tree-file">status/*</span> — auto-generated from DB, always overwritten<br>
+    <span class="tree-file">tenet_retry_job</span> — feature-agnostic, works on job IDs<br>
+    <span class="tree-file">tenet_update_knowledge</span> — already date-prefixed<br>
+    <span class="tree-file">tenet_get_status</span> — reads from DB, not files<br>
+    <span class="tree-file">state-store.ts</span> — no schema changes needed<br>
+    <span class="tree-file">job-manager.ts</span> — feature flows through params, no structural change
+  </div>
+</div>
+
+<!-- ============================================ -->
+<hr class="divider">
+<h2>Summary</h2>
+
+<div class="columns">
+  <div class="column">
+    <div class="column-title" style="color:var(--green)">What we gain</div>
+    <ul style="padding-left:1.2rem;line-height:2">
+      <li>Documents accumulate, never overwrite</li>
+      <li>Full project history in the filesystem</li>
+      <li>Git-trackable evolution of features</li>
+      <li>No index maintenance burden</li>
+      <li>Graceful migration from old format</li>
+      <li>Knowledge stays cross-feature accessible</li>
+      <li>Minimal code changes (compile_context + register_jobs)</li>
+    </ul>
+  </div>
+  <div class="column">
+    <div class="column-title" style="color:var(--orange)">What we don't add</div>
+    <ul style="padding-left:1.2rem;line-height:2">
+      <li>No index.md (filesystem is the index)</li>
+      <li>No initiative table in SQLite</li>
+      <li>No "active feature" state to manage</li>
+      <li>No session directories</li>
+      <li>No migration scripts</li>
+      <li>No new DB schema</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+function switchTab(event, panelId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById(panelId).classList.add('active');
+}
+</script>
+
+</body>
+</html>

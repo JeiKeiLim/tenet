@@ -12,6 +12,30 @@ const readIfExists = (filePath: string): string => {
   return fs.readFileSync(filePath, 'utf8');
 };
 
+/**
+ * Resolve the latest document matching `$date-$feature.md` in a directory.
+ * Files are sorted lexicographically (date prefix ensures chronological order),
+ * and the last match (most recent) is returned.
+ * Returns empty string if no matches found.
+ */
+const resolveLatest = (dir: string, feature: string): string => {
+  if (!fs.existsSync(dir)) {
+    return '';
+  }
+
+  const suffix = `-${feature}.md`;
+  const matches = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(suffix))
+    .sort();
+
+  if (matches.length === 0) {
+    return '';
+  }
+
+  return fs.readFileSync(path.join(dir, matches[matches.length - 1]), 'utf8');
+};
+
 export const registerTenetCompileContextTool = (registerTool: RegisterTool, stateStore: StateStore): void => {
   registerTool(
     'tenet_compile_context',
@@ -28,11 +52,27 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
       }
 
       const tenetPath = path.join(stateStore.projectPath, '.tenet');
-      const specMd = readIfExists(path.join(tenetPath, 'spec', 'spec.md'));
+      const feature = typeof job.params.feature === 'string' ? job.params.feature : undefined;
+
+      // Resolve spec: feature-scoped with fallback to old singleton
+      const specMd = feature
+        ? resolveLatest(path.join(tenetPath, 'spec'), feature)
+        : readIfExists(path.join(tenetPath, 'spec', 'spec.md'));
+
+      // Resolve decomposition: own directory (new) or under spec/ (old)
+      const decompositionMd = feature
+        ? resolveLatest(path.join(tenetPath, 'decomposition'), feature)
+        : readIfExists(path.join(tenetPath, 'spec', 'decomposition.md'));
+
+      // Resolve interview: feature-scoped, no old-format fallback
+      const interviewMd = feature
+        ? resolveLatest(path.join(tenetPath, 'interview'), feature)
+        : '';
+
+      // Project-wide documents (always singular)
       const harnessMd = readIfExists(path.join(tenetPath, 'harness', 'current.md'));
       const statusMd = readIfExists(path.join(tenetPath, 'status', 'status.md'));
       const steerInbox = readIfExists(path.join(tenetPath, 'steer', 'inbox.md'));
-      const decompositionMd = readIfExists(path.join(tenetPath, 'spec', 'decomposition.md'));
       const codebaseScanMd = readIfExists(path.join(tenetPath, 'bootstrap', 'codebase-scan.md'));
 
       const jobName = typeof job.params.name === 'string' ? job.params.name : 'unnamed';
@@ -44,26 +84,28 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         `job_id: ${job.id}`,
         `job_type: ${job.type}`,
         `job_name: ${jobName}`,
+        ...(feature ? [`feature: ${feature}`] : []),
         `job_dependencies: ${jobDeps}`,
         '',
         '## Job Assignment',
         jobPrompt,
         '',
-        '## spec/spec.md',
+        '## Spec',
         specMd,
         '',
-        '## harness/current.md',
+        '## Decomposition',
+        decompositionMd,
+        ...(interviewMd ? ['', '## Interview', interviewMd] : []),
+        '',
+        '## Harness',
         harnessMd,
         '',
-        '## spec/decomposition.md',
-        decompositionMd,
-        '',
-        '## status/status.md',
+        '## Status',
         statusMd,
         '',
-        '## steer/inbox.md',
+        '## Steer Inbox',
         steerInbox,
-        ...(codebaseScanMd ? ['', '## bootstrap/codebase-scan.md', codebaseScanMd] : []),
+        ...(codebaseScanMd ? ['', '## Codebase Scan', codebaseScanMd] : []),
       ].join('\n');
 
       return jsonResult({ context: compiled });
