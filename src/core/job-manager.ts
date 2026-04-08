@@ -446,7 +446,11 @@ export class JobManager {
 
   private toInvocation(job: Job): AgentInvocation {
     const rawPrompt = typeof job.params.prompt === 'string' ? job.params.prompt : `Execute ${job.type} job ${job.id}`;
-    const prompt = job.type === 'dev' ? this.withDevPreamble(rawPrompt, job) : rawPrompt;
+    const prompt = job.type === 'dev'
+      ? this.withDevPreamble(rawPrompt, job)
+      : job.type === 'integration_test'
+        ? this.withIntegrationTestPreamble(rawPrompt, job)
+        : rawPrompt;
     const context = typeof job.params.context === 'string' ? job.params.context : undefined;
 
     const maxTurnsRaw = job.params.maxTurns;
@@ -477,11 +481,63 @@ export class JobManager {
       '- Write or modify source code files that implement the described feature',
       '- Ensure the code compiles/passes type-checking',
       '- Run existing tests to verify no regressions',
+      '- If acceptance tests exist (tests/acceptance/ or similar), run them and fix any failures related to your work',
       '- Do NOT just explore, research, or describe what could be done — actually implement it',
+      '',
+      '## Smoke Check (mandatory before exiting)',
+      '- If this is a server/API feature: start the server, verify your endpoints respond (non-5xx)',
+      '- If this is a frontend feature: start the dev server, verify pages render without errors',
+      '- If smoke check fails, fix the issue before exiting',
       '',
       'If the task is unclear, make reasonable assumptions and implement. Do not exit without producing code.',
       retryNote,
       '## Task',
+      '',
+      prompt,
+    ].join('\n');
+  }
+
+  private withIntegrationTestPreamble(prompt: string, job: Job): string {
+    const retryNote = job.retryCount > 0
+      ? `\nThis is retry #${job.retryCount}. Previous integration test attempt failed.\n`
+      : '';
+
+    return [
+      '## Integration Test Checkpoint',
+      '',
+      'You are running an integration test checkpoint. Your job is to verify that',
+      'the implemented features actually work together end-to-end.',
+      '',
+      '### What to do:',
+      '1. Read the project\'s acceptance tests (tests/acceptance/, e2e/, or similar)',
+      '2. Install test dependencies if needed (e.g. `npx playwright install`)',
+      '3. Start the application server in the background',
+      '4. Run the acceptance/e2e test suite',
+      '5. If no acceptance tests exist, perform manual smoke testing:',
+      '   - Start the server',
+      '   - Hit each API endpoint and verify responses',
+      '   - For frontend: navigate to each page, verify rendering',
+      '   - Test user flows: signup → login → use feature → verify result',
+      '6. Report results clearly: which tests passed, which failed, and why',
+      '',
+      '### Output format:',
+      '```',
+      'INTEGRATION TEST RESULTS',
+      '========================',
+      'Feature: [feature name]',
+      '',
+      'PASSED:',
+      '- [test/flow description]',
+      '',
+      'FAILED:',
+      '- [test/flow description]: [error/reason]',
+      '',
+      'OVERALL: PASS / FAIL',
+      '```',
+      '',
+      'Do NOT fix code yourself. Report failures accurately so fix jobs can be created.',
+      retryNote,
+      '## Test Scope',
       '',
       prompt,
     ].join('\n');

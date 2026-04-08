@@ -311,27 +311,34 @@ Evaluate every completed job using staged gates:
 
 ### Stage 1 — Mechanical
 
-- Lint, build, type-check, tests.
+- Lint, build, type-check, tests (including acceptance tests if they exist).
 - Any failure: fail eval.
 
-### Stage 1.5 — Property-based
+### Stage 1.5 — Smoke Check (mandatory for dev jobs)
+
+- Start the server/app and verify it actually works at runtime.
+- API: hit endpoints, verify non-5xx responses.
+- Frontend: navigate pages, verify rendering.
+- A smoke check failure = Stage 1 failure. The feature must work, not just compile.
+
+### Stage 2 — Property-based
 
 - Run property tests from pre-declared harness/spec properties.
 - Properties must predate implementation.
 
-### Stage 2 — Spec compliance (author context)
+### Stage 3 — Spec compliance (author context)
 
 - Validate acceptance criteria and scope integrity.
 - Check doc-code sync claims.
 
-### Stage 3 — Purpose alignment (critic context)
+### Stage 4 — Purpose alignment (critic context)
 
 - Separate context from author reasoning.
 - Inputs: spec/scenarios/anti-scenarios/harness/reference visuals + diff.
 - Apply zero-findings critic rule:
   - If zero findings, force re-analysis from alternate attack angle.
 
-### Stage 4 — Structured self-questioning
+### Stage 5 — Structured self-questioning
 
 Question categories:
 - Edge cases

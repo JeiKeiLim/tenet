@@ -5,6 +5,7 @@ import { jsonResult, type RegisterTool } from './utils.js';
 const jobEntrySchema = z.object({
   id: z.string().min(1).describe('Job ID matching the decomposition DAG (e.g. "job-1", "job-2")'),
   name: z.string().min(1).describe('Human-readable job name'),
+  type: z.enum(['dev', 'integration_test']).default('dev').describe('Job type: "dev" for implementation, "integration_test" for checkpoint tests'),
   depends_on: z.array(z.string()).default([]).describe('IDs of jobs this depends on'),
   prompt: z.string().min(1).describe('Work description for the agent executing this job'),
 });
@@ -27,7 +28,7 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
 
       for (const entry of jobs) {
         const job = stateStore.createJob({
-          type: 'dev',
+          type: entry.type ?? 'dev',
           status: 'pending',
           params: {
             dag_id: entry.id,
