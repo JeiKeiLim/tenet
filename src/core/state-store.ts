@@ -243,11 +243,41 @@ export class StateStore {
     return rows.map((row) => this.toJob(row));
   }
 
-  getUnprocessedSteers(): SteerMessage[] {
+  createSteer(params: {
+    class: SteerMessage['class'];
+    content: string;
+    affectedJobIds?: string[];
+  }): SteerMessage {
+    const id = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO steer_messages (id, timestamp, class, content, status, agent_response, affected_job_ids)
+         VALUES (?, ?, ?, ?, 'received', NULL, ?)`,
+      )
+      .run(id, timestamp, params.class, params.content, JSON.stringify(params.affectedJobIds ?? []));
+    return {
+      id,
+      timestamp,
+      class: params.class,
+      content: params.content,
+      status: 'received',
+      affectedJobIds: params.affectedJobIds ?? [],
+    };
+  }
+
+  getUnprocessedSteers(jobId?: string): SteerMessage[] {
     const rows = this.db
       .prepare("SELECT * FROM steer_messages WHERE status != 'resolved' ORDER BY timestamp ASC")
       .all() as SteerRow[];
-    return rows.map((row) => this.toSteerMessage(row));
+    const messages = rows.map((row) => this.toSteerMessage(row));
+    if (!jobId) {
+      return messages;
+    }
+    // Filter to messages that target this specific job or have no target (broadcast)
+    return messages.filter(
+      (m) => !m.affectedJobIds || m.affectedJobIds.length === 0 || m.affectedJobIds.includes(jobId),
+    );
   }
 
   updateSteerStatus(id: string, status: SteerMessageStatus, agentResponse?: string): void {

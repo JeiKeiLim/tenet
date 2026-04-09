@@ -38,31 +38,38 @@ A smoke check failure is a Stage 1 failure — the job cannot pass eval.
 ### Stage 2: Property-based
 If the harness or spec defines property tests, run them now. These properties must predate the implementation. Skip if no property tests exist.
 
-### Stage 3: Spec Compliance (Author Context)
-The agent that performed the work performs this check:
-- Are all acceptance criteria from the spec met?
-- Are all deliverables from the decomposition present?
-- Does the code match the documented design?
-**Output**: A checklist with pass/fail status per criterion.
-
-### Stage 4: Purpose Alignment (Critic Context)
+### Stage 3: Code Critic (Independent Context)
 A separate agent session with no prior implementation history performs this review. It receives the spec, scenarios, harness, and the diff, but never the author's reasoning or prior conversation.
 
-The critic checks:
+The code critic checks:
 - Does the implementation match the spec's intent?
 - Are any anti-scenarios violated?
 - Are there obvious gaps or missing edge cases?
 
 **Zero-findings rule**: If the critic finds nothing, it must re-analyze using an alternate attack vector like security, performance, or concurrency. Zero findings trigger a mandatory second pass.
 
-### Stage 5: Structured Self-Questioning
-The critic asks and answers these specific questions:
+Then performs structured self-questioning:
 - **Edge cases**: Empty input? Max values? Unicode?
 - **Error paths**: Dependency failures? Timeouts? Disk full?
 - **Integration**: Does this break upstream or downstream components?
-- **UX**: Is behavior consistent? Are error messages helpful?
 - **Security**: Input validation? Secret exposure? Injection?
 - **Performance**: N+1 queries? Unbounded loops? Memory leaks?
+
+### Stage 4: Test Critic (Independent Context)
+A separate agent session reviews whether the tests are **sufficient to prove the features actually work**. It receives the spec, scenarios, and acceptance/integration test files — NOT the implementation code.
+
+The test critic checks:
+- For each scenario: is there a test that covers it?
+- Does each test verify the **correct outcome**, not just absence of errors?
+  - BAD: `expect(page).not.toHaveURL(/error/)` — passes even if login redirects back to login
+  - GOOD: `expect(page).toHaveURL(/dashboard/)` — fails if login doesn't actually work
+- After login: does the test verify session persists across reload?
+- After create: does the test verify the item appears in a list/view?
+- After form submit: does the test verify redirect to the correct destination?
+- Are there routes/pages/endpoints with NO test coverage at all?
+- Are there interactive elements (buttons, forms) with no test?
+
+If tests are insufficient, the test critic outputs specific tests that need to be added or strengthened. These become requirements for a fix job before the integration checkpoint can pass.
 
 ## Integration Test Evaluation
 
@@ -92,25 +99,26 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 - endpoint /api/xxx: PASS/FAIL (status code)
 - page /xxx: PASS/FAIL (renders/error)
 
-## Stage 3: Spec Compliance
-- [x] Criterion 1
-- [ ] Criterion 2 — FAIL: reason
-
-## Stage 4: Purpose Alignment (Critic)
+## Stage 3: Code Critic
 - Finding 1: Description
 - Zero-findings recheck: [done/not-needed]
+- Self-questioning results: [edge cases/security/performance]
 
-## Stage 5: Self-Questioning
-- Edge case concern: [description] → [action: fix/defer/accept]
+## Stage 4: Test Critic
+- Scenario coverage: [N/M scenarios have tests]
+- Outcome verification: PASS/FAIL (tests verify outcomes, not just absence of errors)
+- Missing tests: [list of tests that need to be added]
+- Insufficient assertions: [list of tests that need stronger assertions]
 
 ## Overall: PASS / FAIL
 ```
 
 ## Handling Failures
 - **Stage 1/1.5 Fail**: Fix the mechanical/runtime issue immediately.
-- **Stage 3/4/5 Fail**: Run reflection to find the root cause, then retry via `tenet_continue`.
+- **Stage 3 Fail (Code Critic)**: Run reflection to find the root cause, then retry via `tenet_retry_job` (preferred) or create a new job if the approach is fundamentally wrong.
+- **Stage 4 Fail (Test Critic)**: Create a fix job to add/strengthen the tests identified by the critic, then re-run the integration checkpoint.
 - **Integration test Fail**: Create targeted fix jobs, then retry the integration test.
 - **Limits**: Max 3 retries per job before marking it as blocked.
 
 ## Anti-Skip Enforcement
-Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode requires Stage 3 and 4. The author cannot be the sole evaluator. Stage 4 requires a fresh, separate context.
+Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode requires Stage 3 (code critic) and Stage 4 (test critic). Both critics run in separate agent sessions with no access to the author's reasoning. The author cannot evaluate their own work.

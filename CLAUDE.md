@@ -36,13 +36,13 @@ The system has four layers:
 
 2. **Adapters** (`src/adapters/`) — Pluggable agent adapters that spawn CLI subprocesses. Each adapter implements `AgentAdapter` from `base.ts`: `isAvailable()`, `invoke(invocation)`. Three built-in: `ClaudeAdapter` (`claude --print`), `OpenCodeAdapter` (`opencode run`), `CodexAdapter` (`codex exec`). The adapter registry in `index.ts` resolves agents by name with fallback.
 
-3. **MCP Server** (`src/mcp/`) — Exposes 16 tools via `@modelcontextprotocol/server`. Entry point at `src/mcp/index.ts`. Each tool in `src/mcp/tools/` registers itself with a Zod input schema and handler. Key tools: `tenet_start_job`, `tenet_continue` (server-side continuation), `tenet_compile_context`, `tenet_register_jobs` (loads job DAG, requires `feature` slug), `tenet_retry_job` (resets completed/failed jobs to pending), `tenet_validate_clarity`.
+3. **MCP Server** (`src/mcp/`) — Exposes 17 tools via `@modelcontextprotocol/server`. Entry point at `src/mcp/index.ts`. Each tool in `src/mcp/tools/` registers itself with a Zod input schema and handler. Key tools: `tenet_start_job`, `tenet_continue` (server-side continuation), `tenet_compile_context`, `tenet_register_jobs` (loads job DAG, requires `feature` slug), `tenet_retry_job` (resets completed/failed jobs to pending), `tenet_validate_clarity`, `tenet_add_steer` (creates steer messages in SQLite), `tenet_start_eval` (dispatches code critic + test critic).
 
 4. **CLI** (`src/cli/`) — Commander.js program with `init`, `serve`, `status`, `config` commands. `tenet init` scaffolds a `.tenet/` directory structure and copies skill files to `.claude/skills/tenet/`.
 
 ## Key Types (`src/types/index.ts`)
 
-- **Job**: id, type (`dev|eval|mechanical_eval|compile_context|health_check`), status (`pending|running|completed|failed|cancelled|blocked`), params, agentName
+- **Job**: id, type (`dev|eval|critic_eval|mechanical_eval|integration_test|compile_context|health_check`), status (`pending|running|completed|failed|cancelled|blocked`), params, agentName
 - **SteerMessage**: class (`context|directive|emergency`), status (`received|acknowledged|acted_on|resolved`)
 - **ContinuationState**: tracks DAG progress — next_job, blocked_jobs, completed/total counts
 - **Config**: agent selection (default, fallback, per-type overrides), concurrency limits

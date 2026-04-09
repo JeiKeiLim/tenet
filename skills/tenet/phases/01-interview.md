@@ -90,11 +90,19 @@ Rounds: [N]
 - Do NOT dump all questions as a text block and expect the user to answer inline — this creates a poor experience and makes it easy to miss questions.
 - If the host agent does not support interactive prompts, fall back to asking one question at a time in regular text and waiting for a response before proceeding to the next question.
 
-## 6. Anti-Skip Enforcement
-- Do NOT proceed to spec or harness generation until the transcript file is written and the clarity gate passes.
-- If the user says "just build it," you MUST still ask the minimum required questions and record the answers.
+## 6. YOLO Mode
+If the user triggers YOLO mode ("yolo", "just decide everything", "don't ask me questions"), the agent:
+- Skips interactive interview questions — makes all decisions autonomously based on codebase analysis and brownfield scan
+- Still writes the interview transcript with decisions made and assumptions
+- Still runs `tenet_validate_clarity()` — if clarity is low, the agent fills gaps by reading the codebase rather than asking the user
+- Still generates spec, scenarios, and decomposition — but without user confirmation at each step
+- YOLO mode ends at the pre-execution confirmation gate — the user always confirms before autonomous execution begins
 
-## 6. Adaptive Interview Length
+## 7. Anti-Skip Enforcement
+- Do NOT proceed to spec or harness generation until the transcript file is written and the clarity gate passes.
+- If the user says "just build it" (without triggering YOLO mode), you MUST still ask the minimum required questions and record the answers.
+
+## 8. Adaptive Interview Length
 - **Greenfield project:** 2-3 rounds, 8-15 questions total.
 - **Brownfield/known scope:** 1-2 rounds, 5-8 questions total.
 - **Standard mode (quick clarification):** 1 round, 3-5 questions total.

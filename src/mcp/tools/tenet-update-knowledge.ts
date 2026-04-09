@@ -18,24 +18,31 @@ export const registerTenetUpdateKnowledgeTool = (registerTool: RegisterTool, sta
     'tenet_update_knowledge',
     {
       description:
-        'Write findings into .tenet/knowledge/ as a markdown file. ' +
-        'The title becomes the filename (slugified with date prefix). ' +
-        'Example title: "auth middleware jwt validation" → 2026-04-07_auth-middleware-jwt-validation.md',
+        'Write findings into .tenet/knowledge/ or .tenet/journal/ as a markdown file. ' +
+        'Use type="knowledge" for reusable technical wisdom (e.g., "bubbletea height measurement requires terminal resize listener"). ' +
+        'Use type="journal" for activity logs and job completion summaries. ' +
+        'The title becomes the filename (slugified with date prefix).',
       inputSchema: z.object({
-        title: z.string().min(3).describe('Short descriptive title for the knowledge entry (3-8 words)'),
+        title: z.string().min(3).describe('Short descriptive title for the entry (3-8 words)'),
         job_id: z.string().uuid(),
         findings: z.record(z.string(), z.unknown()),
+        type: z.enum(['knowledge', 'journal']).default('journal').describe(
+          'Entry type. "knowledge" = reusable technical wisdom that helps future agents working on similar features. ' +
+          '"journal" = activity log, job completion summary, or session progress notes. Defaults to "journal".'
+        ),
         confidence: z.enum([
           'implemented-and-tested',
           'implemented-not-tested',
           'decision-only',
           'scanned-not-verified',
-        ]).optional().describe('Confidence tag for downstream weighting. Defaults to "decision-only".'),
+        ]).optional().describe('Confidence tag for downstream weighting. Defaults to "decision-only". Only relevant for knowledge type.'),
       }),
     },
-    async ({ title, job_id, findings, confidence }) => {
+    async ({ title, job_id, findings, type, confidence }) => {
+      const entryType = type ?? 'journal';
       const confidenceTag = confidence ?? 'decision-only';
-      const knowledgeDir = path.join(stateStore.projectPath, '.tenet', 'knowledge');
+      const subdir = entryType === 'knowledge' ? 'knowledge' : 'journal';
+      const knowledgeDir = path.join(stateStore.projectPath, '.tenet', subdir);
       fs.mkdirSync(knowledgeDir, { recursive: true });
 
       const slug = slugify(title);
@@ -52,9 +59,10 @@ export const registerTenetUpdateKnowledgeTool = (registerTool: RegisterTool, sta
       const content = [
         `# ${title}`,
         '',
+        `type: ${entryType}`,
         `source_job: ${job_id}`,
         `job_name: ${jobName}`,
-        `confidence: ${confidenceTag}`,
+        ...(entryType === 'knowledge' ? [`confidence: ${confidenceTag}`] : []),
         `created: ${new Date().toISOString()}`,
         '',
         '## Findings',

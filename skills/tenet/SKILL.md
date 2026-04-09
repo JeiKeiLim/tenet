@@ -20,6 +20,7 @@ allowed-tools:
   - tenet_start_eval
   - tenet_validate_clarity
   - tenet_update_knowledge
+  - tenet_add_steer
   - tenet_process_steer
   - tenet_health_check
   - tenet_get_status
@@ -183,17 +184,25 @@ Do NOT re-validate clarity after the interview — later phases have their own v
 2. Confirm harness coverage for touched area.
 3. Skip interview/spec/decomposition overhead.
 
+## YOLO mode (upfront phases only)
+
+YOLO mode applies to the **crystallization phase** (interview → spec → visuals → decomposition), NOT to execution. When enabled, the agent makes all upfront decisions without asking the user questions — it decides feature scope, acceptance criteria, tech choices, and test strategy autonomously.
+
+YOLO mode is triggered when the user says "yolo", "just decide everything", or "don't ask me questions" during or before the interview phase.
+
+**What YOLO mode skips:** Interview questions, spec confirmation, visual approval, decomposition review.
+**What YOLO mode does NOT skip:** Pre-execution confirmation, evaluation gates, steer message processing. These always run.
+
 ## Pre-execution confirmation gate
 
 Before entering the autonomous execution loop, present the user with a summary for confirmation:
 
 1. Display: mode, total jobs from DAG, key spec decisions, harness constraints.
-2. Ask: "Ready to start autonomous execution? This will dispatch {N} jobs. [Confirm / Adjust / YOLO mode]"
+2. Ask: "Ready to start autonomous execution? This will dispatch {N} jobs. [Confirm / Adjust]"
 3. If user confirms → proceed to execution loop.
 4. If user adjusts → apply changes, update docs, re-confirm.
-5. If user selects YOLO mode → skip all future confirmation gates for this run.
 
-Skip this gate ONLY if the user has explicitly requested YOLO mode or said "just do it" / "start building" without wanting oversight.
+Skip this gate ONLY if the user has explicitly said "just do it" / "start building" without wanting oversight.
 
 ## Core autonomous loop (all modes)
 
@@ -252,31 +261,35 @@ while True:
     # 7. Retrieve full output
     output = tenet_job_result(job_id=run.job_id)
 
-    # 8. Dispatch evaluation (author + critic)
+    # 8. Dispatch evaluation (code critic + test critic)
     eval = tenet_start_eval(job_id=job.id, output=output)
-    # This dispatches TWO jobs: author_eval and critic_eval
-    author_check = BACKGROUND tenet_job_wait(job_id=eval.author_eval_job_id)
-    critic_check = BACKGROUND tenet_job_wait(job_id=eval.critic_eval_job_id)
+    # This dispatches TWO jobs: code_critic and test_critic
+    code_check = BACKGROUND tenet_job_wait(job_id=eval.code_critic_job_id)
+    test_check = BACKGROUND tenet_job_wait(job_id=eval.test_critic_job_id)
 
     # Wait for both eval jobs
     eval_delay = 30
-    WHILE author_check or critic_check not terminal:
+    WHILE code_check or test_check not terminal:
         SLEEP eval_delay seconds
         eval_delay = min(eval_delay * 1.5, 120)
         # Re-check whichever is not done
-        IF author_check not terminal:
-            author_check = BACKGROUND tenet_job_wait(job_id=eval.author_eval_job_id)
-        IF critic_check not terminal:
-            critic_check = BACKGROUND tenet_job_wait(job_id=eval.critic_eval_job_id)
+        IF code_check not terminal:
+            code_check = BACKGROUND tenet_job_wait(job_id=eval.code_critic_job_id)
+        IF test_check not terminal:
+            test_check = BACKGROUND tenet_job_wait(job_id=eval.test_critic_job_id)
 
-    author_output = tenet_job_result(job_id=eval.author_eval_job_id)
-    critic_output = tenet_job_result(job_id=eval.critic_eval_job_id)
+    code_output = tenet_job_result(job_id=eval.code_critic_job_id)
+    test_output = tenet_job_result(job_id=eval.test_critic_job_id)
 
     # 9. Act on eval results — BOTH must pass
-    IF author_output.passed AND critic_output.passed:
+    IF code_output.passed AND test_output.passed:
         tenet_update_knowledge(job_id=job.id, findings=output.findings)
+    ELIF NOT test_output.passed:
+        # Test critic failed — tests are insufficient, create fix job to strengthen tests
+        create_test_fix_job(job, test_output.missing_tests)
     ELSE:
-        run_reflection(job, output, author_output, critic_output)
+        # Code critic failed — retry the job (preferred) or create new job if approach is wrong
+        tenet_retry_job(job_id=job.id)  # preferred over creating new job
 
     # 10. Post-job steering checkpoint
     tenet_process_steer()
@@ -326,34 +339,34 @@ Evaluate every completed job using staged gates:
 - Run property tests from pre-declared harness/spec properties.
 - Properties must predate implementation.
 
-### Stage 3 — Spec compliance (author context)
-
-- Validate acceptance criteria and scope integrity.
-- Check doc-code sync claims.
-
-### Stage 4 — Purpose alignment (critic context)
+### Stage 3 — Code critic (independent context)
 
 - Separate context from author reasoning.
-- Inputs: spec/scenarios/anti-scenarios/harness/reference visuals + diff.
-- Apply zero-findings critic rule:
-  - If zero findings, force re-analysis from alternate attack angle.
+- Inputs: spec/scenarios/anti-scenarios/harness + diff (NO author reasoning).
+- Check: does implementation match spec intent? Anti-scenarios violated? Gaps?
+- Apply zero-findings rule: if zero findings, force re-analysis from alternate attack angle.
+- Structured self-questioning: edge cases, error paths, integration, security, performance.
 
-### Stage 5 — Structured self-questioning
+### Stage 4 — Test critic (independent context)
 
-Question categories:
-- Edge cases
-- Error paths
-- Integration boundaries
-- User-visible behavior
-- Security
-- Performance
-- Purpose alignment
+- Separate context — reviews TESTS, not implementation code.
+- Inputs: spec/scenarios + acceptance/integration test files.
+- Check: are tests sufficient to prove features actually work?
+- Verify tests assert **correct outcomes**, not just absence of errors.
+- Identify missing test coverage: untested routes, pages, interactive elements.
+- If insufficient: output specific tests to add/strengthen → becomes fix job requirements.
 
-Unanswerable questions become follow-up tasks or steering requests.
+## Knowledge vs Journal
 
-## Confidence-tagged knowledge writes
+`tenet_update_knowledge` supports two entry types stored in separate directories:
 
-Every knowledge update via `tenet_update_knowledge` must tag findings with one of:
+### Knowledge (`.tenet/knowledge/`)
+Reusable technical wisdom that helps future agents working on similar features. Examples:
+- "Bubbletea TUI height measurement requires terminal resize listener — getTerminalSize() alone is insufficient"
+- "Next.js middleware runs on Edge runtime — cannot use Node.js fs module"
+- "PostgreSQL NOTIFY has 8KB payload limit — use channel + ID pattern for large payloads"
+
+Use `type: "knowledge"` and tag with confidence:
 
 | Tag | Meaning |
 |-----|---------|
@@ -362,7 +375,10 @@ Every knowledge update via `tenet_update_knowledge` must tag findings with one o
 | `[decision-only]` | Agreed approach, not yet coded |
 | `[scanned-not-verified]` | Extracted from existing code during brownfield scan, not validated |
 
-Downstream jobs weight information by confidence. A `[decision-only]` entry is a plan, not a fact.
+### Journal (`.tenet/journal/`)
+Activity logs, job completion summaries, and session progress notes. Written after every job completion to track what happened. Use `type: "journal"` (default).
+
+**Rule of thumb**: If a future agent working on a different feature would benefit from this information, it's knowledge. If it's only useful for tracking what happened in this session, it's journal.
 
 ## Cascade checks (three types)
 
@@ -395,6 +411,8 @@ On eval fail, run reflection before retry:
 3. Recommended next approach
 4. Pattern match against prior lessons
 
+**Prefer `tenet_retry_job` over creating a new job.** Retry preserves job lineage and retry count tracking. Only create a new job when the approach is fundamentally wrong and a different scope/strategy is needed (e.g., the job was decomposed incorrectly).
+
 Then retry under stagnation and safety gates.
 
 ## Stagnation detection and persona rotation
@@ -418,19 +436,31 @@ After full rotation, allow at most 2 additional attempts. If still blocked, halt
 
 ## Async user steering protocol
 
+### Creating steer messages
+When the user sends a message during autonomous execution, the orchestrator must:
+1. Classify it: `context` (informational), `directive` (priority/scope change), `emergency` (halt)
+2. Call `tenet_add_steer(content, class, affected_job_ids)` to persist it in the runtime queue
+3. If the orchestrator knows which jobs need this message, set `affected_job_ids` — otherwise leave empty for broadcast
+
+**Do NOT write steer messages to markdown files.** Use `tenet_add_steer` exclusively — this ensures proper lifecycle tracking and job targeting.
+
+### Processing steer messages
 Process steer at every checkpoint via `tenet_process_steer()`.
 
 Message classes:
 
-- default: context
-- `DIRECTIVE:` priority/order/scope changes
-- `EMERGENCY:` immediate halt and containment
+- `context`: informational — no action required, absorbed as context
+- `directive`: priority/order/scope changes — act on it
+- `emergency`: immediate halt and containment
 
-Track inline status lifecycle in steer docs:
+### Lifecycle tracking
 
-`received -> acknowledged -> acted_on -> resolved`
+`received → acknowledged → acted_on → resolved`
 
-Never leave messages silently unacknowledged.
+Never leave messages silently unacknowledged. Call `tenet_process_steer()` at every loop iteration to pick up new messages.
+
+### Job-targeted steer
+When a steer message targets specific jobs (via `affected_job_ids`), only those jobs see it in their compiled context. Broadcast messages (empty `affected_job_ids`) are visible to all jobs.
 
 ## Safety and resilience gates
 

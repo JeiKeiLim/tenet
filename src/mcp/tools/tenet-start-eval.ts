@@ -2,27 +2,11 @@ import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
-const AUTHOR_EVAL_PREAMBLE = [
-  '## Author Eval — Spec Compliance Check',
+const CODE_CRITIC_PREAMBLE = [
+  '## Code Critic — Purpose Alignment Check',
   '',
-  'You are the AUTHOR evaluator. You have access to the full implementation context.',
-  'Check whether the implementation meets the spec requirements:',
-  '- Are all acceptance criteria from the spec met?',
-  '- Are all deliverables from the decomposition present?',
-  '- Does the code match the documented design?',
-  '',
-  'Output a checklist with pass/fail per criterion.',
-  'End with: {"passed": true/false, "stage": "author", "findings": ["..."]}',
-  '',
-  '## Implementation Output',
-  '',
-].join('\n');
-
-const CRITIC_EVAL_PREAMBLE = [
-  '## Critic Eval — Purpose Alignment Check',
-  '',
-  'You are the CRITIC evaluator. You have NO access to the author\'s reasoning or conversation.',
-  'You receive ONLY the spec, scenarios, harness, and the implementation output.',
+  'You are the CODE CRITIC. You have NO access to the author\'s reasoning or conversation.',
+  'You receive ONLY the spec, scenarios, harness, and the code diff.',
   '',
   'Check independently:',
   '- Does the implementation match the spec\'s intent?',
@@ -40,9 +24,39 @@ const CRITIC_EVAL_PREAMBLE = [
   '- Security: input validation, secret exposure, injection?',
   '- Performance: N+1 queries, unbounded loops, memory leaks?',
   '',
-  'End with: {"passed": true/false, "stage": "critic", "findings": ["..."]}',
+  'End with: {"passed": true/false, "stage": "code_critic", "findings": ["..."]}',
   '',
   '## Implementation Output',
+  '',
+].join('\n');
+
+const TEST_CRITIC_PREAMBLE = [
+  '## Test Critic — Test Sufficiency Check',
+  '',
+  'You are the TEST CRITIC. You do NOT review the implementation code.',
+  'You receive ONLY the spec, scenarios, and the acceptance/integration test files.',
+  '',
+  'Your job: determine whether these tests are SUFFICIENT to prove the features actually work.',
+  '',
+  'For each scenario in the spec, check:',
+  '- Is there a test that covers this scenario?',
+  '- Does the test verify the CORRECT OUTCOME, not just absence of errors?',
+  '  - BAD: "expect no error" / "expect page loads" / "expect status 200"',
+  '  - GOOD: "expect redirect to /dashboard" / "expect created item appears in list"',
+  '- After login: does the test verify session persistence (reload still authenticated)?',
+  '- After create: does the test verify the item is visible in a list/detail view?',
+  '- After form submit: does the test verify redirect to the CORRECT destination (not same page)?',
+  '',
+  'Also check for MISSING coverage:',
+  '- Are there routes/pages/endpoints in the codebase that have NO test at all?',
+  '- Are there interactive elements (buttons, forms, links) with no test?',
+  '- Are there user journeys that span multiple pages with no end-to-end test?',
+  '',
+  'If tests are insufficient, list SPECIFIC tests that need to be added or strengthened.',
+  '',
+  'End with: {"passed": true/false, "stage": "test_critic", "findings": ["..."], "missing_tests": ["..."]}',
+  '',
+  '## Test Files and Spec',
   '',
 ].join('\n');
 
@@ -51,9 +65,9 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
     'tenet_start_eval',
     {
       description:
-        'Start evaluation pipeline for a completed job. Dispatches TWO eval jobs: ' +
-        '(1) Author eval — spec compliance check with full context, ' +
-        '(2) Critic eval — independent purpose alignment check without author reasoning. ' +
+        'Start evaluation pipeline for a completed job. Dispatches TWO critic jobs: ' +
+        '(1) Code critic — independent purpose alignment check (spec + diff only, no author reasoning), ' +
+        '(2) Test critic — reviews whether tests are sufficient to prove features work (spec + tests only). ' +
         'Returns both job IDs. Wait for both to complete.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
@@ -63,26 +77,26 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
     async ({ job_id, output }) => {
       const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
 
-      // Author eval: has full context including the output and implementation reasoning
-      const authorJob = jobManager.startJob('eval', {
+      // Code critic: gets only the spec + diff, no author reasoning or conversation history
+      const codeCriticJob = jobManager.startJob('critic_eval', {
         source_job_id: job_id,
-        eval_stage: 'author',
-        prompt: AUTHOR_EVAL_PREAMBLE + outputStr,
+        eval_stage: 'code_critic',
+        prompt: CODE_CRITIC_PREAMBLE + outputStr,
         output,
       });
 
-      // Critic eval: gets only the output, no author reasoning or conversation history
-      const criticJob = jobManager.startJob('critic_eval', {
+      // Test critic: gets spec + test files, reviews whether tests are sufficient
+      const testCriticJob = jobManager.startJob('eval', {
         source_job_id: job_id,
-        eval_stage: 'critic',
-        prompt: CRITIC_EVAL_PREAMBLE + outputStr,
+        eval_stage: 'test_critic',
+        prompt: TEST_CRITIC_PREAMBLE + outputStr,
         output,
       });
 
       return jsonResult({
-        author_eval_job_id: authorJob.id,
-        critic_eval_job_id: criticJob.id,
-        message: 'Author and critic eval dispatched. Wait for both using tenet_job_wait + tenet_job_result.',
+        code_critic_job_id: codeCriticJob.id,
+        test_critic_job_id: testCriticJob.id,
+        message: 'Code critic and test critic dispatched. Wait for both using tenet_job_wait + tenet_job_result.',
       });
     },
   );

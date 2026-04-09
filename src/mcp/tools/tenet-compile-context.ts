@@ -13,20 +13,20 @@ const readIfExists = (filePath: string): string => {
 };
 
 /**
- * List knowledge filenames (not contents) so agents can selectively read relevant ones.
+ * List filenames (not contents) from a .tenet subdirectory so agents can selectively read relevant ones.
  * Filenames are self-descriptive dated slugs (e.g. 2026-04-08_auth-middleware-jwt-validation.md).
  */
-const listKnowledgeFiles = (knowledgeDir: string): string => {
-  if (!fs.existsSync(knowledgeDir)) {
+const listFiles = (dir: string, prefix: string): string => {
+  if (!fs.existsSync(dir)) {
     return '';
   }
 
-  const files = fs.readdirSync(knowledgeDir).filter((f) => f.endsWith('.md')).sort();
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).sort();
   if (files.length === 0) {
     return '';
   }
 
-  return files.map((f) => `- .tenet/knowledge/${f}`).join('\n');
+  return files.map((f) => `- ${prefix}${f}`).join('\n');
 };
 
 /**
@@ -95,11 +95,13 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
       // Project-wide documents (always singular)
       const harnessMd = readIfExists(path.join(tenetPath, 'harness', 'current.md'));
       const statusMd = readIfExists(path.join(tenetPath, 'status', 'status.md'));
+      // Steer messages now live in SQLite via tenet_add_steer, but keep reading inbox.md for backward compatibility
       const steerInbox = readIfExists(path.join(tenetPath, 'steer', 'inbox.md'));
       const codebaseScanMd = readIfExists(path.join(tenetPath, 'bootstrap', 'codebase-scan.md'));
 
-      // Knowledge file listing (filenames only — agents read selectively)
-      const knowledgeListing = listKnowledgeFiles(path.join(tenetPath, 'knowledge'));
+      // Knowledge and journal file listings (filenames only — agents read selectively)
+      const knowledgeListing = listFiles(path.join(tenetPath, 'knowledge'), '.tenet/knowledge/');
+      const journalListing = listFiles(path.join(tenetPath, 'journal'), '.tenet/journal/');
 
       const jobName = typeof job.params.name === 'string' ? job.params.name : 'unnamed';
       const jobPrompt = typeof job.params.prompt === 'string' ? job.params.prompt : '';
@@ -127,6 +129,7 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         '## Harness',
         harnessMd,
         ...(knowledgeListing ? ['', '## Available Knowledge Files', 'Read any relevant files below before starting work:', knowledgeListing] : []),
+        ...(journalListing ? ['', '## Session Journal', 'Activity log from this session:', journalListing] : []),
         '',
         '## Status',
         statusMd,

@@ -70,4 +70,5 @@ If `tenet_*` tools are missing, do not fall back to manual execution. Tell the u
 After every job:
 - Update `.tenet/status/job-queue.md` to reflect the new state.
 - Update `.tenet/status/status.md` with current progress and active job ID.
-- Create or update `.tenet/knowledge/job-{id}.md` if the job generated new technical insights.
+- Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion.
+- If the job produced reusable technical insight, also write a knowledge entry via `tenet_update_knowledge(type="knowledge")` with appropriate confidence tag.

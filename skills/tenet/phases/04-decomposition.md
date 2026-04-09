@@ -25,6 +25,53 @@ Before writing the DAG, generate executable acceptance tests from the spec scena
 - Anti-scenarios become tests that verify the bad behavior does NOT happen
 - Tests must be runnable with a single command
 
+### CRITICAL: Verify Outcomes, Not Absence of Errors
+
+Tests must assert that the **correct thing happened**, not just that nothing crashed. A test that checks "no error was thrown" will pass even when the feature is completely broken.
+
+**Bad** (passes even if login is broken):
+```typescript
+test('login flow', async ({ page }) => {
+  await page.goto('/login');
+  await page.fill('#email', 'user@test.com');
+  await page.fill('#password', 'password123');
+  await page.click('button[type="submit"]');
+  // ❌ This passes even if login redirects back to /login
+  await expect(page).not.toHaveURL(/error/);
+});
+```
+
+**Good** (fails if login doesn't actually work):
+```typescript
+test('login flow', async ({ page }) => {
+  await page.goto('/login');
+  await page.fill('#email', 'user@test.com');
+  await page.fill('#password', 'password123');
+  await page.click('button[type="submit"]');
+  // ✅ Verify we landed on the dashboard, NOT back on login
+  await expect(page).toHaveURL(/dashboard/);
+  // ✅ Verify authenticated content is visible
+  await expect(page.locator('[data-testid="user-menu"]')).toBeVisible();
+  // ✅ Verify session persists across reload
+  await page.reload();
+  await expect(page).toHaveURL(/dashboard/);
+});
+```
+
+**Assertion checklist for every test:**
+- After form submit → verify redirect URL is the **expected destination** (not the same page)
+- After create → verify the created item **appears in a list/view**
+- After login → verify **authenticated content loads** and **session persists across reload**
+- After any state change → verify the **new state is visible to the user**
+
+### Brownfield Feature Discovery
+
+For brownfield projects, do NOT only test features mentioned in the spec. Before writing tests:
+1. Read the brownfield scan (`.tenet/bootstrap/codebase-scan.md`) if it exists
+2. Search the codebase for routes, pages, API endpoints, and interactive elements
+3. List ALL discoverable features and generate tests for each
+4. The user cannot be expected to enumerate every existing feature during the interview
+
 ### For projects with a frontend (UI):
 Use Playwright. Create `tests/acceptance/{feature}.spec.ts`:
 ```typescript
@@ -75,17 +122,17 @@ Insert `integration_test` type jobs at natural boundaries in the DAG:
 ```
 job-1: Core API ──────────────┐
 job-2: Auth Service ──────────┤
-                       integration-1 (verify API + auth work together)
+                       e2e-1 (verify API + auth work together)
                               │
 job-3: Frontend ──────────────┤
 job-4: Dashboard ─────────────┤
-                       integration-2 (full e2e: signup → login → use features)
+                       e2e-2 (full e2e: signup → login → use features)
 ```
 
 ### Integration test job definition:
 ```json
 {
-  "id": "integration-1",
+  "id": "e2e-1",
   "name": "Integration: API + Auth",
   "type": "integration_test",
   "depends_on": ["job-1", "job-2"],
@@ -104,10 +151,10 @@ tenet_register_jobs({
   jobs: [
     { id: "job-1", name: "Core API", type: "dev", depends_on: [], prompt: "..." },
     { id: "job-2", name: "Auth Service", type: "dev", depends_on: ["job-1"], prompt: "..." },
-    { id: "int-1", name: "Integration: API + Auth", type: "integration_test", depends_on: ["job-1", "job-2"], prompt: "Run acceptance tests for..." },
-    { id: "job-3", name: "Frontend", type: "dev", depends_on: ["int-1"], prompt: "..." },
-    { id: "job-4", name: "Dashboard", type: "dev", depends_on: ["int-1"], prompt: "..." },
-    { id: "int-2", name: "Final E2E", type: "integration_test", depends_on: ["job-3", "job-4"], prompt: "Run ALL acceptance tests..." }
+    { id: "e2e-1", name: "Integration: API + Auth", type: "integration_test", depends_on: ["job-1", "job-2"], prompt: "Run acceptance tests for..." },
+    { id: "job-3", name: "Frontend", type: "dev", depends_on: ["e2e-1"], prompt: "..." },
+    { id: "job-4", name: "Dashboard", type: "dev", depends_on: ["e2e-1"], prompt: "..." },
+    { id: "e2e-2", name: "Final E2E", type: "integration_test", depends_on: ["job-3", "job-4"], prompt: "Run ALL acceptance tests..." }
   ]
 })
 ```
