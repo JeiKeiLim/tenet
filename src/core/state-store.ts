@@ -344,6 +344,9 @@ export class StateStore {
           this.setConfig('default_agent', raw.default_agent);
         }
       }
+      if (typeof raw.max_retries === 'number' && Number.isFinite(raw.max_retries)) {
+        this.setConfig('max_retries', String(raw.max_retries));
+      }
     } catch {
       return;
     }

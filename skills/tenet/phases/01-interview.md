@@ -105,11 +105,43 @@ Once confirmed, the agent:
 - Still generates spec, scenarios, and decomposition — but without user confirmation at each step
 - YOLO mode ends at the pre-execution confirmation gate — the user always confirms before autonomous execution begins
 
-## 7. Anti-Skip Enforcement
+## 7. Research During Interview
+
+When the user's requirements involve unfamiliar technologies, complex integrations, or feasibility questions, conduct **targeted research** before continuing the interview.
+
+**Triggers for research:**
+- User mentions a technology/library/API the agent hasn't confirmed it understands
+- User asks "is it possible to..." or "can we..." about a specific capability
+- User describes a requirement that involves complex system integration
+- Brownfield project uses frameworks or patterns the agent hasn't encountered
+
+**How to research:**
+1. Use `WebSearch` and `WebFetch` to investigate the technology, API, or approach
+2. Read existing codebase files to understand current patterns (brownfield)
+3. Check framework documentation for feasibility and best practices
+4. Identify limitations, gotchas, and alternative approaches
+
+**Save research results:**
+- Call `tenet_update_knowledge(type="knowledge", title="research-{topic}")` with:
+  - What was researched and why
+  - Key findings (capabilities, limitations, compatibility)
+  - Recommended approach based on findings
+  - Confidence tag: `[research-verified]` or `[research-inconclusive]`
+- File lands in `.tenet/knowledge/` for future agents to reference
+
+**Example research triggers during interview:**
+Files are auto-dated by `tenet_update_knowledge` (e.g., `2026-04-09_research-stripe-connect.md`):
+- "I want to use Stripe Connect for marketplace payments" → `title="research-stripe-connect"` — API, onboarding flow, payout mechanics
+- "Can we do real-time collaboration like Google Docs?" → `title="research-realtime-collaboration"` — CRDTs, WebSocket scaling, operational transforms
+- "The app needs to work offline" → `title="research-offline-first"` — service workers, IndexedDB, sync strategies
+
+**Do NOT skip research to keep the interview fast.** A 5-minute research pause prevents a multi-hour implementation mistake.
+
+## 8. Anti-Skip Enforcement
 - Do NOT proceed to spec or harness generation until the transcript file is written and the clarity gate passes.
 - If the user says "just build it" (without triggering YOLO mode), you MUST still ask the minimum required questions and record the answers.
 
-## 8. Adaptive Interview Length
+## 9. Adaptive Interview Length
 - **Greenfield project:** 2-3 rounds, 8-15 questions total.
 - **Brownfield/known scope:** 1-2 rounds, 5-8 questions total.
 - **Standard mode (quick clarification):** 1 round, 3-5 questions total.

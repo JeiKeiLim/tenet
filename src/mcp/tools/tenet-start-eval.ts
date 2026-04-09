@@ -1,6 +1,30 @@
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
+import { StateStore } from '../../core/state-store.js';
 import { jsonResult, type RegisterTool } from './utils.js';
+
+const buildJobScopeSection = (stateStore: StateStore, jobId: string): string => {
+  const job = stateStore.getJob(jobId);
+  if (!job) {
+    return '';
+  }
+
+  const name = typeof job.params.name === 'string' ? job.params.name : 'unknown';
+  const dagId = typeof job.params.dag_id === 'string' ? job.params.dag_id : '';
+  const prompt = typeof job.params.prompt === 'string' ? job.params.prompt : '';
+
+  return [
+    '## Job Scope (evaluate ONLY against this scope)',
+    '',
+    `**Job**: ${dagId ? `${dagId} — ` : ''}${name}`,
+    `**Deliverables**: ${prompt}`,
+    '',
+    'CRITICAL: Only evaluate work that falls within THIS job\'s scope above.',
+    'Features, tests, or capabilities assigned to OTHER jobs in the DAG are OUT OF SCOPE.',
+    'Do NOT fail this job for missing functionality that belongs to a later job.',
+    '',
+  ].join('\n');
+};
 
 const CODE_CRITIC_PREAMBLE = [
   '## Code Critic — Purpose Alignment Check',
@@ -9,9 +33,9 @@ const CODE_CRITIC_PREAMBLE = [
   'You receive ONLY the spec, scenarios, harness, and the code diff.',
   '',
   'Check independently:',
-  '- Does the implementation match the spec\'s intent?',
+  '- Does the implementation match the spec\'s intent FOR THIS JOB\'S SCOPE?',
   '- Are any anti-scenarios violated?',
-  '- Are there obvious gaps or missing edge cases?',
+  '- Are there obvious gaps or missing edge cases WITHIN THIS JOB\'S SCOPE?',
   '',
   'ZERO-FINDINGS RULE: If you find nothing wrong, you MUST re-analyze from an alternate',
   'attack angle (security, performance, concurrency, error handling). Zero findings on',
@@ -26,8 +50,6 @@ const CODE_CRITIC_PREAMBLE = [
   '',
   'End with: {"passed": true/false, "stage": "code_critic", "findings": ["..."]}',
   '',
-  '## Implementation Output',
-  '',
 ].join('\n');
 
 const TEST_CRITIC_PREAMBLE = [
@@ -36,9 +58,11 @@ const TEST_CRITIC_PREAMBLE = [
   'You are the TEST CRITIC. You do NOT review the implementation code.',
   'You receive ONLY the spec, scenarios, and the acceptance/integration test files.',
   '',
-  'Your job: determine whether these tests are SUFFICIENT to prove the features actually work.',
+  'Your job: determine whether these tests are SUFFICIENT to prove the features',
+  'IN THIS JOB\'S SCOPE actually work. Do NOT fail for missing tests that cover',
+  'features assigned to later jobs.',
   '',
-  'For each scenario in the spec, check:',
+  'For each scenario IN THIS JOB\'S SCOPE, check:',
   '- Is there a test that covers this scenario?',
   '- Does the test verify the CORRECT OUTCOME, not just absence of errors?',
   '  - BAD: "expect no error" / "expect page loads" / "expect status 200"',
@@ -47,20 +71,17 @@ const TEST_CRITIC_PREAMBLE = [
   '- After create: does the test verify the item is visible in a list/detail view?',
   '- After form submit: does the test verify redirect to the CORRECT destination (not same page)?',
   '',
-  'Also check for MISSING coverage:',
-  '- Are there routes/pages/endpoints in the codebase that have NO test at all?',
-  '- Are there interactive elements (buttons, forms, links) with no test?',
-  '- Are there user journeys that span multiple pages with no end-to-end test?',
+  'Also check for MISSING coverage WITHIN THIS JOB\'S SCOPE:',
+  '- Are there routes/pages/endpoints built by this job that have NO test at all?',
+  '- Are there interactive elements (buttons, forms, links) added by this job with no test?',
   '',
   'If tests are insufficient, list SPECIFIC tests that need to be added or strengthened.',
   '',
   'End with: {"passed": true/false, "stage": "test_critic", "findings": ["..."], "missing_tests": ["..."]}',
   '',
-  '## Test Files and Spec',
-  '',
 ].join('\n');
 
-export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManager: JobManager): void => {
+export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManager: JobManager, stateStore: StateStore): void => {
   registerTool(
     'tenet_start_eval',
     {
@@ -68,6 +89,7 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         'Start evaluation pipeline for a completed job. Dispatches TWO critic jobs: ' +
         '(1) Code critic — independent purpose alignment check (spec + diff only, no author reasoning), ' +
         '(2) Test critic — reviews whether tests are sufficient to prove features work (spec + tests only). ' +
+        'Critics evaluate ONLY against the specific job\'s scope, not the full spec. ' +
         'Returns both job IDs. Wait for both to complete.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
@@ -76,20 +98,21 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
     },
     async ({ job_id, output }) => {
       const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+      const jobScope = buildJobScopeSection(stateStore, job_id);
 
-      // Code critic: gets only the spec + diff, no author reasoning or conversation history
+      // Code critic: gets job scope + spec + diff, no author reasoning or conversation history
       const codeCriticJob = jobManager.startJob('critic_eval', {
         source_job_id: job_id,
         eval_stage: 'code_critic',
-        prompt: CODE_CRITIC_PREAMBLE + outputStr,
+        prompt: jobScope + CODE_CRITIC_PREAMBLE + '## Implementation Output\n\n' + outputStr,
         output,
       });
 
-      // Test critic: gets spec + test files, reviews whether tests are sufficient
+      // Test critic: gets job scope + spec + test files, reviews whether tests are sufficient
       const testCriticJob = jobManager.startJob('eval', {
         source_job_id: job_id,
         eval_stage: 'test_critic',
-        prompt: TEST_CRITIC_PREAMBLE + outputStr,
+        prompt: jobScope + TEST_CRITIC_PREAMBLE + '## Test Files and Spec\n\n' + outputStr,
         output,
       });
 

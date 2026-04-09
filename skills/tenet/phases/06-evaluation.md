@@ -120,5 +120,41 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 - **Integration test Fail**: Create targeted fix jobs, then retry the integration test.
 - **Limits**: Max 3 retries per job before marking it as blocked.
 
+### Stage 5: Agent-Driven E2E Testing (Playwright MCP)
+
+After code critic and test critic pass, the orchestrator performs a live e2e verification using Playwright MCP. This is the "human eyes" layer — the agent navigates the app like a real user and visually verifies it works.
+
+**How it works:**
+1. Start the application (dev server or docker compose)
+2. Use Playwright MCP tools to navigate to each relevant page/flow
+3. Take screenshots at key interaction points
+4. Analyze screenshots visually to verify:
+   - Pages render correctly (not blank, no error screens)
+   - UI elements are present and properly sized/aligned
+   - Navigation links work (stats page reachable from main nav)
+   - Forms submit and redirect to correct destinations
+   - Created items appear in lists
+5. Report findings with screenshots as evidence
+
+**What this catches that automated tests miss:**
+- Stats page implemented but not wired to navigation
+- Buttons with wrong sizes or misaligned layouts
+- Login form that submits but doesn't redirect correctly
+- Copy button that doesn't actually copy to clipboard
+- Broken CSS/styling that doesn't affect test assertions
+
+**Playwright MCP tool flow:**
+```
+playwright_navigate(url) → take screenshot
+playwright_click(selector) → take screenshot
+playwright_fill(selector, value) → playwright_click(submit)
+→ take screenshot → verify redirect URL and page content
+```
+
+**When Playwright MCP is not available:** Fall back to the smoke check (Stage 1.5) and rely on code/test critics. Log a warning that agent-driven e2e was skipped.
+
+**PASS**: All user flows complete successfully, screenshots show correct UI state.
+**FAIL**: Any flow fails (wrong page, missing elements, broken layout). Create fix job with screenshot evidence.
+
 ## Anti-Skip Enforcement
-Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode requires Stage 3 (code critic) and Stage 4 (test critic). Both critics run in separate agent sessions with no access to the author's reasoning. The author cannot evaluate their own work.
+Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode requires Stage 3 (code critic), Stage 4 (test critic), and Stage 5 (agent-driven e2e). Both critics run in separate agent sessions with no access to the author's reasoning. The author cannot evaluate their own work.

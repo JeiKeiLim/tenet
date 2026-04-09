@@ -73,6 +73,7 @@ const ensureFile = (filePath: string, content: string): void => {
 
 type StateConfig = {
   default_agent?: string;
+  max_retries?: number;
 };
 
 export const writeStateConfig = (tenetRoot: string, config: StateConfig): void => {

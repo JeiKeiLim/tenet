@@ -66,5 +66,53 @@ After the user approves a mockup design, write `.tenet/DESIGN.md` to capture the
 
 **Evolution:** Update DESIGN.md during implementation as new patterns emerge (new component types, responsive adjustments). Dev jobs that touch frontend MUST read DESIGN.md before writing CSS/components.
 
+## 4. Interactive Prototypes (after design lock-in)
+
+After the user approves a design variation, build a clickable HTML prototype that simulates the core user flows. This lets the user experience how the product will **behave** before any real code is written.
+
+**When to build:** Immediately after design approval, before spec finalization.
+
+**Applies to all project types:**
+- **Web apps**: Interactive HTML with buttons, forms, page transitions, simulated data
+- **TUI/CLI**: HTML simulation of terminal output, command sequences, menu navigation
+- **APIs**: Interactive request/response flow diagrams with sample payloads
+- **Libraries**: Usage example simulations showing input → output flows
+
+**Requirements:**
+- **Self-contained HTML** (same rules as mockups — no external dependencies)
+- **Naming**: `{date}-NN-prototype-{flow}.html` (e.g., `2026-04-09-04-prototype-signup-flow.html`)
+- **Clickable**: User clicks through the flow (buttons advance to next screen, forms show validation, etc.)
+- **Realistic data**: Use plausible sample data, not placeholders
+- **Cover core flows**: At minimum, prototype the happy path for each primary user journey
+- **Show state transitions**: Login → authenticated state, create → item in list, submit → confirmation
+
+**Example structure for a web app prototype:**
+```html
+<!-- Each "screen" is a div, JS toggles visibility on button click -->
+<div id="screen-login" class="screen active">
+  <h2>Login</h2>
+  <input placeholder="email" /><input type="password" placeholder="password" />
+  <button onclick="showScreen('screen-dashboard')">Sign In</button>
+</div>
+<div id="screen-dashboard" class="screen">
+  <h2>Dashboard</h2>
+  <p>Welcome, jane@example.com</p>
+  <!-- Shows the items, nav links, etc. -->
+</div>
+```
+
+**Example for CLI/TUI prototype:**
+```html
+<!-- Simulated terminal with step-by-step command output -->
+<div class="terminal">
+  <pre>$ tenet init
+Initialized Tenet scaffold at .tenet/
+Default agent: claude-code</pre>
+  <button onclick="showNext()">Next command →</button>
+</div>
+```
+
+**User approval:** Present the prototype to the user. They must click through the flows and confirm the behavior matches their expectations before proceeding to spec.
+
 ## Anti-Skip Enforcement
-Visual generation is not optional. Do not skip this step even if the requirements seem clear. If a project has a UI, mockups are mandatory. Architecture diagrams are mandatory for all systems.
+Visual generation is not optional. Do not skip this step even if the requirements seem clear. If a project has a UI, mockups are mandatory. Architecture diagrams are mandatory for all systems. Interactive prototypes are mandatory after design lock-in.

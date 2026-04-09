@@ -63,6 +63,17 @@ export class JobManager {
     return updated;
   }
 
+  private getMaxRetries(): number {
+    const configured = this.stateStore.getConfig('max_retries');
+    if (configured) {
+      const parsed = Number.parseInt(configured, 10);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        return parsed;
+      }
+    }
+    return 3;
+  }
+
   startJob(type: JobType, params: Record<string, unknown>): Job {
     const job = this.stateStore.createJob({
       type,
@@ -70,7 +81,7 @@ export class JobManager {
       params,
       agentName: this.resolveAgentName(type),
       retryCount: 0,
-      maxRetries: 3,
+      maxRetries: this.getMaxRetries(),
     });
 
     const now = Date.now();

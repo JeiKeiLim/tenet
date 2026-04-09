@@ -24,7 +24,7 @@ allowed-tools:
   - tenet_process_steer
   - tenet_health_check
   - tenet_get_status
-  - tenet_set_agent
+  # tenet_set_agent is CLI-only — not exposed via MCP
   # Host agent tools (used during crystallization phase)
   - Bash
   - Read
@@ -32,6 +32,16 @@ allowed-tools:
   - Edit
   - Glob
   - Grep
+  # Research tools (used during interview and pre-spec research)
+  - WebSearch
+  - WebFetch
+  # Playwright MCP tools (used during Stage 5 e2e eval — may not be available)
+  - playwright_navigate
+  - playwright_screenshot
+  - playwright_click
+  - playwright_fill
+  - playwright_evaluate
+  - playwright_get_visible_text
 ---
 
 # Tenet Skill — Autonomous Development Loop Brain
@@ -119,10 +129,15 @@ Flow:
 Use when: small isolated bug/config/content tweak with low ambiguity.
 
 Flow:
-1. Direct execution with harness enforcement
-2. Minimal docs/status updates
+1. Read existing spec/harness for the affected area
+2. Register a single job via `tenet_register_jobs` (single-entry DAG)
+3. Execute via `tenet_start_job` → `tenet_job_wait` → `tenet_job_result`
+4. Run eval via `tenet_start_eval` (code critic + test critic)
+5. On eval fail: retry via `tenet_retry_job`
 
-Mode affects planning overhead only. Evaluation gates remain enforced.
+Quick mode skips interview, spec generation, visual artifacts, and decomposition planning.
+It does NOT skip the MCP execution pipeline or evaluation gates. All jobs go through
+the same `start_job → wait → result → eval` flow regardless of mode.
 
 ## Full-mode crystallization phase
 
@@ -150,8 +165,10 @@ Do NOT re-validate clarity after the interview — later phases have their own v
 
 - Generate self-contained HTML artifacts under `.tenet/visuals/`.
 - Architecture diagrams MUST use SVG elements with connection arrows — not just styled CSS boxes.
-- For UI-facing work, generate 3-5 materially different mockups.
-- Present visuals to user for approval before proceeding.
+- For UI-facing work, generate 3-5 materially different design mockups.
+- Present design mockups to user for approval.
+- **After design lock-in**: Build interactive HTML prototypes that simulate core user flows (clickable, realistic data, state transitions). This applies to ALL project types — web, TUI, CLI, API.
+- Present prototypes to user — they must click through and confirm behavior before proceeding to spec.
 
 ### C) Scenario + anti-scenario criteria
 
@@ -160,7 +177,16 @@ Do NOT re-validate clarity after the interview — later phases have their own v
 - Write to `.tenet/spec/scenarios-{date}-{feature}.md`.
 - These become evaluation inputs.
 
-### D) Spec + Harness generation
+### D) Pre-spec research (mandatory)
+
+**Read `phases/02-spec-and-harness.md` Section 0 before executing.**
+
+- Research every technology, API, and service that will be used.
+- Save each research result to knowledge: `tenet_update_knowledge(type="knowledge", title="research-{topic}")`.
+- This prevents spec'ing features that are infeasible or choosing suboptimal approaches.
+- Do NOT skip even for "simple" projects — real-world complexity always surfaces during implementation.
+
+### E) Spec + Harness generation
 
 **Read `phases/02-spec-and-harness.md` before executing.**
 
@@ -169,7 +195,7 @@ Do NOT re-validate clarity after the interview — later phases have their own v
 - Write scenarios to `.tenet/spec/scenarios-{date}-{feature}.md`.
 - Lock harness invariants after agreement.
 
-### E) DAG decomposition
+### F) DAG decomposition
 
 **Read `phases/04-decomposition.md` before executing.**
 
@@ -188,8 +214,11 @@ Do NOT re-validate clarity after the interview — later phases have their own v
 ## Quick-mode prep
 
 1. Confirm task is truly isolated and low ambiguity.
-2. Confirm harness coverage for touched area.
-3. Skip interview/spec/decomposition overhead.
+2. Read existing spec and harness for the affected area.
+3. Register a single-job DAG via `tenet_register_jobs`.
+4. Proceed to the core autonomous loop (same as full/standard mode).
+
+Quick mode is "quick" because it skips interview/spec/decomposition overhead, NOT because it bypasses the execution pipeline. The job MUST still go through `tenet_start_job`, `tenet_start_eval`, and all eval gates.
 
 ## YOLO mode (upfront phases only)
 
@@ -288,10 +317,17 @@ while True:
     code_output = tenet_job_result(job_id=eval.code_critic_job_id)
     test_output = tenet_job_result(job_id=eval.test_critic_job_id)
 
-    # 9. Act on eval results — BOTH must pass
+    # 9. Stage 5: Agent-driven E2E via Playwright MCP (after critics pass)
+    IF code_output.passed AND test_output.passed:
+        # Use Playwright MCP to navigate the app and verify visually
+        # playwright_navigate → screenshot → analyze → report
+        # If Playwright MCP unavailable, skip (smoke check already ran in Stage 1.5)
+        e2e_passed = run_playwright_e2e_check(job)  # see phases/06-evaluation.md
+
+    # 10. Act on eval results — ALL must pass
     # ⛔ EVAL IS A HARD BLOCKING GATE — DO NOT PROCEED TO THE NEXT JOB IF EVAL FAILS
     # "The next job will fix it" is NEVER acceptable. Retry THIS job until it passes.
-    IF code_output.passed AND test_output.passed:
+    IF code_output.passed AND test_output.passed AND e2e_passed:
         tenet_update_knowledge(type="journal", job_id=job.id, findings=output.findings)
     ELIF NOT test_output.passed:
         # Test critic failed — tests are insufficient, create fix job to strengthen tests
@@ -302,10 +338,10 @@ while True:
         tenet_retry_job(job_id=job.id)  # preferred over creating new job
         # DO NOT continue to next job — wait for retry to complete, then re-eval
 
-    # 10. Post-job steering checkpoint
+    # 11. Post-job steering checkpoint
     tenet_process_steer()
 
-    # 11. Periodic health audit (every 3 completed jobs)
+    # 12. Periodic health audit (every 3 completed jobs)
     jobs_completed_since_last_health += 1
     IF jobs_completed_since_last_health >= 3:
         tenet_health_check()
@@ -327,7 +363,7 @@ Before every job, `tenet_compile_context(job_id)` must produce a compiled view p
 
 Never bypass compiled context.
 
-## Evaluation pipeline (5 stages)
+## Evaluation pipeline (6 stages)
 
 **Read `phases/06-evaluation.md` before executing. It contains exact stage definitions, output format, and the author/critic separation rules.**
 
@@ -353,19 +389,28 @@ Evaluate every completed job using staged gates:
 ### Stage 3 — Code critic (independent context)
 
 - Separate context from author reasoning.
-- Inputs: spec/scenarios/anti-scenarios/harness + diff (NO author reasoning).
-- Check: does implementation match spec intent? Anti-scenarios violated? Gaps?
+- Inputs: job scope + spec/scenarios/anti-scenarios/harness + diff (NO author reasoning).
+- Check: does implementation match spec intent FOR THIS JOB'S SCOPE? Anti-scenarios violated? Gaps?
 - Apply zero-findings rule: if zero findings, force re-analysis from alternate attack angle.
 - Structured self-questioning: edge cases, error paths, integration, security, performance.
 
 ### Stage 4 — Test critic (independent context)
 
 - Separate context — reviews TESTS, not implementation code.
-- Inputs: spec/scenarios + acceptance/integration test files.
-- Check: are tests sufficient to prove features actually work?
+- Inputs: job scope + spec/scenarios + acceptance/integration test files.
+- Check: are tests sufficient to prove features IN THIS JOB'S SCOPE actually work?
 - Verify tests assert **correct outcomes**, not just absence of errors.
-- Identify missing test coverage: untested routes, pages, interactive elements.
+- Identify missing test coverage: untested routes, pages, interactive elements WITHIN SCOPE.
 - If insufficient: output specific tests to add/strengthen → becomes fix job requirements.
+
+### Stage 5 — Agent-driven E2E (Playwright MCP)
+
+- After critics pass, the orchestrator uses Playwright MCP to test the app like a human.
+- Navigate pages, click buttons, fill forms, take screenshots at each step.
+- Analyze screenshots visually: correct layout, elements present, navigation works.
+- Catches: pages not wired to nav, broken CSS, forms that submit but don't redirect correctly.
+- Falls back to smoke check if Playwright MCP is unavailable.
+- **This is the "human eyes" layer that catches "tests pass, app broken" issues.**
 
 ## Knowledge vs Journal
 
@@ -495,7 +540,7 @@ When a steer message targets specific jobs (via `affected_job_ids`), only those 
 Always enforce:
 
 1. **Staleness detector**: repeated no-improvement cycles trigger persona rotation, then halt.
-2. **Max consecutive failures**: cap retries per job (default 3), then mark blocked, move to next independent job.
+2. **Max consecutive failures**: cap retries per job (configurable via `tenet config --max-retries <n>`, default 3), then mark blocked, move to next independent job.
 3. **Degradation-driven checkpointing**: when a worker reports quality signals declining (repeated failures, circular edits, repeated rereads), the MCP server triggers a session checkpoint-and-restart.
 4. **In-session checkpoint protocol** (executed by worker agents):
    - Write progress snapshot: what's done, what's remaining, key decisions
@@ -514,11 +559,10 @@ If emergency safety breach occurs, cancel active jobs via `tenet_cancel_job` and
 
 ## Agent routing and runtime adjustments
 
-When needed (rate limits, capability mismatch, policy change), switch assignment:
+Agent switching is managed via the CLI (`tenet config set default_agent <name>`), not via MCP tools.
+This prevents agents from switching their own runtime mid-execution (e.g., Codex switching to OpenCode due to capacity limits).
 
-- `tenet_set_agent(job_type, agent_name)`
-
-Prefer continuity for active jobs unless explicit rerouting is required.
+Prefer continuity for active jobs unless explicit rerouting is required by the user.
 
 ## Health and status cadence
 

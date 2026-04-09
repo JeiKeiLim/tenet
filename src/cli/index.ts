@@ -107,7 +107,8 @@ const run = async (): Promise<void> => {
     .description('View or update Tenet project configuration')
     .option('--project <path>', 'Project path', '.')
     .option('--agent <name>', 'Set default agent (claude-code, opencode, codex)')
-    .action(async (options: { project: string; agent?: string }) => {
+    .option('--max-retries <n>', 'Set max retries per job (default: 3)')
+    .action(async (options: { project: string; agent?: string; maxRetries?: string }) => {
       const projectPath = resolveProjectPath(options.project);
       const tenetRoot = path.join(projectPath, '.tenet');
 
@@ -116,18 +117,35 @@ const run = async (): Promise<void> => {
         process.exit(1);
       }
 
+      const config = readStateConfig(tenetRoot);
+      let changed = false;
+
       if (options.agent) {
-        const config = readStateConfig(tenetRoot);
         config.default_agent = options.agent;
-        writeStateConfig(tenetRoot, config);
+        changed = true;
         console.log(`Default agent set to: ${options.agent}`);
+      }
+
+      if (options.maxRetries) {
+        const n = Number.parseInt(options.maxRetries, 10);
+        if (!Number.isFinite(n) || n < 0) {
+          console.error('--max-retries must be a non-negative integer');
+          process.exit(1);
+        }
+        config.max_retries = n;
+        changed = true;
+        console.log(`Max retries set to: ${n}`);
+      }
+
+      if (changed) {
+        writeStateConfig(tenetRoot, config);
         return;
       }
 
-      const config = readStateConfig(tenetRoot);
       console.log('Tenet configuration:');
       console.log(`  default_agent: ${config.default_agent ?? '(not set)'}`);
-      console.log('\nTo change: tenet config --agent <name>');
+      console.log(`  max_retries: ${config.max_retries ?? 3} (default: 3)`);
+      console.log('\nTo change: tenet config --agent <name> --max-retries <n>');
     });
 
   await program.parseAsync(process.argv);

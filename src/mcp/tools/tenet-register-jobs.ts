@@ -26,6 +26,9 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
     async ({ feature, jobs }) => {
       const dagIdToDbId = new Map<string, string>();
 
+      const configuredRetries = stateStore.getConfig('max_retries');
+      const maxRetries = configuredRetries ? Math.max(0, Number.parseInt(configuredRetries, 10) || 3) : 3;
+
       for (const entry of jobs) {
         const job = stateStore.createJob({
           type: entry.type ?? 'dev',
@@ -38,7 +41,7 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
             feature,
           },
           retryCount: 0,
-          maxRetries: 3,
+          maxRetries,
         });
         dagIdToDbId.set(entry.id, job.id);
       }

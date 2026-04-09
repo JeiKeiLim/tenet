@@ -2,6 +2,38 @@
 
 Crystallize the project requirements into strict, actionable files. This phase ensures the agent has a source of truth before building.
 
+## 0. Pre-Spec Research (mandatory)
+
+Before writing the spec, conduct comprehensive research on the technologies, APIs, and approaches that will be used. This prevents spec'ing features that are infeasible or choosing suboptimal approaches.
+
+**What to research:**
+- Every external API, SDK, or service mentioned in the interview
+- Framework-specific patterns for the chosen tech stack (e.g., Next.js App Router vs Pages Router, auth patterns)
+- Database design patterns for the data model
+- Deployment constraints and infrastructure requirements
+- Security best practices for the specific tech stack
+- Third-party library compatibility and maintenance status
+
+**How to research:**
+1. Use `WebSearch` to find official documentation, guides, and known issues
+2. Use `WebFetch` to read specific documentation pages
+3. Read existing codebase patterns (brownfield projects)
+4. Cross-reference findings with interview decisions
+
+**Save ALL research results:**
+- Call `tenet_update_knowledge(type="knowledge", title="research-{topic}")` for each research topic
+- Include: what was researched, key findings, limitations discovered, recommended approach
+- Tag with `[research-verified]` confidence level
+- These become reference material for the spec AND for future dev agents
+
+**Example pre-spec research:**
+Files are auto-dated by `tenet_update_knowledge` (e.g., `2026-04-09_research-nextjs-auth-patterns.md`):
+- `title="research-nextjs-auth-patterns"` → How to implement auth with the chosen stack, session management options
+- `title="research-stripe-connect-api"` → API limits, webhook requirements, test mode setup
+- `title="research-postgresql-jsonb-indexing"` → Performance characteristics for the planned schema design
+
+**Do NOT skip this step.** Writing a spec without researching the technologies leads to specs that can't be implemented, or implementations that use the wrong patterns.
+
 ## 1. Exact File Paths
 CRITICAL: Do NOT write to root `.tenet/`. Use feature-scoped `$date-$feature.md` naming:
 - **SPEC**: `.tenet/spec/{date}-{feature}.md` (e.g. `.tenet/spec/2026-04-08-oauth.md`)
