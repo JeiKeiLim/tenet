@@ -34,7 +34,6 @@ describe('initProject', () => {
       'status',
       'knowledge',
       'journal',
-      'lessons',
       'steer',
       'bootstrap',
       'visuals',
@@ -176,6 +175,36 @@ describe('initProject', () => {
     const initFile = fileURLToPath(import.meta.url);
     const sourceSkillPath = path.resolve(path.dirname(initFile), '../../skills/tenet/SKILL.md');
     expect(fs.readFileSync(codexSkillPath, 'utf8')).toBe(fs.readFileSync(sourceSkillPath, 'utf8'));
+  });
+
+  it('writes .codex/config.toml for Codex MCP discovery', () => {
+    const projectPath = createTempDir();
+    initProject(projectPath);
+
+    const configPath = path.join(projectPath, '.codex', 'config.toml');
+    expect(fs.existsSync(configPath)).toBe(true);
+
+    const content = fs.readFileSync(configPath, 'utf8');
+    expect(content).toContain('[mcp_servers.tenet]');
+    expect(content).toContain('command = "tenet"');
+    expect(content).toContain('args = ["serve"]');
+  });
+
+  it('appends to existing .codex/config.toml without overwriting', () => {
+    const projectPath = createTempDir();
+    const codexDir = path.join(projectPath, '.codex');
+    fs.mkdirSync(codexDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(codexDir, 'config.toml'),
+      '[mcp_servers.github]\ncommand = "gh-mcp"\n',
+      'utf8',
+    );
+
+    initProject(projectPath);
+
+    const content = fs.readFileSync(path.join(codexDir, 'config.toml'), 'utf8');
+    expect(content).toContain('[mcp_servers.github]');
+    expect(content).toContain('[mcp_servers.tenet]');
   });
 
   it('merges into existing opencode.json without overwriting other config', () => {

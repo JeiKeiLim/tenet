@@ -33,5 +33,38 @@ Required for all UI-facing projects.
 - **Variations**: Differ in layout, color scheme, and information density.
 - **Approval**: Present all variations to the user. They must select or approve one before proceeding to the spec phase.
 
+## 3. DESIGN.md (Frontend Projects Only)
+
+After the user approves a mockup design, write `.tenet/DESIGN.md` to capture the chosen design principles. This document ensures visual consistency across all future jobs.
+
+**When to write:** Immediately after the user selects/approves a mockup variation.
+
+**Content:**
+```markdown
+# Design System
+
+## Chosen Direction
+- Selected mockup: [reference to approved file]
+- Design rationale: [why this direction was chosen]
+
+## Visual Principles
+- Color palette: [primary, secondary, accent, background colors with hex codes]
+- Typography: [font families, sizes, weights]
+- Spacing: [spacing scale or pattern]
+- Border radius: [rounded corners pattern]
+
+## Component Patterns
+- Buttons: [style description]
+- Forms: [input style, validation display]
+- Cards/containers: [shadow, border, padding]
+- Navigation: [layout, active state]
+
+## Layout
+- Grid system: [columns, breakpoints]
+- Responsive strategy: [mobile-first, breakpoints]
+```
+
+**Evolution:** Update DESIGN.md during implementation as new patterns emerge (new component types, responsive adjustments). Dev jobs that touch frontend MUST read DESIGN.md before writing CSS/components.
+
 ## Anti-Skip Enforcement
 Visual generation is not optional. Do not skip this step even if the requirements seem clear. If a project has a UI, mockups are mandatory. Architecture diagrams are mandatory for all systems.

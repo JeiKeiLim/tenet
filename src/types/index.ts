@@ -48,6 +48,7 @@ export interface ContinuationState {
 
 export type SteerMessageClass = 'context' | 'directive' | 'emergency';
 export type SteerMessageStatus = 'received' | 'acknowledged' | 'acted_on' | 'resolved';
+export type SteerSource = 'user' | 'agent';
 
 export interface SteerMessage {
   id: string;
@@ -55,6 +56,7 @@ export interface SteerMessage {
   class: SteerMessageClass;
   content: string;
   status: SteerMessageStatus;
+  source: SteerSource;
   agentResponse?: string;
   affectedJobIds?: string[];
 }

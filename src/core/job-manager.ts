@@ -470,8 +470,18 @@ export class JobManager {
   }
 
   private withDevPreamble(prompt: string, job: Job): string {
+    const feature = typeof job.params.feature === 'string' ? job.params.feature : '';
+    const jobName = typeof job.params.name === 'string' ? job.params.name : job.id.slice(0, 8);
     const retryNote = job.retryCount > 0
-      ? `\nThis is retry #${job.retryCount}. The previous attempt did not produce the expected deliverables. You MUST produce working code this time.\n`
+      ? [
+          '',
+          `This is retry #${job.retryCount}. The previous attempt failed.`,
+          'BEFORE starting work, check .tenet/journal/ for failure logs matching this job.',
+          `Look for files like: *-${jobName.toLowerCase().replace(/\s+/g, '-')}*trial*.md`,
+          feature ? `Or search for: *-${feature}*trial*.md` : '',
+          'Read them to understand what was tried and why it failed. Do NOT repeat the same approach.',
+          '',
+        ].filter(Boolean).join('\n')
       : '';
 
     return [

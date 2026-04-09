@@ -91,7 +91,14 @@ Rounds: [N]
 - If the host agent does not support interactive prompts, fall back to asking one question at a time in regular text and waiting for a response before proceeding to the next question.
 
 ## 6. YOLO Mode
-If the user triggers YOLO mode ("yolo", "just decide everything", "don't ask me questions"), the agent:
+
+**NEVER assume yolo mode.** The default is ALWAYS interactive. Yolo mode ONLY activates when the user explicitly says one of: "yolo", "skip questions", "decide everything", "don't ask me questions."
+
+If you think the user might want yolo mode but they didn't explicitly say it, **ask them**: "Would you like me to enter yolo mode and make all upfront decisions without asking? [Yes / No]"
+
+When the user triggers YOLO mode, **confirm before activating**: "Entering yolo mode — I will make all decisions during interview, spec, and decomposition without asking you. You'll still confirm before autonomous execution starts. Proceed?"
+
+Once confirmed, the agent:
 - Skips interactive interview questions — makes all decisions autonomously based on codebase analysis and brownfield scan
 - Still writes the interview transcript with decisions made and assumptions
 - Still runs `tenet_validate_clarity()` — if clarity is low, the agent fills gaps by reading the codebase rather than asking the user

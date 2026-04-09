@@ -17,6 +17,13 @@ export const registerTenetAddSteerTool = (registerTool: RegisterTool, stateStore
           .enum(['context', 'directive', 'emergency'])
           .default('context')
           .describe('Message class: context (info), directive (priority change), emergency (halt)'),
+        source: z
+          .enum(['user', 'agent'])
+          .default('agent')
+          .describe(
+            'Who created this message. "user" for human-originated steers (always higher priority), ' +
+            '"agent" for agent-originated steers (e.g., self-unblocking after max retries).',
+          ),
         affected_job_ids: z
           .array(z.string())
           .default([])
@@ -26,10 +33,11 @@ export const registerTenetAddSteerTool = (registerTool: RegisterTool, stateStore
           ),
       }),
     },
-    async ({ content, class: msgClass, affected_job_ids }) => {
+    async ({ content, class: msgClass, source, affected_job_ids }) => {
       const steer = stateStore.createSteer({
         class: msgClass,
         content,
+        source: source ?? 'agent',
         affectedJobIds: affected_job_ids,
       });
 

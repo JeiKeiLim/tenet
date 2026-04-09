@@ -9,7 +9,7 @@ const REQUIRED_DIRS = [
   'harness',
   'status',
   'knowledge',
-  'lessons',
+  'journal',
   'steer',
   'bootstrap',
   'visuals',

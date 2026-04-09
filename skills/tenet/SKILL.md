@@ -43,13 +43,15 @@ Execute this file as an operational program. Be decisive, deterministic, and che
 1. Fresh session per job is default defense against compounding errors.
 2. Context is always compiled per job (`tenet_compile_context`), never raw file dumps.
 3. Generation and validation are separated (author flow vs critic flow).
-4. Harness enforcement is mandatory in **all** modes.
-5. Persistent human-readable state lives in `.tenet/` markdown files.
-6. Operational runtime state is MCP server SQLite; do not manually manage runtime IDs.
-7. Use server-side continuation (`tenet_continue()`), not ad-hoc ID reconstruction.
-8. Keep wrong turns in active job context (within that session) to prevent repetition.
-9. Purpose alignment outranks narrow spec checkboxing.
-10. All knowledge writes are confidence-tagged.
+4. **Eval is a HARD BLOCKING GATE.** A job that fails eval MUST be retried or blocked. You MUST NOT proceed to the next job saying "the next job will fix it" or "this is not blocking." If eval fails, the job is not done. Period.
+5. Harness enforcement is mandatory in **all** modes.
+6. Persistent human-readable state lives in `.tenet/` markdown files.
+7. Operational runtime state is MCP server SQLite; do not manually manage runtime IDs.
+8. Use server-side continuation (`tenet_continue()`), not ad-hoc ID reconstruction.
+9. Keep wrong turns in active job context (within that session) to prevent repetition.
+10. Purpose alignment outranks narrow spec checkboxing.
+11. All knowledge writes are confidence-tagged.
+12. **NEVER assume yolo mode.** Yolo mode ONLY activates when the user literally says "yolo", "skip questions", or "decide everything." If uncertain, ask. Default is always interactive.
 
 ## Boot sequence (must run on skill load)
 
@@ -287,14 +289,18 @@ while True:
     test_output = tenet_job_result(job_id=eval.test_critic_job_id)
 
     # 9. Act on eval results — BOTH must pass
+    # ⛔ EVAL IS A HARD BLOCKING GATE — DO NOT PROCEED TO THE NEXT JOB IF EVAL FAILS
+    # "The next job will fix it" is NEVER acceptable. Retry THIS job until it passes.
     IF code_output.passed AND test_output.passed:
-        tenet_update_knowledge(job_id=job.id, findings=output.findings)
+        tenet_update_knowledge(type="journal", job_id=job.id, findings=output.findings)
     ELIF NOT test_output.passed:
         # Test critic failed — tests are insufficient, create fix job to strengthen tests
         create_test_fix_job(job, test_output.missing_tests)
+        # DO NOT continue to next job — wait for fix job to complete, then re-eval
     ELSE:
         # Code critic failed — retry the job (preferred) or create new job if approach is wrong
         tenet_retry_job(job_id=job.id)  # preferred over creating new job
+        # DO NOT continue to next job — wait for retry to complete, then re-eval
 
     # 10. Post-job steering checkpoint
     tenet_process_steer()
@@ -409,14 +415,25 @@ Run cascade checks when upstream state changes:
 
 ## Eval failure handling
 
-On eval fail, run reflection before retry:
+**EVAL FAILURE = HARD BLOCK.** Do NOT move to the next job. Do NOT say "this will be addressed later." The current job must pass eval before the DAG advances.
 
-1. Root cause (why this failed, not just what failed)
-2. At least two alternative approaches
-3. Recommended next approach
-4. Pattern match against prior lessons
+On eval fail:
 
-**Prefer `tenet_retry_job` over creating a new job.** Retry preserves job lineage and retry count tracking. Only create a new job when the approach is fundamentally wrong and a different scope/strategy is needed (e.g., the job was decomposed incorrectly).
+1. Write a failure journal entry: `tenet_update_knowledge(type="journal", title="failure-{job_name}-trial-{N}")` with details of what was tried and why it failed.
+2. Root cause analysis (why this failed, not just what failed)
+3. At least two alternative approaches
+4. Read any previous failure journals for this job to avoid repeating the same approach
+5. Recommended next approach based on what hasn't been tried
+
+**Prefer `tenet_retry_job` over creating a new job.** Retry preserves job lineage and retry count tracking. Only create a new job when the approach is fundamentally wrong and a different scope/strategy is needed.
+
+**On max retries exhausted (3 failures):**
+1. Mark job as blocked
+2. Write a comprehensive failure journal summarizing ALL attempts
+3. Continue to the next **independent** job (one that doesn't depend on this blocked job)
+4. Do NOT self-steer to unblock — report to the user
+
+**On eventual success after failures:** Gather all failure journals for this job, extract the lesson learned, and write it to knowledge (not journal) via `tenet_update_knowledge(type="knowledge")`.
 
 Then retry under stagnation and safety gates.
 
@@ -463,6 +480,12 @@ Message classes:
 `received → acknowledged → acted_on → resolved`
 
 Never leave messages silently unacknowledged. Call `tenet_process_steer()` at every loop iteration to pick up new messages.
+
+### Source priority
+Every steer message has a `source` field: `user` or `agent`.
+- **User steers always take priority** over agent steers. If a user steer contradicts an agent steer, follow the user.
+- When creating steer messages from user input, set `source: "user"`.
+- When self-steering (e.g., unblocking after max retries), set `source: "agent"`.
 
 ### Job-targeted steer
 When a steer message targets specific jobs (via `affected_job_ids`), only those jobs see it in their compiled context. Broadcast messages (empty `affected_job_ids`) are visible to all jobs.

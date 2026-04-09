@@ -36,6 +36,7 @@ type SteerRow = {
   class: string;
   content: string;
   status: string;
+  source: string | null;
   agent_response: string | null;
   affected_job_ids: string | null;
 };
@@ -246,22 +247,25 @@ export class StateStore {
   createSteer(params: {
     class: SteerMessage['class'];
     content: string;
+    source?: SteerMessage['source'];
     affectedJobIds?: string[];
   }): SteerMessage {
     const id = crypto.randomUUID();
     const timestamp = new Date().toISOString();
+    const source = params.source ?? 'agent';
     this.db
       .prepare(
-        `INSERT INTO steer_messages (id, timestamp, class, content, status, agent_response, affected_job_ids)
-         VALUES (?, ?, ?, ?, 'received', NULL, ?)`,
+        `INSERT INTO steer_messages (id, timestamp, class, content, status, source, agent_response, affected_job_ids)
+         VALUES (?, ?, ?, ?, 'received', ?, NULL, ?)`,
       )
-      .run(id, timestamp, params.class, params.content, JSON.stringify(params.affectedJobIds ?? []));
+      .run(id, timestamp, params.class, params.content, source, JSON.stringify(params.affectedJobIds ?? []));
     return {
       id,
       timestamp,
       class: params.class,
       content: params.content,
       status: 'received',
+      source,
       affectedJobIds: params.affectedJobIds ?? [],
     };
   }
@@ -378,6 +382,7 @@ export class StateStore {
         class TEXT NOT NULL,
         content TEXT NOT NULL,
         status TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'user',
         agent_response TEXT,
         affected_job_ids TEXT
       );
@@ -420,6 +425,7 @@ export class StateStore {
       class: row.class as SteerMessage['class'],
       content: row.content,
       status: row.status as SteerMessageStatus,
+      source: (row.source as SteerMessage['source']) ?? 'user',
       agentResponse: row.agent_response ?? undefined,
       affectedJobIds: parseJson<string[]>(row.affected_job_ids, []),
     };

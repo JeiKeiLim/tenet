@@ -10,7 +10,6 @@ const REQUIRED_DIRS = [
   'status',
   'knowledge',
   'journal',
-  'lessons',
   'steer',
   'bootstrap',
   'visuals',
@@ -195,6 +194,7 @@ export function initProject(projectPath: string, options?: InitOptions): void {
   copyCodexSkill(projectPath);
   writeMcpJson(projectPath);
   mergeOpenCodeConfig(projectPath);
+  writeCodexConfig(projectPath);
 }
 
 /**
@@ -253,6 +253,31 @@ const writeMcpJson = (projectPath: string): void => {
     return;
   }
   fs.writeFileSync(mcpJsonPath, JSON.stringify(MCP_JSON_CONTENT, null, 2) + '\n', 'utf8');
+};
+
+/**
+ * Write project-local .codex/config.toml for Codex CLI MCP server discovery.
+ * Format: [mcp_servers.tenet] with command and args.
+ * Note: mcp_servers (with underscore) is required — mcp-servers is silently ignored.
+ */
+const writeCodexConfig = (projectPath: string): void => {
+  const codexDir = path.join(projectPath, '.codex');
+  const configPath = path.join(codexDir, 'config.toml');
+
+  if (fs.existsSync(configPath)) {
+    const existing = fs.readFileSync(configPath, 'utf8');
+    if (existing.includes('[mcp_servers.tenet]')) {
+      return;
+    }
+    // Append tenet MCP server config
+    const toAppend = '\n[mcp_servers.tenet]\ncommand = "tenet"\nargs = ["serve"]\n';
+    fs.appendFileSync(configPath, toAppend, 'utf8');
+    return;
+  }
+
+  fs.mkdirSync(codexDir, { recursive: true });
+  const content = '[mcp_servers.tenet]\ncommand = "tenet"\nargs = ["serve"]\n';
+  fs.writeFileSync(configPath, content, 'utf8');
 };
 
 const OPENCODE_MCP_ENTRY = {

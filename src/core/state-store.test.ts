@@ -124,10 +124,10 @@ describe('StateStore', () => {
 
     db.prepare(
       `
-      INSERT INTO steer_messages (id, timestamp, class, content, status, agent_response, affected_job_ids)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO steer_messages (id, timestamp, class, content, status, source, agent_response, affected_job_ids)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    ).run('steer-1', '2026-01-01T00:00:00.000Z', 'directive', 'Prioritize tests', 'received', null, JSON.stringify(['job-1']));
+    ).run('steer-1', '2026-01-01T00:00:00.000Z', 'directive', 'Prioritize tests', 'received', 'user', null, JSON.stringify(['job-1']));
 
     db.close();
 
