@@ -73,6 +73,11 @@ by `npx tenet init`. No manual server launch is needed.
    - The scan produces `.tenet/bootstrap/codebase-scan.md` — a structured summary of the existing codebase that feeds into interview and spec phases.
    - If `.tenet/` already existed (resuming), skip the scan.
 
+6. **Detect git repository**:
+   - Check if `.git/` exists in the project root.
+   - If yes, note this for the execution loop — a feature branch will be created before job dispatch.
+   - If no, skip all git operations.
+
 Do not proceed into execution until health is good.
 
 ## Scale-adaptive mode selection

@@ -96,9 +96,10 @@ const run = async (): Promise<void> => {
     .command('status')
     .description('Show Tenet project status')
     .option('--project <path>', 'Project path', '.')
-    .action((options: { project: string }) => {
+    .option('--all', 'Show all jobs including completed and cancelled')
+    .action((options: { project: string; all?: boolean }) => {
       const projectPath = resolveProjectPath(options.project);
-      showStatus(projectPath);
+      showStatus(projectPath, { all: options.all });
     });
 
   program

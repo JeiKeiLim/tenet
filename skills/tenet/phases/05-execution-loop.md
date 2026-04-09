@@ -72,3 +72,30 @@ After every job:
 - Update `.tenet/status/status.md` with current progress and active job ID.
 - Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion.
 - If the job produced reusable technical insight, also write a knowledge entry via `tenet_update_knowledge(type="knowledge")` with appropriate confidence tag.
+
+## Git-Aware Pipeline
+
+When the project is a git repository (`.git/` exists), the orchestrator should integrate git operations into the workflow. This is optional — if no git directory exists, skip all git steps.
+
+### Branch Strategy
+Before entering the execution loop (after decomposition, before first job dispatch):
+1. Check if `.git/` exists in the project root
+2. If yes, create a feature branch: `tenet/{date}-{feature}` (e.g. `tenet/2026-04-09-oauth`)
+3. Commit the tenet artifacts (interview, spec, scenarios, decomposition, acceptance tests) with message: `tenet: add spec and decomposition for {feature}`
+
+### Per-Job Commits
+After each job passes evaluation:
+1. Stage all files changed by the job (use `git add` with specific paths from the job's deliverables, avoid `git add -A`)
+2. Commit with message: `tenet({job-name}): {short description of what was done}`
+3. Do NOT push automatically — the user decides when to push
+
+### On Completion
+After all jobs are done:
+1. Commit any remaining tenet status/knowledge files: `tenet: finalize {feature}`
+2. Tell the user the branch name and suggest: "Run `git push -u origin tenet/{date}-{feature}` when ready"
+
+### Conflict Handling
+If a commit fails due to conflicts (e.g., parallel jobs touched the same file):
+1. Do NOT force-resolve — report the conflict to the user
+2. Create a steer message with the conflict details
+3. The user can resolve manually or provide guidance via steer

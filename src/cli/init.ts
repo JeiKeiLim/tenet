@@ -9,6 +9,7 @@ const REQUIRED_DIRS = [
   'harness',
   'status',
   'knowledge',
+  'journal',
   'lessons',
   'steer',
   'bootstrap',
@@ -191,9 +192,42 @@ export function initProject(projectPath: string, options?: InitOptions): void {
 
   copySkillFile(projectPath);
   copyPhasesDocs(projectPath);
+  copyCodexSkill(projectPath);
   writeMcpJson(projectPath);
   mergeOpenCodeConfig(projectPath);
 }
+
+/**
+ * Copy tenet skill to Codex-compatible location (.agents/skills/tenet/).
+ * Codex CLI discovers skills from .agents/skills/{name}/SKILL.md.
+ */
+const copyCodexSkill = (projectPath: string): void => {
+  const currentFile = fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFile);
+  const sourcePhasesDir = path.resolve(currentDir, '../../skills/tenet/phases');
+  const sourceSkill = path.resolve(currentDir, '../../skills/tenet/SKILL.md');
+
+  // Copy SKILL.md to .agents/skills/tenet/
+  const codexSkillDir = path.join(projectPath, '.agents', 'skills', 'tenet');
+  if (fs.existsSync(sourceSkill)) {
+    fs.mkdirSync(codexSkillDir, { recursive: true });
+    fs.copyFileSync(sourceSkill, path.join(codexSkillDir, 'SKILL.md'));
+  }
+
+  // Copy phase docs to .agents/skills/tenet/phases/
+  if (fs.existsSync(sourcePhasesDir)) {
+    const codexPhasesDir = path.join(codexSkillDir, 'phases');
+    fs.mkdirSync(codexPhasesDir, { recursive: true });
+    for (const file of fs.readdirSync(sourcePhasesDir)) {
+      if (file.endsWith('.md')) {
+        fs.copyFileSync(
+          path.join(sourcePhasesDir, file),
+          path.join(codexPhasesDir, file),
+        );
+      }
+    }
+  }
+};
 
 const MCP_JSON_CONTENT = {
   mcpServers: {

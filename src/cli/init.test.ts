@@ -33,6 +33,7 @@ describe('initProject', () => {
       'harness',
       'status',
       'knowledge',
+      'journal',
       'lessons',
       'steer',
       'bootstrap',
@@ -159,6 +160,22 @@ describe('initProject', () => {
     expect(content.mcp.tenet).toBeDefined();
     expect(content.mcp.tenet.type).toBe('local');
     expect(content.mcp.tenet.command).toEqual(['tenet', 'serve']);
+  });
+
+  it('copies skill files into .agents/skills/tenet for Codex compatibility', () => {
+    const projectPath = createTempDir();
+    initProject(projectPath);
+
+    const codexSkillPath = path.join(projectPath, '.agents', 'skills', 'tenet', 'SKILL.md');
+    expect(fs.existsSync(codexSkillPath)).toBe(true);
+
+    const codexPhasesDir = path.join(projectPath, '.agents', 'skills', 'tenet', 'phases');
+    expect(fs.existsSync(codexPhasesDir)).toBe(true);
+
+    // Verify content matches source
+    const initFile = fileURLToPath(import.meta.url);
+    const sourceSkillPath = path.resolve(path.dirname(initFile), '../../skills/tenet/SKILL.md');
+    expect(fs.readFileSync(codexSkillPath, 'utf8')).toBe(fs.readFileSync(sourceSkillPath, 'utf8'));
   });
 
   it('merges into existing opencode.json without overwriting other config', () => {

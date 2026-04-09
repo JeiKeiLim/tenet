@@ -67,7 +67,12 @@ const printJobTable = (jobs: Job[]): void => {
   }
 };
 
-export function showStatus(projectPath: string): void {
+type StatusOptions = {
+  all?: boolean;
+};
+
+export function showStatus(projectPath: string, options?: StatusOptions): void {
+  const showAll = options?.all ?? false;
   const tenetDir = path.join(projectPath, '.tenet');
   const pidFile = path.join(tenetDir, '.state', 'server.pid');
 
@@ -100,15 +105,35 @@ export function showStatus(projectPath: string): void {
       ];
 
       const completed = allJobs.filter((j) => j.status === 'completed').length;
+      const cancelled = allJobs.filter((j) => j.status === 'cancelled').length;
       const failed = allJobs.filter((j) => j.status === 'failed').length;
       const running = allJobs.filter((j) => j.status === 'running').length;
       const pending = allJobs.filter((j) => j.status === 'pending').length;
       const blocked = allJobs.filter((j) => j.status === 'blocked').length;
 
-      console.log(`Jobs: ${completed} completed, ${running} running, ${pending} pending, ${failed} failed, ${blocked} blocked (${allJobs.length} total)`);
+      console.log(`Jobs: ${completed} done, ${running} running, ${pending} pending, ${failed} failed, ${blocked} blocked (${allJobs.length} total)`);
       console.log('');
 
-      printJobTable(allJobs);
+      // Active jobs: running, pending, blocked, failed
+      const activeJobs = allJobs.filter((j) => !['completed', 'cancelled'].includes(j.status));
+      if (activeJobs.length > 0) {
+        printJobTable(activeJobs);
+      } else if (allJobs.length > 0) {
+        console.log('  All jobs completed.');
+      }
+
+      // Completed/cancelled jobs: show only with --all flag
+      const doneJobs = allJobs.filter((j) => ['completed', 'cancelled'].includes(j.status));
+      if (doneJobs.length > 0) {
+        if (showAll) {
+          console.log('');
+          console.log(`Completed (${doneJobs.length}):`);
+          printJobTable(doneJobs);
+        } else if (activeJobs.length > 0) {
+          console.log('');
+          console.log(`  + ${completed} done, ${cancelled} cancelled (use --all to show)`);
+        }
+      }
 
       const unprocessedSteers = stateStore.getUnprocessedSteers().length;
       if (unprocessedSteers > 0) {

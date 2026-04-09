@@ -4,7 +4,7 @@ Visual generation is mandatory in Full mode. These artifacts bridge the gap betw
 
 ## Output Requirements
 - **Directory**: `.tenet/visuals/`
-- **Naming**: `NN-description.html` (e.g., `00-architecture.html`, `01-mockup-minimal.html`)
+- **Naming**: `{date}-NN-description.html` (e.g., `2026-04-08-00-architecture.html`, `2026-04-08-01-mockup-minimal.html`). The date prefix tells future sessions when the visual was created so they can decide if it needs updating.
 - **Self-Contained**: No external dependencies. Inline all CSS, SVG, and JS.
 - **Realistic**: Use plausible sample data. No "Lorem ipsum".
 
