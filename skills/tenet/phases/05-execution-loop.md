@@ -78,10 +78,17 @@ After every job:
 When the project is a git repository (`.git/` exists), the orchestrator should integrate git operations into the workflow. This is optional — if no git directory exists, skip all git steps.
 
 ### Branch Strategy
-Before entering the execution loop (after decomposition, before first job dispatch):
+Create the feature branch BEFORE committing any tenet artifacts. This ensures all spec, interview, and decomposition documents live on the feature branch from the start.
+
+**Timing: immediately after interview begins (before spec generation):**
 1. Check if `.git/` exists in the project root
 2. If yes, create a feature branch: `tenet/{date}-{feature}` (e.g. `tenet/2026-04-09-oauth`)
-3. Commit the tenet artifacts (interview, spec, scenarios, decomposition, acceptance tests) with message: `tenet: add spec and decomposition for {feature}`
+3. Switch to the branch BEFORE writing any spec/scenario/decomposition files
+
+**After decomposition is complete (before first job dispatch):**
+4. Commit all tenet artifacts (interview, spec, scenarios, decomposition, research, visuals) with message: `tenet: add spec and decomposition for {feature}`
+
+The branch must exist before any commits. Do NOT commit to main/master and then create a branch.
 
 ### Per-Job Commits
 After each job passes evaluation:

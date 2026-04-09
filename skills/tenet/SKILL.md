@@ -87,8 +87,13 @@ by `npx tenet init`. No manual server launch is needed.
 
 6. **Detect git repository**:
    - Check if `.git/` exists in the project root.
-   - If yes, note this for the execution loop — a feature branch will be created before job dispatch.
+   - If yes, note this for the execution loop — a feature branch will be created before spec generation.
    - If no, skip all git operations.
+
+7. **Check Playwright MCP availability**:
+   - Attempt to call a Playwright MCP tool (e.g., `playwright_navigate`). If it responds, Playwright MCP is available.
+   - If unavailable, warn the user: "Playwright MCP is not installed. Agent-driven e2e testing (Stage 5) will be skipped. Install @anthropic/playwright-mcp for visual verification."
+   - This is a warning, not a blocker — tenet works without Playwright MCP but misses the "human eyes" testing layer.
 
 Do not proceed into execution until health is good.
 

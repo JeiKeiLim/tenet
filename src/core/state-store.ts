@@ -338,11 +338,9 @@ export class StateStore {
 
     try {
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+      // JSON config file is the source of truth — always sync to SQLite
       if (typeof raw.default_agent === 'string' && raw.default_agent.length > 0) {
-        const existing = this.getConfig('default_agent');
-        if (!existing) {
-          this.setConfig('default_agent', raw.default_agent);
-        }
+        this.setConfig('default_agent', raw.default_agent);
       }
       if (typeof raw.max_retries === 'number' && Number.isFinite(raw.max_retries)) {
         this.setConfig('max_retries', String(raw.max_retries));

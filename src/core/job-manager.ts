@@ -75,6 +75,20 @@ export class JobManager {
   }
 
   startJob(type: JobType, params: Record<string, unknown>): Job {
+    // Ensure every job has a human-readable name
+    if (!params.name || typeof params.name !== 'string') {
+      const sourceJobId = typeof params.source_job_id === 'string' ? params.source_job_id : undefined;
+      const evalStage = typeof params.eval_stage === 'string' ? params.eval_stage : undefined;
+      if (sourceJobId && evalStage) {
+        const sourceJob = this.stateStore.getJob(sourceJobId);
+        const sourceName = sourceJob && typeof sourceJob.params.name === 'string'
+          ? sourceJob.params.name : sourceJobId.slice(0, 8);
+        params = { ...params, name: `${evalStage} for ${sourceName}` };
+      } else {
+        params = { ...params, name: `${type}-${Date.now().toString(36)}` };
+      }
+    }
+
     const job = this.stateStore.createJob({
       type,
       status: 'pending',
