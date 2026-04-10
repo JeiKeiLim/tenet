@@ -326,6 +326,30 @@ export const isPlaywrightMcpInstalled = (): boolean => {
 };
 
 /**
+ * Install Playwright MCP globally and Playwright browsers.
+ * Returns true on success, false on failure.
+ */
+export const installPlaywrightMcp = (): boolean => {
+  try {
+    console.log('Installing @playwright/mcp globally...');
+    execSync('npm install -g @playwright/mcp@latest', {
+      stdio: 'inherit',
+      timeout: 180_000,
+    });
+    console.log('Installing Playwright browsers (this may take a minute)...');
+    execSync('npx playwright install', {
+      stdio: 'inherit',
+      timeout: 600_000,
+    });
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Playwright MCP installation failed: ${message}`);
+    return false;
+  }
+};
+
+/**
  * Add Playwright MCP entry to .mcp.json without disturbing other servers.
  */
 export const addPlaywrightToMcpJson = (projectPath: string): void => {

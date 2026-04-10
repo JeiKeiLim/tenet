@@ -8,6 +8,7 @@ import { Command } from 'commander';
 import {
   addPlaywrightToMcpJson,
   initProject,
+  installPlaywrightMcp,
   isPlaywrightMcpInstalled,
   promptAgent,
   promptYesNo,
@@ -39,12 +40,27 @@ const runPlaywrightCheckFlow = async (projectPath: string): Promise<void> => {
   }
 
   console.log('\nPlaywright MCP is not installed.');
-  console.log('Install with: npm install -g @playwright/mcp@latest');
-  console.log('Then run: npx playwright install');
-  const installNow = await promptYesNo('Add Playwright MCP to .mcp.json anyway?', false);
-  if (installNow) {
+  const installNow = await promptYesNo(
+    'Install @playwright/mcp globally now? (runs npm install -g @playwright/mcp + npx playwright install)',
+  );
+  if (!installNow) {
+    console.log('Skipping Playwright MCP install. Run `tenet init --upgrade` later to retry.');
+    return;
+  }
+
+  const installed = installPlaywrightMcp();
+  if (installed) {
     addPlaywrightToMcpJson(projectPath);
-    console.log('Added Playwright MCP to .mcp.json. Install the package before running tenet.');
+    console.log('Playwright MCP installed and added to .mcp.json.');
+  } else {
+    console.log('Install failed. You can install manually with:');
+    console.log('  npm install -g @playwright/mcp@latest');
+    console.log('  npx playwright install');
+    const addAnyway = await promptYesNo('Add Playwright MCP to .mcp.json anyway?', false);
+    if (addAnyway) {
+      addPlaywrightToMcpJson(projectPath);
+      console.log('Added Playwright MCP to .mcp.json. Install the package before running tenet.');
+    }
   }
 };
 
