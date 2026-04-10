@@ -47,9 +47,24 @@ const run = async (): Promise<void> => {
     .command('init')
     .argument('[path]', 'Project path', '.')
     .option('--agent <name>', 'Default agent adapter (claude-code, opencode, codex)')
+    .option('--upgrade', 'Upgrade existing project: overwrite skills and MCP configs, preserve user docs')
     .description('Initialize Tenet project scaffold')
-    .action(async (targetPath: string, options: { agent?: string }) => {
+    .action(async (targetPath: string, options: { agent?: string; upgrade?: boolean }) => {
       const projectPath = path.resolve(targetPath);
+
+      if (options.upgrade) {
+        try {
+          initProject(projectPath, { upgrade: true });
+          console.log('Upgraded tenet skills and MCP configs.');
+          console.log('User documents (spec, harness, interview, etc.) preserved.');
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(error.message);
+          }
+          process.exit(1);
+        }
+        return;
+      }
 
       let agent = options.agent;
       if (!agent) {

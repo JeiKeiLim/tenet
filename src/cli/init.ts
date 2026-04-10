@@ -19,6 +19,7 @@ const VALID_AGENTS = ['claude-code', 'opencode', 'codex'] as const;
 
 type InitOptions = {
   agent?: string;
+  upgrade?: boolean;
 };
 
 const TEMPLATE_FILES: Record<string, string> = {
@@ -171,8 +172,18 @@ const copyPhasesDocs = (projectPath: string): void => {
 
 export function initProject(projectPath: string, options?: InitOptions): void {
   const tenetRoot = path.join(projectPath, '.tenet');
+
+  if (options?.upgrade) {
+    if (!fs.existsSync(tenetRoot)) {
+      throw new Error('No .tenet directory found. Run `tenet init` first.');
+    }
+    // Upgrade: overwrite skills and MCP configs, preserve user docs
+    upgradeProject(projectPath);
+    return;
+  }
+
   if (fs.existsSync(tenetRoot)) {
-    throw new Error(`.tenet already exists at ${tenetRoot}`);
+    throw new Error(`.tenet already exists at ${tenetRoot}. Use \`tenet init --upgrade\` to update skills and configs.`);
   }
 
   fs.mkdirSync(tenetRoot, { recursive: true });
@@ -196,6 +207,33 @@ export function initProject(projectPath: string, options?: InitOptions): void {
   writeMcpJson(projectPath);
   mergeOpenCodeConfig(projectPath);
   writeCodexConfig(projectPath);
+}
+
+/**
+ * Upgrade an existing tenet project: overwrite skills and MCP configs,
+ * ensure new directories exist, but preserve all user docs and state.
+ */
+function upgradeProject(projectPath: string): void {
+  const tenetRoot = path.join(projectPath, '.tenet');
+
+  // Ensure any new directories exist (added in newer versions)
+  for (const dir of REQUIRED_DIRS) {
+    fs.mkdirSync(path.join(tenetRoot, dir), { recursive: true });
+  }
+  fs.mkdirSync(path.join(tenetRoot, '.state'), { recursive: true });
+
+  // Overwrite skill files (these are tenet-owned, not user-edited)
+  copySkillFile(projectPath);
+  copyPhasesDocs(projectPath);
+  copyCodexSkill(projectPath);
+
+  // Re-merge MCP configs (idempotent — won't overwrite if tenet entry exists)
+  writeMcpJson(projectPath);
+  mergeOpenCodeConfig(projectPath);
+  writeCodexConfig(projectPath);
+
+  // Do NOT overwrite: harness, spec, interview, knowledge, journal, status, steer, bootstrap
+  // Do NOT touch: .state/tenet.db, .state/config.json
 }
 
 /**

@@ -16,7 +16,8 @@ export class CodexAdapter implements AgentAdapter {
     const prompt = invocation.context ? `${invocation.context}\n\n${invocation.prompt}` : invocation.prompt;
 
     return new Promise((resolve) => {
-      const child = spawn('codex', ['exec', prompt], {
+      // --full-auto disables sandbox mode that Codex enables by default in non-TTY (subprocess) mode
+      const child = spawn('codex', ['exec', '--full-auto', prompt], {
         cwd: invocation.workdir,
         stdio: ['ignore', 'pipe', 'pipe'],
       });

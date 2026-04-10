@@ -47,6 +47,11 @@ const statusIcon = (status: Job['status']): string => {
   }
 };
 
+const formatTimestamp = (ts: number): string => {
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+};
+
 const printJobTable = (jobs: Job[]): void => {
   if (jobs.length === 0) {
     console.log('  (no jobs registered)');
@@ -56,6 +61,9 @@ const printJobTable = (jobs: Job[]): void => {
   for (const job of jobs) {
     const name = typeof job.params.name === 'string' ? job.params.name : job.id.slice(0, 8);
     const dagId = typeof job.params.dag_id === 'string' ? `${job.params.dag_id}` : '';
+    const dependsOn = Array.isArray(job.params.depends_on) && job.params.depends_on.length > 0
+      ? ` [after ${(job.params.depends_on as string[]).join(', ')}]`
+      : '';
     const label = dagId ? `${dagId}: ${name}` : name;
     const duration = job.startedAt
       ? formatDuration((job.completedAt ?? Date.now()) - job.startedAt)
@@ -63,7 +71,14 @@ const printJobTable = (jobs: Job[]): void => {
     const error = job.error ? ` (${job.error})` : '';
     const retry = job.retryCount > 0 ? ` [retry ${job.retryCount}/${job.maxRetries}]` : '';
 
-    console.log(`  ${statusIcon(job.status).padEnd(10)} ${label}  ${duration}${retry}${error}`);
+    // Show timestamps: registered → started → completed
+    const timestamps: string[] = [];
+    if (job.createdAt) timestamps.push(`reg ${formatTimestamp(job.createdAt)}`);
+    if (job.startedAt) timestamps.push(`start ${formatTimestamp(job.startedAt)}`);
+    if (job.completedAt) timestamps.push(`done ${formatTimestamp(job.completedAt)}`);
+    const timeInfo = timestamps.length > 0 ? `  (${timestamps.join(' → ')})` : '';
+
+    console.log(`  ${statusIcon(job.status).padEnd(10)} ${label}  ${duration}${retry}${dependsOn}${error}${timeInfo}`);
   }
 };
 
@@ -114,24 +129,24 @@ export function showStatus(projectPath: string, options?: StatusOptions): void {
       console.log(`Jobs: ${completed} done, ${running} running, ${pending} pending, ${failed} failed, ${blocked} blocked (${allJobs.length} total)`);
       console.log('');
 
-      // Active jobs: running, pending, blocked, failed
-      const activeJobs = allJobs.filter((j) => !['completed', 'cancelled'].includes(j.status));
+      // Active jobs: running, pending, blocked (not completed, cancelled, or failed)
+      const activeJobs = allJobs.filter((j) => ['running', 'pending', 'blocked'].includes(j.status));
       if (activeJobs.length > 0) {
         printJobTable(activeJobs);
       } else if (allJobs.length > 0) {
         console.log('  All jobs completed.');
       }
 
-      // Completed/cancelled jobs: show only with --all flag
-      const doneJobs = allJobs.filter((j) => ['completed', 'cancelled'].includes(j.status));
-      if (doneJobs.length > 0) {
+      // Terminal jobs: show only with --all flag
+      const terminalJobs = allJobs.filter((j) => ['completed', 'cancelled', 'failed'].includes(j.status));
+      if (terminalJobs.length > 0) {
         if (showAll) {
           console.log('');
-          console.log(`Completed (${doneJobs.length}):`);
-          printJobTable(doneJobs);
-        } else if (activeJobs.length > 0) {
+          console.log(`History (${terminalJobs.length}):`);
+          printJobTable(terminalJobs);
+        } else if (activeJobs.length > 0 || terminalJobs.length > 0) {
           console.log('');
-          console.log(`  + ${completed} done, ${cancelled} cancelled (use --all to show)`);
+          console.log(`  + ${completed} done, ${failed} failed, ${cancelled} cancelled (use --all to show)`);
         }
       }
 

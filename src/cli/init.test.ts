@@ -102,7 +102,7 @@ describe('initProject', () => {
     const projectPath = createTempDir();
     fs.mkdirSync(path.join(projectPath, '.tenet'), { recursive: true });
 
-    expect(() => initProject(projectPath)).toThrowError(/\.tenet already exists/);
+    expect(() => initProject(projectPath)).toThrowError(/\.tenet already exists.*--upgrade/);
   });
 
   it('creates harness template with expected sections', () => {
