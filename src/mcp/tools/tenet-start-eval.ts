@@ -57,6 +57,55 @@ const CODE_CRITIC_PREAMBLE = [
   '',
 ].join('\n');
 
+const PLAYWRIGHT_EVAL_PREAMBLE = [
+  '## Playwright E2E — Live Application Verification',
+  '',
+  'You are the PLAYWRIGHT EVAL worker. You do NOT review code or test files.',
+  'You verify the application ACTUALLY WORKS by interacting with it like a real user.',
+  '',
+  '### Two-Layer Testing (you MUST do BOTH)',
+  '',
+  '#### Layer 1: Scripted Playwright Tests (regression)',
+  '1. Locate existing Playwright test files (tests/e2e/, e2e/, tests/playwright/, or similar)',
+  '2. Ensure the application is running (start dev server or docker compose if needed)',
+  '3. Run: `npx playwright test` (or the project\'s test command)',
+  '4. Report all passing and failing tests',
+  '',
+  '#### Layer 2: Exploratory Agent-Driven Testing (Playwright MCP)',
+  'Use the Playwright MCP tools (playwright_navigate, playwright_click, playwright_fill,',
+  'playwright_screenshot, playwright_get_visible_text) to test EVERY scenario from the spec.',
+  '',
+  'For each scenario in scope:',
+  '1. Navigate to the entry point',
+  '2. Perform the user actions (click, fill, submit)',
+  '3. Take a screenshot at each step',
+  '4. Verify the EXPECTED OUTCOME (not just absence of errors):',
+  '   - After login: did the URL change to /dashboard? Is user info visible?',
+  '   - After create: does the new item appear in the list?',
+  '   - After form submit: did it redirect to the correct page?',
+  '5. Test edge cases the scripted tests miss:',
+  '   - Click every button on every page',
+  '   - Try invalid inputs and verify error messages',
+  '   - Test navigation between pages',
+  '   - Verify all features mentioned in spec are reachable from the UI',
+  '',
+  '### What to Report',
+  '- Layer 1 results: scripted test pass/fail counts',
+  '- Layer 2 findings: bugs found via exploration that scripted tests missed',
+  '- Visual issues observed in screenshots (broken layouts, missing elements)',
+  '- Features in spec that have NO accessible UI path',
+  '',
+  '### If Playwright MCP is not available',
+  'Report "Playwright MCP not installed — exploratory testing skipped" and pass with',
+  'Layer 1 results only. Do NOT fail the eval just because Playwright MCP is missing.',
+  '',
+  '### If the application won\'t start',
+  'FAIL the eval. The application must start to be tested.',
+  '',
+  'End with: {"passed": true/false, "stage": "playwright_eval", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
+  '',
+].join('\n');
+
 const TEST_CRITIC_PREAMBLE = [
   '## Test Critic — Test Sufficiency Check',
   '',
@@ -113,11 +162,12 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
     'tenet_start_eval',
     {
       description:
-        'Start evaluation pipeline for a completed job. Dispatches TWO critic jobs: ' +
+        'Start evaluation pipeline for a completed job. Dispatches THREE eval jobs: ' +
         '(1) Code critic — independent purpose alignment check (spec + diff only, no author reasoning), ' +
-        '(2) Test critic — reviews whether tests are sufficient to prove features work (spec + tests only). ' +
-        'Critics evaluate ONLY against the specific job\'s scope, not the full spec. ' +
-        'Returns both job IDs. Wait for both to complete.',
+        '(2) Test critic — reviews whether tests are sufficient to prove features work (spec + tests only), ' +
+        '(3) Playwright eval — runs scripted Playwright tests AND exploratory agent-driven testing via Playwright MCP. ' +
+        'All three evaluate ONLY against the specific job\'s scope, not the full spec. ' +
+        'Returns all three job IDs. Wait for all three to complete. ALL must pass.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
         output: z.record(z.string(), z.unknown()),
@@ -143,10 +193,19 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         output,
       });
 
+      // Playwright eval: runs scripted tests + exploratory testing via Playwright MCP
+      const playwrightEvalJob = jobManager.startJob('playwright_eval', {
+        source_job_id: job_id,
+        eval_stage: 'playwright_eval',
+        prompt: jobScope + PLAYWRIGHT_EVAL_PREAMBLE,
+        output,
+      });
+
       return jsonResult({
         code_critic_job_id: codeCriticJob.id,
         test_critic_job_id: testCriticJob.id,
-        message: 'Code critic and test critic dispatched. Wait for both using tenet_job_wait + tenet_job_result.',
+        playwright_eval_job_id: playwrightEvalJob.id,
+        message: 'Code critic, test critic, and Playwright eval dispatched. Wait for all three using tenet_job_wait + tenet_job_result. ALL must pass.',
       });
     },
   );

@@ -1,6 +1,6 @@
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'blocked';
 
-export type JobType = 'dev' | 'eval' | 'critic_eval' | 'mechanical_eval' | 'integration_test' | 'compile_context' | 'health_check';
+export type JobType = 'dev' | 'eval' | 'critic_eval' | 'playwright_eval' | 'mechanical_eval' | 'integration_test' | 'compile_context' | 'health_check';
 
 export interface Job {
   id: string;

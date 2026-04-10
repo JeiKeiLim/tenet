@@ -120,41 +120,53 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 - **Integration test Fail**: Create targeted fix jobs, then retry the integration test.
 - **Limits**: Max 3 retries per job before marking it as blocked.
 
-### Stage 5: Agent-Driven E2E Testing (Playwright MCP)
+### Stage 5: Playwright E2E (Two Layers, Independent Job)
 
-After code critic and test critic pass, the orchestrator performs a live e2e verification using Playwright MCP. This is the "human eyes" layer — the agent navigates the app like a real user and visually verifies it works.
+Dispatched as a separate `playwright_eval` job by `tenet_start_eval` alongside code critic and test critic. The worker has independent context — does NOT see implementation code or author reasoning. Receives only the spec and the running application.
 
-**How it works:**
-1. Start the application (dev server or docker compose)
-2. Use Playwright MCP tools to navigate to each relevant page/flow
-3. Take screenshots at key interaction points
-4. Analyze screenshots visually to verify:
-   - Pages render correctly (not blank, no error screens)
-   - UI elements are present and properly sized/aligned
-   - Navigation links work (stats page reachable from main nav)
-   - Forms submit and redirect to correct destinations
-   - Created items appear in lists
-5. Report findings with screenshots as evidence
+**The worker MUST do BOTH layers:**
 
-**What this catches that automated tests miss:**
+#### Layer 1: Scripted Playwright Tests (regression)
+1. Locate existing Playwright test files (`tests/e2e/`, `e2e/`, `tests/playwright/`)
+2. Ensure the application is running (start dev server or docker compose)
+3. Run `npx playwright test` (or the project's test command)
+4. Report pass/fail counts and any failing tests
+
+#### Layer 2: Exploratory Agent-Driven Testing (Playwright MCP)
+The worker uses Playwright MCP tools to interact with the app like a real user:
+- `playwright_navigate(url)` — go to a page
+- `playwright_click(selector)` — click buttons/links
+- `playwright_fill(selector, value)` — fill form fields
+- `playwright_screenshot()` — capture state visually
+- `playwright_get_visible_text()` — verify text content
+
+**For each scenario in scope, the worker:**
+1. Navigates to the entry point
+2. Performs the user actions (click, fill, submit)
+3. Takes screenshots at each step
+4. Verifies the EXPECTED OUTCOME (not just absence of errors):
+   - After login: did the URL change to /dashboard? Is user info visible?
+   - After create: does the new item appear in the list?
+   - After form submit: did it redirect to the correct page?
+5. Tests edge cases scripted tests miss:
+   - Click every button on every page
+   - Try invalid inputs and verify error messages
+   - Test navigation between pages
+   - Verify all features in spec are reachable from the UI
+
+**What this catches that scripted tests miss:**
 - Stats page implemented but not wired to navigation
 - Buttons with wrong sizes or misaligned layouts
 - Login form that submits but doesn't redirect correctly
 - Copy button that doesn't actually copy to clipboard
 - Broken CSS/styling that doesn't affect test assertions
 
-**Playwright MCP tool flow:**
-```
-playwright_navigate(url) → take screenshot
-playwright_click(selector) → take screenshot
-playwright_fill(selector, value) → playwright_click(submit)
-→ take screenshot → verify redirect URL and page content
-```
+**When Playwright MCP is not available:** Layer 2 is skipped. The worker reports "Playwright MCP not installed — exploratory testing skipped" and passes with Layer 1 results only. Do NOT fail the eval just because Playwright MCP is missing.
 
-**When Playwright MCP is not available:** Fall back to the smoke check (Stage 1.5) and rely on code/test critics. Log a warning that agent-driven e2e was skipped.
+**When the application won't start:** FAIL the eval. The application must start to be tested.
 
-**PASS**: All user flows complete successfully, screenshots show correct UI state.
-**FAIL**: Any flow fails (wrong page, missing elements, broken layout). Create fix job with screenshot evidence.
+**PASS**: Scripted tests pass AND exploratory testing finds no issues.
+**FAIL**: Any scripted test fails OR exploratory testing finds visual/behavioral bugs. Create fix job with screenshots and findings as evidence.
 
 ## Anti-Skip Enforcement
 Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode requires Stage 3 (code critic), Stage 4 (test critic), and Stage 5 (agent-driven e2e). Both critics run in separate agent sessions with no access to the author's reasoning. The author cannot evaluate their own work.

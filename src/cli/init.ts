@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -96,6 +97,22 @@ export const readStateConfig = (tenetRoot: string): StateConfig => {
   } catch {
     return {};
   }
+};
+
+export const promptYesNo = (question: string, defaultYes = true): Promise<boolean> => {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    const suffix = defaultYes ? ' [Y/n]: ' : ' [y/N]: ';
+    rl.question(question + suffix, (answer) => {
+      rl.close();
+      const trimmed = answer.trim().toLowerCase();
+      if (trimmed === '') {
+        resolve(defaultYes);
+        return;
+      }
+      resolve(trimmed === 'y' || trimmed === 'yes');
+    });
+  });
 };
 
 export const promptAgent = (): Promise<string> => {
@@ -276,6 +293,56 @@ const MCP_JSON_CONTENT = {
       args: ['serve'],
     },
   },
+};
+
+const PLAYWRIGHT_MCP_ENTRY = {
+  type: 'stdio' as const,
+  command: 'npx',
+  args: ['@playwright/mcp@latest'],
+};
+
+/**
+ * Check if Playwright MCP is installed globally (or runnable via npx).
+ */
+export const isPlaywrightMcpInstalled = (): boolean => {
+  try {
+    execSync('npm list -g @playwright/mcp', {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
+    });
+    return true;
+  } catch {
+    // Fall back: check if npx can resolve it (cached)
+    try {
+      execSync('npx --no-install @playwright/mcp --help', {
+        stdio: ['ignore', 'ignore', 'ignore'],
+        timeout: 5_000,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+};
+
+/**
+ * Add Playwright MCP entry to .mcp.json without disturbing other servers.
+ */
+export const addPlaywrightToMcpJson = (projectPath: string): void => {
+  const mcpJsonPath = path.join(projectPath, '.mcp.json');
+  if (fs.existsSync(mcpJsonPath)) {
+    const existing = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf8')) as Record<string, unknown>;
+    const servers = (existing.mcpServers ?? {}) as Record<string, unknown>;
+    if (servers.playwright) {
+      return;
+    }
+    servers.playwright = PLAYWRIGHT_MCP_ENTRY;
+    existing.mcpServers = servers;
+    fs.writeFileSync(mcpJsonPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
+    return;
+  }
+  const config = { mcpServers: { playwright: PLAYWRIGHT_MCP_ENTRY } };
+  fs.writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
 };
 
 const writeMcpJson = (projectPath: string): void => {

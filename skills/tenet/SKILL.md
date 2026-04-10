@@ -302,38 +302,39 @@ while True:
     # 7. Retrieve full output
     output = tenet_job_result(job_id=run.job_id)
 
-    # 8. Dispatch evaluation (code critic + test critic)
+    # 8. Dispatch evaluation (code critic + test critic + Playwright eval)
     eval = tenet_start_eval(job_id=job.id, output=output)
-    # This dispatches TWO jobs: code_critic and test_critic
+    # This dispatches THREE jobs: code_critic, test_critic, playwright_eval
     code_check = BACKGROUND tenet_job_wait(job_id=eval.code_critic_job_id)
     test_check = BACKGROUND tenet_job_wait(job_id=eval.test_critic_job_id)
+    playwright_check = BACKGROUND tenet_job_wait(job_id=eval.playwright_eval_job_id)
 
-    # Wait for both eval jobs
+    # Wait for all three eval jobs
     eval_delay = 30
-    WHILE code_check or test_check not terminal:
+    WHILE any of (code_check, test_check, playwright_check) not terminal:
         SLEEP eval_delay seconds
         eval_delay = min(eval_delay * 1.5, 120)
-        # Re-check whichever is not done
         IF code_check not terminal:
             code_check = BACKGROUND tenet_job_wait(job_id=eval.code_critic_job_id)
         IF test_check not terminal:
             test_check = BACKGROUND tenet_job_wait(job_id=eval.test_critic_job_id)
+        IF playwright_check not terminal:
+            playwright_check = BACKGROUND tenet_job_wait(job_id=eval.playwright_eval_job_id)
 
     code_output = tenet_job_result(job_id=eval.code_critic_job_id)
     test_output = tenet_job_result(job_id=eval.test_critic_job_id)
+    playwright_output = tenet_job_result(job_id=eval.playwright_eval_job_id)
 
-    # 9. Stage 5: Agent-driven E2E via Playwright MCP (after critics pass)
-    IF code_output.passed AND test_output.passed:
-        # Use Playwright MCP to navigate the app and verify visually
-        # playwright_navigate → screenshot → analyze → report
-        # If Playwright MCP unavailable, skip (smoke check already ran in Stage 1.5)
-        e2e_passed = run_playwright_e2e_check(job)  # see phases/06-evaluation.md
-
-    # 10. Act on eval results — ALL must pass
+    # 9. Act on eval results — ALL THREE must pass
     # ⛔ EVAL IS A HARD BLOCKING GATE — DO NOT PROCEED TO THE NEXT JOB IF EVAL FAILS
     # "The next job will fix it" is NEVER acceptable. Retry THIS job until it passes.
-    IF code_output.passed AND test_output.passed AND e2e_passed:
+    IF code_output.passed AND test_output.passed AND playwright_output.passed:
         tenet_update_knowledge(type="journal", job_id=job.id, findings=output.findings)
+    ELIF NOT playwright_output.passed:
+        # Playwright e2e failed — actual app behavior is broken
+        # Create fix job with the screenshots and findings as evidence
+        create_fix_job(job, playwright_output.exploratory_findings)
+        # DO NOT continue to next job — wait for fix job to complete, then re-eval
     ELIF NOT test_output.passed:
         # Test critic failed — tests are insufficient, create fix job to strengthen tests
         create_test_fix_job(job, test_output.missing_tests)
@@ -408,13 +409,14 @@ Evaluate every completed job using staged gates:
 - Identify missing test coverage: untested routes, pages, interactive elements WITHIN SCOPE.
 - If insufficient: output specific tests to add/strengthen → becomes fix job requirements.
 
-### Stage 5 — Agent-driven E2E (Playwright MCP)
+### Stage 5 — Playwright E2E (independent context, two layers)
 
-- After critics pass, the orchestrator uses Playwright MCP to test the app like a human.
-- Navigate pages, click buttons, fill forms, take screenshots at each step.
-- Analyze screenshots visually: correct layout, elements present, navigation works.
-- Catches: pages not wired to nav, broken CSS, forms that submit but don't redirect correctly.
-- Falls back to smoke check if Playwright MCP is unavailable.
+- Dispatched as a separate `playwright_eval` job alongside code critic and test critic.
+- Worker has independent context — does not see implementation code or author reasoning.
+- **Layer 1 (Scripted)**: Runs the project's existing Playwright test suite (`npx playwright test`).
+- **Layer 2 (Exploratory)**: Worker uses Playwright MCP to navigate the app like a human, click every button, fill every form, take screenshots at each step, and analyze visually.
+- Catches: pages not wired to nav, broken CSS, forms that submit but don't redirect, features in spec with no UI path.
+- If Playwright MCP is unavailable, Layer 2 is skipped and the eval passes with Layer 1 results only.
 - **This is the "human eyes" layer that catches "tests pass, app broken" issues.**
 
 ## Knowledge vs Journal

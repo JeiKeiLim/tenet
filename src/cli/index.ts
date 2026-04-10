@@ -5,7 +5,15 @@ import path from 'node:path';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
-import { initProject, promptAgent, writeStateConfig, readStateConfig } from './init.js';
+import {
+  addPlaywrightToMcpJson,
+  initProject,
+  isPlaywrightMcpInstalled,
+  promptAgent,
+  promptYesNo,
+  readStateConfig,
+  writeStateConfig,
+} from './init.js';
 import { showStatus } from './status.js';
 
 const resolveProjectPath = (project?: string): string => path.resolve(project ?? process.cwd());
@@ -14,6 +22,30 @@ const ensureStateDir = (projectPath: string): string => {
   const stateDir = path.join(projectPath, '.tenet', '.state');
   fs.mkdirSync(stateDir, { recursive: true });
   return stateDir;
+};
+
+const runPlaywrightCheckFlow = async (projectPath: string): Promise<void> => {
+  const wantPlaywright = await promptYesNo(
+    '\nUse Playwright MCP for agent-driven e2e testing? (recommended for web/UI projects)',
+  );
+  if (!wantPlaywright) {
+    return;
+  }
+
+  if (isPlaywrightMcpInstalled()) {
+    addPlaywrightToMcpJson(projectPath);
+    console.log('Playwright MCP detected and added to .mcp.json.');
+    return;
+  }
+
+  console.log('\nPlaywright MCP is not installed.');
+  console.log('Install with: npm install -g @playwright/mcp@latest');
+  console.log('Then run: npx playwright install');
+  const installNow = await promptYesNo('Add Playwright MCP to .mcp.json anyway?', false);
+  if (installNow) {
+    addPlaywrightToMcpJson(projectPath);
+    console.log('Added Playwright MCP to .mcp.json. Install the package before running tenet.');
+  }
 };
 
 const startBackgroundServer = (projectPath: string): void => {
@@ -48,8 +80,9 @@ const run = async (): Promise<void> => {
     .argument('[path]', 'Project path', '.')
     .option('--agent <name>', 'Default agent adapter (claude-code, opencode, codex)')
     .option('--upgrade', 'Upgrade existing project: overwrite skills and MCP configs, preserve user docs')
+    .option('--skip-playwright-check', 'Skip the Playwright MCP availability check (useful for one-line installs)')
     .description('Initialize Tenet project scaffold')
-    .action(async (targetPath: string, options: { agent?: string; upgrade?: boolean }) => {
+    .action(async (targetPath: string, options: { agent?: string; upgrade?: boolean; skipPlaywrightCheck?: boolean }) => {
       const projectPath = path.resolve(targetPath);
 
       if (options.upgrade) {
@@ -62,6 +95,11 @@ const run = async (): Promise<void> => {
             console.error(error.message);
           }
           process.exit(1);
+        }
+
+        // Also run Playwright check on upgrade so existing projects can opt in
+        if (!options.skipPlaywrightCheck) {
+          await runPlaywrightCheckFlow(projectPath);
         }
         return;
       }
@@ -79,6 +117,11 @@ const run = async (): Promise<void> => {
           return;
         }
         throw error;
+      }
+
+      // Playwright MCP setup flow
+      if (!options.skipPlaywrightCheck) {
+        await runPlaywrightCheckFlow(projectPath);
       }
 
       console.log(`\nInitialized Tenet scaffold at ${path.join(projectPath, '.tenet')}`);
