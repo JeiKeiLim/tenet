@@ -32,17 +32,17 @@ npx vitest run -t "job lifecycle"
 
 The system has four layers:
 
-1. **Core** (`src/core/`) — Job orchestration (`job-manager.ts`), SQLite persistence (`state-store.ts`), and status file sync (`status-writer.ts`). JobManager handles DAG-based job execution with heartbeat stall detection, retry logic (`retryJob()`), and configurable concurrency. StateStore manages the `jobs`, `events`, `steer_messages`, and `config` tables in `.tenet/.state/tenet.db` (WAL mode). Status files (`.tenet/status/status.md`, `job-queue.md`) auto-update on every job state transition.
+1. **Core** (`src/core/`) — Job orchestration (`job-manager.ts`), SQLite persistence (`state-store.ts`), and status file sync (`status-writer.ts`). JobManager handles DAG-based job execution with heartbeat stall detection (30-min default timeout), retry logic (`retryJob()`), and configurable concurrency. Each JobManager instance generates a UUID (`serverId`) on startup; running jobs from a different server instance are automatically reset to "pending" (orphan detection via `resetOrphanedJobs()`). StateStore manages the `jobs`, `events`, `steer_messages`, and `config` tables in `.tenet/.state/tenet.db` (WAL mode). The `jobs` table includes a `server_id` column for crash recovery tracking. Status files (`.tenet/status/status.md`, `job-queue.md`) auto-update on every job state transition.
 
 2. **Adapters** (`src/adapters/`) — Pluggable agent adapters that spawn CLI subprocesses. Each adapter implements `AgentAdapter` from `base.ts`: `isAvailable()`, `invoke(invocation)`. Three built-in: `ClaudeAdapter` (`claude --print`), `OpenCodeAdapter` (`opencode run`), `CodexAdapter` (`codex exec`). The adapter registry in `index.ts` resolves agents by name with fallback.
 
-3. **MCP Server** (`src/mcp/`) — Exposes 17 tools via `@modelcontextprotocol/server`. Entry point at `src/mcp/index.ts`. Each tool in `src/mcp/tools/` registers itself with a Zod input schema and handler. Key tools: `tenet_start_job`, `tenet_continue` (server-side continuation), `tenet_compile_context`, `tenet_register_jobs` (loads job DAG, requires `feature` slug), `tenet_retry_job` (resets completed/failed jobs to pending), `tenet_validate_clarity`, `tenet_add_steer` (creates steer messages in SQLite), `tenet_start_eval` (dispatches code critic + test critic).
+3. **MCP Server** (`src/mcp/`) — Exposes 17 tools via `@modelcontextprotocol/server`. Entry point at `src/mcp/index.ts`. Each tool in `src/mcp/tools/` registers itself with a Zod input schema and handler. Key tools: `tenet_start_job`, `tenet_continue` (server-side continuation), `tenet_compile_context`, `tenet_register_jobs` (loads job DAG, requires `feature` slug), `tenet_retry_job` (resets completed/failed jobs to pending), `tenet_validate_clarity`, `tenet_add_steer` (creates steer messages in SQLite), `tenet_start_eval` (dispatches code critic + test critic + playwright eval), `tenet_init` (initialize project from MCP), `tenet_set_agent` (switch default agent).
 
 4. **CLI** (`src/cli/`) — Commander.js program with `init`, `serve`, `status`, `config` commands. `tenet init` scaffolds a `.tenet/` directory structure and copies skill files to `.claude/skills/tenet/`.
 
 ## Key Types (`src/types/index.ts`)
 
-- **Job**: id, type (`dev|eval|critic_eval|mechanical_eval|integration_test|compile_context|health_check`), status (`pending|running|completed|failed|cancelled|blocked`), params, agentName
+- **Job**: id, type (`dev|eval|critic_eval|playwright_eval|mechanical_eval|integration_test|compile_context|health_check`), status (`pending|running|completed|failed|cancelled|blocked`), params, agentName
 - **SteerMessage**: class (`context|directive|emergency`), status (`received|acknowledged|acted_on|resolved`)
 - **ContinuationState**: tracks DAG progress — next_job, blocked_jobs, completed/total counts
 - **Config**: agent selection (default, fallback, per-type overrides), concurrency limits
@@ -74,6 +74,10 @@ Dev-type jobs get a "Deliverable Requirements" preamble prepended to their promp
 - Tool handlers return `jsonResult({...})` on success or `asToolError(error)` on failure
 - The `.tenet/` directory is a per-project artifact created by `tenet init`, not part of this repo's own state
 
+## Versioning
+
+Uses **CalVer** (`YY.MM.PATCH`): e.g., `26.4.0` is the first release in April 2026, `26.4.1` is the second. New month resets patch to 0. This communicates freshness in a fast-moving AI tooling space while staying npm-compatible.
+
 ## Planning Docs
 
 Design documents in `docs/planning/` are numbered chronologically. Key docs:
@@ -81,3 +85,4 @@ Design documents in `docs/planning/` are numbered chronologically. Key docs:
 - `04_implementation_architecture.md` — Architecture decisions and Ouroboros lessons
 - `05_test_observations_2026-04-08.md` — 23 observations from manual testing
 - `06_status_2026-04-08.md` — Current implementation status and what's remaining
+- `07_round5_fixes_2026-04-14.md` — 6 issues from round 5 testing (timeout, stall recovery, playwright, wiring)
