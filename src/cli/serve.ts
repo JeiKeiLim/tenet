@@ -3,6 +3,7 @@ import { AdapterRegistry } from '../adapters/index.js';
 import { JobManager } from '../core/job-manager.js';
 import { StateStore } from '../core/state-store.js';
 import { registerAllTools } from '../mcp/tools/index.js';
+import { getPackageVersion } from './version.js';
 
 export async function startServer(projectPath: string): Promise<void> {
   process.env.TENET_PROJECT_PATH = projectPath;
@@ -10,7 +11,7 @@ export async function startServer(projectPath: string): Promise<void> {
   const server = new McpServer(
     {
       name: 'tenet',
-      version: '0.1.0',
+      version: getPackageVersion(),
     },
     {
       capabilities: {

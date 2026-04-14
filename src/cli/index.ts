@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
+import { getPackageVersion } from './version.js';
 import {
   addPlaywrightToMcpJson,
   initProject,
@@ -89,7 +90,7 @@ const run = async (): Promise<void> => {
   program
     .name('tenet')
     .description('Tenet CLI')
-    .version('0.1.0');
+    .version(getPackageVersion());
 
   program
     .command('init')
