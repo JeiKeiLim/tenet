@@ -27,7 +27,7 @@ AI coding agents are powerful but short-lived. They lose context, drift off-spec
 
 ```bash
 # Install globally
-npm install -g tenet
+npm install -g @jeikeilim/tenet
 
 # Initialize a project
 cd your-project
@@ -41,7 +41,7 @@ tenet init
 ### One-liner (skip interactive prompts)
 
 ```bash
-tenet init --agent claude-code --skip-playwright-check
+npx @jeikeilim/tenet init --agent claude-code --skip-playwright-check
 ```
 
 ## How It Works
