@@ -151,43 +151,44 @@ export const promptAgent = (): Promise<string> => {
   });
 };
 
-const copySkillFile = (projectPath: string): void => {
+/**
+ * Copy all skill directories (tenet, tenet-diagnose, etc.) to .claude/skills/.
+ * Each skill directory gets its own subdirectory with SKILL.md.
+ */
+const copySkillDirs = (projectPath: string): void => {
   const currentFile = fileURLToPath(import.meta.url);
   const currentDir = path.dirname(currentFile);
-  const skillsDir = path.resolve(currentDir, '../../skills/tenet');
-  const targetDir = path.join(projectPath, '.claude', 'skills', 'tenet');
+  const skillsRoot = path.resolve(currentDir, '../../skills');
 
-  fs.mkdirSync(targetDir, { recursive: true });
-
-  // Copy all top-level .md skill files (SKILL.md, DIAGNOSE.md, etc.)
-  if (fs.existsSync(skillsDir)) {
-    for (const file of fs.readdirSync(skillsDir)) {
-      if (file.endsWith('.md')) {
-        fs.copyFileSync(path.join(skillsDir, file), path.join(targetDir, file));
-      }
-    }
-  }
-};
-
-const copyPhasesDocs = (projectPath: string): void => {
-  const currentFile = fileURLToPath(import.meta.url);
-  const currentDir = path.dirname(currentFile);
-  const sourcePhasesDir = path.resolve(currentDir, '../../skills/tenet/phases');
-  const targetPhasesDir = path.join(projectPath, '.claude', 'skills', 'tenet', 'phases');
-
-  if (!fs.existsSync(sourcePhasesDir)) {
+  if (!fs.existsSync(skillsRoot)) {
     return;
   }
 
-  fs.mkdirSync(targetPhasesDir, { recursive: true });
+  for (const skillDir of fs.readdirSync(skillsRoot)) {
+    const sourceDir = path.join(skillsRoot, skillDir);
+    if (!fs.statSync(sourceDir).isDirectory()) {
+      continue;
+    }
 
-  const files = fs.readdirSync(sourcePhasesDir);
-  for (const file of files) {
-    if (file.endsWith('.md')) {
-      fs.copyFileSync(
-        path.join(sourcePhasesDir, file),
-        path.join(targetPhasesDir, file),
-      );
+    const targetDir = path.join(projectPath, '.claude', 'skills', skillDir);
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    for (const entry of fs.readdirSync(sourceDir)) {
+      const entryPath = path.join(sourceDir, entry);
+      const stat = fs.statSync(entryPath);
+
+      if (entry.endsWith('.md') && stat.isFile()) {
+        fs.copyFileSync(entryPath, path.join(targetDir, entry));
+      } else if (stat.isDirectory()) {
+        // Copy subdirectories (e.g., phases/)
+        const targetSubDir = path.join(targetDir, entry);
+        fs.mkdirSync(targetSubDir, { recursive: true });
+        for (const file of fs.readdirSync(entryPath)) {
+          if (file.endsWith('.md')) {
+            fs.copyFileSync(path.join(entryPath, file), path.join(targetSubDir, file));
+          }
+        }
+      }
     }
   }
 };
@@ -223,8 +224,7 @@ export function initProject(projectPath: string, options?: InitOptions): void {
     writeStateConfig(tenetRoot, { default_agent: options.agent });
   }
 
-  copySkillFile(projectPath);
-  copyPhasesDocs(projectPath);
+  copySkillDirs(projectPath);
   copyCodexSkill(projectPath);
   writeMcpJson(projectPath);
   mergeOpenCodeConfig(projectPath);
@@ -245,8 +245,7 @@ function upgradeProject(projectPath: string): void {
   fs.mkdirSync(path.join(tenetRoot, '.state'), { recursive: true });
 
   // Overwrite skill files (these are tenet-owned, not user-edited)
-  copySkillFile(projectPath);
-  copyPhasesDocs(projectPath);
+  copySkillDirs(projectPath);
   copyCodexSkill(projectPath);
 
   // Re-merge MCP configs (idempotent — won't overwrite if tenet entry exists)
@@ -265,30 +264,40 @@ function upgradeProject(projectPath: string): void {
 const copyCodexSkill = (projectPath: string): void => {
   const currentFile = fileURLToPath(import.meta.url);
   const currentDir = path.dirname(currentFile);
-  const skillsDir = path.resolve(currentDir, '../../skills/tenet');
-  const sourcePhasesDir = path.join(skillsDir, 'phases');
+  const skillsRoot = path.resolve(currentDir, '../../skills');
 
-  // Copy all top-level .md skill files to .agents/skills/tenet/
-  const codexSkillDir = path.join(projectPath, '.agents', 'skills', 'tenet');
-  if (fs.existsSync(skillsDir)) {
-    fs.mkdirSync(codexSkillDir, { recursive: true });
-    for (const file of fs.readdirSync(skillsDir)) {
-      if (file.endsWith('.md')) {
-        fs.copyFileSync(path.join(skillsDir, file), path.join(codexSkillDir, file));
-      }
-    }
+  if (!fs.existsSync(skillsRoot)) {
+    return;
   }
 
-  // Copy phase docs to .agents/skills/tenet/phases/
-  if (fs.existsSync(sourcePhasesDir)) {
-    const codexPhasesDir = path.join(codexSkillDir, 'phases');
-    fs.mkdirSync(codexPhasesDir, { recursive: true });
-    for (const file of fs.readdirSync(sourcePhasesDir)) {
-      if (file.endsWith('.md')) {
-        fs.copyFileSync(
-          path.join(sourcePhasesDir, file),
-          path.join(codexPhasesDir, file),
-        );
+  // Copy all skill directories to .agents/skills/
+  for (const skillDir of fs.readdirSync(skillsRoot)) {
+    const sourceDir = path.join(skillsRoot, skillDir);
+    if (!fs.statSync(sourceDir).isDirectory()) {
+      continue;
+    }
+
+    const codexSkillDir = path.join(projectPath, '.agents', 'skills', skillDir);
+    fs.mkdirSync(codexSkillDir, { recursive: true });
+
+    for (const file of fs.readdirSync(sourceDir)) {
+      const filePath = path.join(sourceDir, file);
+      if (file.endsWith('.md') && fs.statSync(filePath).isFile()) {
+        fs.copyFileSync(filePath, path.join(codexSkillDir, file));
+      }
+    }
+
+    // Copy subdirectories (e.g., phases/)
+    for (const sub of fs.readdirSync(sourceDir)) {
+      const subPath = path.join(sourceDir, sub);
+      if (fs.statSync(subPath).isDirectory()) {
+        const targetSubDir = path.join(codexSkillDir, sub);
+        fs.mkdirSync(targetSubDir, { recursive: true });
+        for (const file of fs.readdirSync(subPath)) {
+          if (file.endsWith('.md')) {
+            fs.copyFileSync(path.join(subPath, file), path.join(targetSubDir, file));
+          }
+        }
       }
     }
   }
