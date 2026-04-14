@@ -1,8 +1,10 @@
 # Tenet
 
+> **T**alk. **E**stablish. **N**onstop. **E**valuate. **T**enet.
+
 **Cross-platform AI agent plugin for 12+ hour autonomous development cycles.**
 
-Tenet orchestrates long-running software development jobs across multiple AI coding agents (Claude Code, OpenCode, Codex) using a persistent SQLite state store, exposed via MCP and CLI. It turns a vague feature request into a fully implemented, tested, and evaluated codebase — autonomously.
+*tenet* — a principle held to be true. Also a palindrome: it reads the same forward and backward, just like the process. **Talk** through what you want. **Establish** the spec and plan. **Nonstop** execution through the DAG. **Evaluate** every line with independent critics. Each cycle produces a **tenet** — a verified feature that feeds the next cycle.
 
 ```
 You: "Add social features — reactions, badges, user profiles, share cards"
