@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import type { ContinuationState, Job, JobResult, JobType, JobWaitResponse } from '../types/index.js';
 import { AdapterRegistry } from '../adapters/index.js';
@@ -23,13 +24,24 @@ export class JobManager {
   private readonly maxParallelAgents: number;
   private readonly heartbeatTimeoutMs: number;
   private readonly defaultJobTimeoutMs: number;
+  private readonly serverId: string;
 
   constructor(stateStore: StateStore, adapterRegistry: AdapterRegistry, config?: JobManagerConfig) {
     this.stateStore = stateStore;
     this.adapterRegistry = adapterRegistry;
     this.maxParallelAgents = config?.maxParallelAgents ?? 4;
-    this.heartbeatTimeoutMs = config?.heartbeatTimeoutMs ?? 300_000;
+    this.heartbeatTimeoutMs = config?.heartbeatTimeoutMs ?? 30 * 60 * 1000;
     this.defaultJobTimeoutMs = config?.defaultJobTimeoutMs ?? 30_000;
+    this.serverId = crypto.randomUUID();
+
+    // Reset any jobs left "running" by a previous server instance
+    const resetCount = this.stateStore.resetOrphanedJobs(this.serverId);
+    if (resetCount > 0) {
+      this.stateStore.appendEvent('system', 'orphaned_jobs_reset', {
+        count: resetCount,
+        server_id: this.serverId,
+      });
+    }
   }
 
   dispatchJob(jobId: string): Job {
@@ -49,6 +61,7 @@ export class JobManager {
       lastHeartbeat: now,
       agentName: this.resolveAgentName(job.type),
     });
+    this.stateStore.setJobServerId(jobId, this.serverId);
     this.stateStore.appendEvent(jobId, 'job_started', { type: job.type });
 
     setTimeout(() => {
@@ -104,6 +117,7 @@ export class JobManager {
       startedAt: now,
       lastHeartbeat: now,
     });
+    this.stateStore.setJobServerId(job.id, this.serverId);
     this.stateStore.appendEvent(job.id, 'job_started', { type });
 
     setTimeout(() => {
@@ -343,6 +357,8 @@ export class JobManager {
       return;
     }
 
+    this.stateStore.setJobServerId(jobId, this.serverId);
+
     const heartbeatTimer = setInterval(() => {
       const current = this.stateStore.getJob(jobId);
       if (!current || TERMINAL_STATUSES.has(current.status)) {
@@ -486,11 +502,46 @@ export class JobManager {
 
     const workdir = typeof job.params.workdir === 'string' ? job.params.workdir : this.stateStore.projectPath;
 
+    const configuredTimeout = this.stateStore.getConfig('timeout_minutes');
+    const timeoutMs = configuredTimeout
+      ? Number.parseInt(configuredTimeout, 10) * 60 * 1000
+      : undefined;
+
+    // Playwright eval jobs need access to Playwright MCP tools for exploratory testing
+    const allowedTools = job.type === 'playwright_eval'
+      ? [
+          'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
+          'mcp__playwright__browser_navigate',
+          'mcp__playwright__browser_navigate_back',
+          'mcp__playwright__browser_click',
+          'mcp__playwright__browser_type',
+          'mcp__playwright__browser_fill_form',
+          'mcp__playwright__browser_snapshot',
+          'mcp__playwright__browser_take_screenshot',
+          'mcp__playwright__browser_wait_for',
+          'mcp__playwright__browser_press_key',
+          'mcp__playwright__browser_select_option',
+          'mcp__playwright__browser_hover',
+          'mcp__playwright__browser_drag',
+          'mcp__playwright__browser_resize',
+          'mcp__playwright__browser_tabs',
+          'mcp__playwright__browser_close',
+          'mcp__playwright__browser_console_messages',
+          'mcp__playwright__browser_network_requests',
+          'mcp__playwright__browser_evaluate',
+          'mcp__playwright__browser_run_code',
+          'mcp__playwright__browser_file_upload',
+          'mcp__playwright__browser_handle_dialog',
+        ]
+      : undefined;
+
     return {
       prompt,
       context,
       maxTurns,
       workdir,
+      timeoutMs,
+      allowedTools,
     };
   }
 

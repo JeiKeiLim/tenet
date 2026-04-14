@@ -182,7 +182,8 @@ const run = async (): Promise<void> => {
     .option('--project <path>', 'Project path', '.')
     .option('--agent <name>', 'Set default agent (claude-code, opencode, codex)')
     .option('--max-retries <n>', 'Set max retries per job (default: 3)')
-    .action(async (options: { project: string; agent?: string; maxRetries?: string }) => {
+    .option('--timeout <minutes>', 'Set job timeout in minutes (default: 30)')
+    .action(async (options: { project: string; agent?: string; maxRetries?: string; timeout?: string }) => {
       const projectPath = resolveProjectPath(options.project);
       const tenetRoot = path.join(projectPath, '.tenet');
 
@@ -211,6 +212,17 @@ const run = async (): Promise<void> => {
         console.log(`Max retries set to: ${n}`);
       }
 
+      if (options.timeout) {
+        const t = Number.parseInt(options.timeout, 10);
+        if (!Number.isFinite(t) || t < 1) {
+          console.error('--timeout must be a positive integer (minutes)');
+          process.exit(1);
+        }
+        config.timeout_minutes = t;
+        changed = true;
+        console.log(`Job timeout set to: ${t} minutes`);
+      }
+
       if (changed) {
         writeStateConfig(tenetRoot, config);
         return;
@@ -219,7 +231,8 @@ const run = async (): Promise<void> => {
       console.log('Tenet configuration:');
       console.log(`  default_agent: ${config.default_agent ?? '(not set)'}`);
       console.log(`  max_retries: ${config.max_retries ?? 3} (default: 3)`);
-      console.log('\nTo change: tenet config --agent <name> --max-retries <n>');
+      console.log(`  timeout: ${config.timeout_minutes ?? 30} minutes (default: 30)`);
+      console.log('\nTo change: tenet config --agent <name> --max-retries <n> --timeout <minutes>');
     });
 
   await program.parseAsync(process.argv);

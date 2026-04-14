@@ -542,6 +542,17 @@ Every steer message has a `source` field: `user` or `agent`.
 ### Job-targeted steer
 When a steer message targets specific jobs (via `affected_job_ids`), only those jobs see it in their compiled context. Broadcast messages (empty `affected_job_ids`) are visible to all jobs.
 
+## MCP server recovery
+
+If tenet MCP tools stop responding (connection errors, timeouts, tool not found):
+
+1. **Do NOT bypass the pipeline.** Never implement features directly without `tenet_start_job` / `tenet_complete_job`.
+2. Try restarting the server: run `tenet serve --project .` via Bash, then retry the MCP tool call.
+3. If the server won't start, run `tenet diagnose` (or invoke the `tenet:diagnose` skill) to identify the issue.
+4. If recovery fails after 2 attempts, **halt and report to user** with the error details. Do not silently continue without MCP.
+
+The MCP pipeline is the source of truth for job orchestration. Working outside it creates desync between git state and job state that is difficult to recover from.
+
 ## Safety and resilience gates
 
 Always enforce:

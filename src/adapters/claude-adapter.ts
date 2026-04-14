@@ -9,7 +9,7 @@ type ClaudeJsonOutput = {
   message?: unknown;
 };
 
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
 const DEFAULT_ALLOWED_TOOLS = [
   'Read',
@@ -67,11 +67,12 @@ export class ClaudeAdapter implements AgentAdapter {
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      const effectiveTimeout = invocation.timeoutMs ?? this.timeoutMs;
 
       const timeout = setTimeout(() => {
         timedOut = true;
         child.kill('SIGTERM');
-      }, this.timeoutMs);
+      }, effectiveTimeout);
 
       child.stdout.on('data', (chunk: Buffer | string) => {
         stdout += chunk.toString();
@@ -89,7 +90,7 @@ export class ClaudeAdapter implements AgentAdapter {
           resolve({
             success: false,
             output: stdout,
-            error: `claude invocation timed out after ${this.timeoutMs}ms`,
+            error: `claude invocation timed out after ${effectiveTimeout}ms`,
             durationMs,
           });
           return;

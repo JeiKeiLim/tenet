@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
 export class OpenCodeAdapter implements AgentAdapter {
   public readonly name = 'opencode';
@@ -29,11 +29,12 @@ export class OpenCodeAdapter implements AgentAdapter {
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      const effectiveTimeout = invocation.timeoutMs ?? this.timeoutMs;
 
       const timeout = setTimeout(() => {
         timedOut = true;
         child.kill('SIGTERM');
-      }, this.timeoutMs);
+      }, effectiveTimeout);
 
       child.stdout.on('data', (chunk: Buffer | string) => {
         stdout += chunk.toString();
@@ -51,7 +52,7 @@ export class OpenCodeAdapter implements AgentAdapter {
           resolve({
             success: false,
             output: stdout,
-            error: `opencode invocation timed out after ${this.timeoutMs}ms`,
+            error: `opencode invocation timed out after ${effectiveTimeout}ms`,
             durationMs,
           });
           return;

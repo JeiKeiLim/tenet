@@ -20,6 +20,7 @@ type JobRow = {
   parent_job_id: string | null;
   error: string | null;
   output: string | null;
+  server_id: string | null;
 };
 
 type EventRow = {
@@ -366,7 +367,8 @@ export class StateStore {
         max_retries INTEGER NOT NULL,
         parent_job_id TEXT,
         error TEXT,
-        output TEXT
+        output TEXT,
+        server_id TEXT
       );
 
       CREATE TABLE IF NOT EXISTS events (
@@ -399,6 +401,26 @@ export class StateStore {
       CREATE INDEX IF NOT EXISTS idx_events_id ON events(id);
       CREATE INDEX IF NOT EXISTS idx_steer_status ON steer_messages(status);
     `);
+
+    // Migration: add server_id column if missing (existing databases)
+    const columns = this.db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === 'server_id')) {
+      this.db.exec('ALTER TABLE jobs ADD COLUMN server_id TEXT');
+    }
+  }
+
+  resetOrphanedJobs(currentServerId: string): number {
+    const result = this.db
+      .prepare(
+        `UPDATE jobs SET status = 'pending', started_at = NULL, last_heartbeat = NULL, server_id = NULL
+         WHERE status = 'running' AND (server_id IS NULL OR server_id != @serverId)`,
+      )
+      .run({ serverId: currentServerId });
+    return result.changes;
+  }
+
+  setJobServerId(jobId: string, serverId: string): void {
+    this.db.prepare('UPDATE jobs SET server_id = @serverId WHERE id = @jobId').run({ serverId, jobId });
   }
 
   private toJob(row: JobRow): Job {

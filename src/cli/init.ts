@@ -76,6 +76,7 @@ const ensureFile = (filePath: string, content: string): void => {
 type StateConfig = {
   default_agent?: string;
   max_retries?: number;
+  timeout_minutes?: number;
 };
 
 export const writeStateConfig = (tenetRoot: string, config: StateConfig): void => {
@@ -153,15 +154,19 @@ export const promptAgent = (): Promise<string> => {
 const copySkillFile = (projectPath: string): void => {
   const currentFile = fileURLToPath(import.meta.url);
   const currentDir = path.dirname(currentFile);
-  const sourceSkill = path.resolve(currentDir, '../../skills/tenet/SKILL.md');
-  const targetSkill = path.join(projectPath, '.claude', 'skills', 'tenet', 'SKILL.md');
+  const skillsDir = path.resolve(currentDir, '../../skills/tenet');
+  const targetDir = path.join(projectPath, '.claude', 'skills', 'tenet');
 
-  if (!fs.existsSync(sourceSkill)) {
-    return;
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  // Copy all top-level .md skill files (SKILL.md, DIAGNOSE.md, etc.)
+  if (fs.existsSync(skillsDir)) {
+    for (const file of fs.readdirSync(skillsDir)) {
+      if (file.endsWith('.md')) {
+        fs.copyFileSync(path.join(skillsDir, file), path.join(targetDir, file));
+      }
+    }
   }
-
-  fs.mkdirSync(path.dirname(targetSkill), { recursive: true });
-  fs.copyFileSync(sourceSkill, targetSkill);
 };
 
 const copyPhasesDocs = (projectPath: string): void => {
@@ -260,14 +265,18 @@ function upgradeProject(projectPath: string): void {
 const copyCodexSkill = (projectPath: string): void => {
   const currentFile = fileURLToPath(import.meta.url);
   const currentDir = path.dirname(currentFile);
-  const sourcePhasesDir = path.resolve(currentDir, '../../skills/tenet/phases');
-  const sourceSkill = path.resolve(currentDir, '../../skills/tenet/SKILL.md');
+  const skillsDir = path.resolve(currentDir, '../../skills/tenet');
+  const sourcePhasesDir = path.join(skillsDir, 'phases');
 
-  // Copy SKILL.md to .agents/skills/tenet/
+  // Copy all top-level .md skill files to .agents/skills/tenet/
   const codexSkillDir = path.join(projectPath, '.agents', 'skills', 'tenet');
-  if (fs.existsSync(sourceSkill)) {
+  if (fs.existsSync(skillsDir)) {
     fs.mkdirSync(codexSkillDir, { recursive: true });
-    fs.copyFileSync(sourceSkill, path.join(codexSkillDir, 'SKILL.md'));
+    for (const file of fs.readdirSync(skillsDir)) {
+      if (file.endsWith('.md')) {
+        fs.copyFileSync(path.join(skillsDir, file), path.join(codexSkillDir, file));
+      }
+    }
   }
 
   // Copy phase docs to .agents/skills/tenet/phases/
