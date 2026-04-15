@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
 import { StateStore } from '../../core/state-store.js';
+import { checkForUpdate } from '../../core/update-checker.js';
 import type { HealthReport } from '../../types/index.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
@@ -32,6 +33,16 @@ export const registerTenetHealthCheckTool = (
 
       if (jobManager.getActiveConcurrency() > activeJobs) {
         report.healthy = false;
+      }
+
+      const updateInfo = await checkForUpdate();
+      if (updateInfo?.update_available) {
+        return jsonResult({
+          ...report,
+          update_available: updateInfo.latest,
+          update_command: updateInfo.update_command,
+          current_version: updateInfo.current,
+        });
       }
 
       return jsonResult(report);

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { StateStore } from '../../core/state-store.js';
+import { checkForUpdate } from '../../core/update-checker.js';
 import type { ProjectStatus } from '../../types/index.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
@@ -28,6 +29,16 @@ export const registerTenetGetStatusTool = (registerTool: RegisterTool, stateStor
         elapsed_ms: Date.now() - startedAt,
         last_activity: new Date().toISOString(),
       };
+
+      const updateInfo = await checkForUpdate();
+      if (updateInfo?.update_available) {
+        return jsonResult({
+          ...status,
+          update_available: updateInfo.latest,
+          update_command: updateInfo.update_command,
+          current_version: updateInfo.current,
+        });
+      }
 
       return jsonResult(status);
     },
