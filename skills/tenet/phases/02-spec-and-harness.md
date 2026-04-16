@@ -78,3 +78,30 @@ Verify these before proceeding:
 - [ ] Harness danger zones are populated.
 
 **Do NOT proceed to decomposition until all three files are written and this checklist passes.**
+
+## 6. Implementation Readiness Gate (hard block before decomposition)
+
+After the checklist above passes, run `tenet_validate_readiness(feature="{feature}")`. This is a **hard gate** — decomposition MUST NOT start until it passes.
+
+### What readiness validates
+A fresh agent reads spec + harness (+ scenarios + interview) and scores 8 categories:
+
+1. **Spec sufficiency** — acceptance criteria concrete enough for tests; error/retry policies specified.
+2. **Research & prior art** — library/algorithm choices made and investigated; gotchas noted.
+3. **Interface contracts** — internal API/event/DB shapes pinned; third-party contracts understood.
+4. **External service access** — credentials for services the agent CALLS (LLM keys, payment sandboxes, webhook secrets). NOT for services the feature itself implements.
+5. **Environment & runtime** — app start command, env vars, services, ports, health-check.
+6. **Test data & fixtures** — seed data the agent cannot synthesize (real PDFs, sandbox users).
+7. **Test strategy** — per layer (unit/integration/e2e) declared as live/sandboxed/mocked/skipped with reason; non-UI verification (logs/metrics/DB assertions) for async/background surfaces.
+8. **Dependencies & tooling** — libs/runtimes installable; build/test commands runnable.
+
+### How to resolve a failing readiness check
+For each returned blocker, pick ONE:
+- **Supply the info** — edit spec/harness to add the missing detail, then re-run `tenet_validate_readiness`.
+- **Ask the user** — via `tenet_add_steer` or interactive prompt. Do not guess credentials, callback URLs, or external service contracts.
+- **Explicit mock with reason** — write a "Mocked because…" note into the spec for that layer, then re-run. The validator accepts explicit mocks but flags cases where every test layer is mocked.
+
+### What NOT to do
+- Do NOT create a `.tenet/testing/` directory or separate readiness artifact. Blockers are resolved by editing the existing spec/harness.
+- Do NOT silently continue if readiness fails. `passed: false` is a hard block.
+- Do NOT re-run clarity validation here — clarity is a separate, upstream gate.

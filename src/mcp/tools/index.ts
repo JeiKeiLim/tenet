@@ -18,6 +18,7 @@ import { registerTenetStartEvalTool } from './tenet-start-eval.js';
 import { registerTenetStartJobTool } from './tenet-start-job.js';
 import { registerTenetUpdateKnowledgeTool } from './tenet-update-knowledge.js';
 import { registerTenetValidateClarityTool } from './tenet-validate-clarity.js';
+import { registerTenetValidateReadinessTool } from './tenet-validate-readiness.js';
 import { asToolError } from './utils.js';
 
 export const registerAllTools = (server: McpServer, jobManager: JobManager, stateStore: StateStore): void => {
@@ -55,4 +56,5 @@ export const registerAllTools = (server: McpServer, jobManager: JobManager, stat
   safeRegister(() => registerTenetRegisterJobsTool(registerTool, stateStore));
   safeRegister(() => registerTenetRetryJobTool(registerTool, jobManager));
   safeRegister(() => registerTenetValidateClarityTool(registerTool, jobManager, stateStore));
+  safeRegister(() => registerTenetValidateReadinessTool(registerTool, jobManager, stateStore));
 };

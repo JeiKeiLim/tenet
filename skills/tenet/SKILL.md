@@ -19,6 +19,7 @@ allowed-tools:
   - tenet_cancel_job
   - tenet_start_eval
   - tenet_validate_clarity
+  - tenet_validate_readiness
   - tenet_update_knowledge
   - tenet_add_steer
   - tenet_process_steer
@@ -199,6 +200,16 @@ Do NOT re-validate clarity after the interview — later phases have their own v
 - Update harness at `.tenet/harness/current.md` (NOT `.tenet/harness.md`).
 - Write scenarios to `.tenet/spec/scenarios-{date}-{feature}.md`.
 - Lock harness invariants after agreement.
+
+### E.5) Implementation readiness gate (hard block before decomposition)
+
+- Call `tenet_validate_readiness(feature="{feature}")` after spec + harness are written.
+- Wait for the validation result via `tenet_job_wait` + `tenet_job_result`.
+- If `passed: false`:
+  - For each blocker, pick one: (a) edit the spec/harness to supply the info, (b) ask the user for the missing info via steer or interactive prompt, or (c) explicitly mock with stated reason in the spec.
+  - Re-run `tenet_validate_readiness` until it passes.
+- Do NOT proceed to decomposition while readiness is failing.
+- This gate is distinct from `tenet_validate_clarity` — clarity validated the user requirements; readiness validates the implementation prerequisites (creds, env, contracts, fixtures, test strategy).
 
 ### F) DAG decomposition
 

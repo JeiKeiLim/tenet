@@ -8,15 +8,22 @@ Cross-platform AI agent plugin for 12+ hour autonomous development cycles. It or
 
 ## Build & Development Commands
 
+A `Makefile` wraps the common `pnpm` scripts — prefer it for regular workflows so the pre-publish gate and version bump stay consistent. Run `make help` to list targets.
+
 ```bash
-pnpm run build          # Compile TypeScript → dist/
-pnpm run build:watch    # Watch mode
-pnpm run typecheck      # Type-check without emitting
-pnpm run lint           # ESLint on src/
-pnpm run test           # Run all tests (vitest)
-pnpm run test:watch     # Watch mode
-pnpm run test:coverage  # Coverage report (v8)
+make build        # Compile TypeScript → dist/
+make dev          # Watch mode (build:watch)
+make typecheck    # Type-check without emitting
+make lint         # ESLint on src/
+make test         # Run all tests (vitest)
+make check        # clean + build + typecheck + lint + test (pre-publish gate)
+make link / unlink  # Global pnpm link for local dev
+make bump-patch   # YY.MM.PATCH → YY.MM.PATCH+1
+make bump-month   # Reset to current YY.MM.0
+make release      # bump-patch + check + npm publish
 ```
+
+Direct `pnpm` scripts remain available (`pnpm run build`, `pnpm run test:coverage`, etc.) for cases the Makefile doesn't cover.
 
 Run a single test file:
 ```bash
@@ -77,6 +84,16 @@ Dev-type jobs get a "Deliverable Requirements" preamble prepended to their promp
 ## Versioning
 
 Uses **CalVer** (`YY.MM.PATCH`): e.g., `26.4.0` is the first release in April 2026, `26.4.1` is the second. New month resets patch to 0. This communicates freshness in a fast-moving AI tooling space while staying npm-compatible.
+
+**Release flow (only when the user explicitly requests a new version):**
+
+1. Bump via `make bump-patch` (same month) or `make bump-month` (new month).
+2. Commit the `package.json` change.
+3. Run `make release` (or `make check && npm publish`) to publish to npm.
+4. Tag the commit: `git tag vYY.MM.PATCH && git push origin vYY.MM.PATCH`.
+5. Create the GitHub release with `gh release create vYY.MM.PATCH --generate-notes` (add `--title` / `--notes` when the user provides specifics).
+
+Never tag or create a GitHub release without an explicit user request — version bumps are always user-initiated.
 
 ## Planning Docs
 
