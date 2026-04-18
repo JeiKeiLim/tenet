@@ -105,3 +105,11 @@ For each returned blocker, pick ONE:
 - Do NOT create a `.tenet/testing/` directory or separate readiness artifact. Blockers are resolved by editing the existing spec/harness.
 - Do NOT silently continue if readiness fails. `passed: false` is a hard block.
 - Do NOT re-run clarity validation here — clarity is a separate, upstream gate.
+
+### Also decides: eval execution mode
+In addition to pass/fail, the readiness verdict answers **one more question**: do this feature's tests share mutable state (DB rows, sessions, rate limits, ports, files, Playwright lock dirs)?
+
+- If yes → verdict sets `eval_parallel_safe = false`. Tenet will later serialize the three critics (code → test → playwright) instead of running them in parallel. This prevents false failures from contention on shared state.
+- If no → verdict sets `eval_parallel_safe = true`. Critics run in parallel (today's behavior).
+
+The verdict is persisted to the config table keyed by feature (`eval_parallel_safe:{feature}`) and consumed by `tenet_start_eval` automatically. No extra orchestration step needed. If the verdict is missing (e.g., quick mode skipped readiness), the eval tool defaults to **sequential** as a safe fallback.

@@ -1,4 +1,11 @@
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'blocked';
+export type JobStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked'
+  | 'blocked_remediation_required';
 
 export type JobType = 'dev' | 'eval' | 'critic_eval' | 'playwright_eval' | 'mechanical_eval' | 'integration_test' | 'compile_context' | 'health_check';
 

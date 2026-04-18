@@ -106,6 +106,26 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
       const jobName = typeof job.params.name === 'string' ? job.params.name : 'unnamed';
       const jobPrompt = typeof job.params.prompt === 'string' ? job.params.prompt : '';
       const jobDeps = Array.isArray(job.params.depends_on) ? (job.params.depends_on as string[]).join(', ') : 'none';
+      const reportOnly = job.params.report_only === true;
+
+      const reportOnlyPreamble = reportOnly
+        ? [
+            '',
+            '## Report-Only Scope',
+            '',
+            'You are in REPORT-ONLY mode. You MUST NOT edit project files (other than writing your final report).',
+            '',
+            'If verification reveals a real bug that must be fixed for this report to be trustworthy:',
+            '',
+            `1. Call \`tenet_request_remediation({ job_id: "${job.id}", reason, suggested_fix, target_files })\`.`,
+            '2. Your job will be paused (status: blocked_remediation_required).',
+            '3. A child dev job will fix the issue and pass its own evals.',
+            '4. Your job will auto-resume with fresh context once the fix lands.',
+            '',
+            'Do NOT edit files yourself. Do NOT silently work around the bug. Do NOT abandon the report.',
+            '',
+          ].join('\n')
+        : '';
 
       const compiled = [
         `# Compiled Context`,
@@ -114,7 +134,8 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         `job_name: ${jobName}`,
         ...(feature ? [`feature: ${feature}`] : []),
         `job_dependencies: ${jobDeps}`,
-        '',
+        ...(reportOnly ? ['report_only: true'] : []),
+        reportOnlyPreamble,
         '## Job Assignment',
         jobPrompt,
         '',

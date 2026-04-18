@@ -241,7 +241,29 @@ export class StateStore {
   }
 
   getBlockedJobs(): Job[] {
-    const rows = this.db.prepare("SELECT * FROM jobs WHERE status = 'blocked' ORDER BY created_at ASC").all() as JobRow[];
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM jobs WHERE status IN ('blocked', 'blocked_remediation_required') ORDER BY created_at ASC",
+      )
+      .all() as JobRow[];
+    return rows.map((row) => this.toJob(row));
+  }
+
+  getChildJobs(parentJobId: string): Job[] {
+    const rows = this.db
+      .prepare('SELECT * FROM jobs WHERE parent_job_id = ? ORDER BY created_at ASC')
+      .all(parentJobId) as JobRow[];
+    return rows.map((row) => this.toJob(row));
+  }
+
+  getEvalsForSource(sourceJobId: string): Job[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM jobs
+         WHERE json_extract(params, '$.source_job_id') = ?
+         ORDER BY created_at ASC`,
+      )
+      .all(sourceJobId) as JobRow[];
     return rows.map((row) => this.toJob(row));
   }
 
@@ -323,7 +345,9 @@ export class StateStore {
       running: jobs.filter((j) => j.status === 'running'),
       failed: jobs.filter((j) => j.status === 'failed'),
       pending: jobs.filter((j) => j.status === 'pending'),
-      blocked: jobs.filter((j) => j.status === 'blocked'),
+      blocked: jobs.filter(
+        (j) => j.status === 'blocked' || j.status === 'blocked_remediation_required',
+      ),
     });
   }
 

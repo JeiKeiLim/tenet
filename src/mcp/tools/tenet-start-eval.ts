@@ -53,7 +53,16 @@ const CODE_CRITIC_PREAMBLE = [
   'naming) — the job FAILS. There is no human to catch deferred issues. Fix everything now.',
   'A "pass with minor findings" is a FAIL.',
   '',
-  'End with: {"passed": true/false, "stage": "code_critic", "findings": ["..."]}',
+  '### Finding categories (required)',
+  'Each finding MUST include a "category" so the orchestrator can route follow-up work correctly:',
+  '- "product_bug": implementation does not match spec intent',
+  '- "test_bug": test asserts the wrong thing, would pass when it should fail',
+  '- "harness_bug": build/lint/test infra itself is broken',
+  '- "evidence_mismatch": report claims numbers that fresh commands contradict',
+  '- "contention": failure looks like sibling eval stepping on shared state',
+  '- "scope_conflict": work violates declared job scope (e.g. report-only job edited files)',
+  '',
+  'End with: {"passed": true/false, "stage": "code_critic", "findings": [{"category": "product_bug", "detail": "..."}, ...]}',
   '',
 ].join('\n');
 
@@ -102,7 +111,15 @@ const PLAYWRIGHT_EVAL_PREAMBLE = [
   '### If the application won\'t start',
   'FAIL the eval. The application must start to be tested.',
   '',
-  'End with: {"passed": true/false, "stage": "playwright_eval", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
+  '### Required output fields',
+  'You MUST set layer2_status to one of:',
+  '- "completed" — you exercised the app interactively via Playwright MCP and the findings below reflect that exploration',
+  '- "skipped_no_mcp" — Playwright MCP was not available; only Layer 1 (scripted) results are reported',
+  '- "failed" — Layer 2 was attempted but failed to run (app would not start, MCP tool errors, etc.)',
+  '',
+  'The final status summary will show layer2_status directly — do not treat "passed" as equivalent to "fully verified". If Layer 2 was skipped, that must be visible downstream.',
+  '',
+  'End with: {"passed": true/false, "stage": "playwright_eval", "layer2_status": "completed|skipped_no_mcp|failed", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
   '',
 ].join('\n');
 
@@ -153,9 +170,26 @@ const TEST_CRITIC_PREAMBLE = [
   'If tests are insufficient, list SPECIFIC tests that need to be added or strengthened.',
   'Be STRICT. "Some tests exist" is not sufficient. Tests must actually catch bugs.',
   '',
-  'End with: {"passed": true/false, "stage": "test_critic", "findings": ["..."], "missing_tests": ["..."]}',
+  '### Finding categories (required)',
+  'Each finding MUST include a "category" (same schema as the code critic):',
+  '- "product_bug", "test_bug", "harness_bug", "evidence_mismatch", "contention", "scope_conflict"',
+  '',
+  'End with: {"passed": true/false, "stage": "test_critic", "findings": [{"category": "test_bug", "detail": "..."}, ...], "missing_tests": ["..."]}',
   '',
 ].join('\n');
+
+const resolveEvalParallelSafe = (stateStore: StateStore, feature?: string): boolean => {
+  if (!feature) {
+    // No feature → default to sequential (safe fallback)
+    return false;
+  }
+  const raw = stateStore.getConfig(`eval_parallel_safe:${feature}`);
+  if (raw === 'true') {
+    return true;
+  }
+  // 'false', missing, or any other value → sequential
+  return false;
+};
 
 export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManager: JobManager, stateStore: StateStore): void => {
   registerTool(
@@ -167,45 +201,92 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         '(2) Test critic — reviews whether tests are sufficient to prove features work (spec + tests only), ' +
         '(3) Playwright eval — runs scripted Playwright tests AND exploratory agent-driven testing via Playwright MCP. ' +
         'All three evaluate ONLY against the specific job\'s scope, not the full spec. ' +
+        'Execution mode (parallel vs sequential) is decided by the readiness verdict stored at ' +
+        'eval_parallel_safe:{feature}. When the verdict is missing or false, critics run sequentially ' +
+        'to avoid contention on shared state (DB, sessions, rate limits, ports). ' +
         'Returns all three job IDs. Wait for all three to complete. ALL must pass.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
         output: z.record(z.string(), z.unknown()),
+        feature: z
+          .string()
+          .optional()
+          .describe(
+            'Feature slug used to look up eval_parallel_safe:{feature} in config. If omitted, critics run sequentially (safe fallback).',
+          ),
       }),
     },
-    async ({ job_id, output }) => {
+    async ({ job_id, output, feature }) => {
       const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
       const jobScope = buildJobScopeSection(stateStore, job_id);
 
-      // Code critic: gets job scope + spec + diff, no author reasoning or conversation history
-      const codeCriticJob = jobManager.startJob('critic_eval', {
+      const resolvedFeature = feature ?? (() => {
+        const source = stateStore.getJob(job_id);
+        return source && typeof source.params.feature === 'string' ? source.params.feature : undefined;
+      })();
+
+      const parallelSafe = resolveEvalParallelSafe(stateStore, resolvedFeature);
+
+      const codeCriticParams = {
         source_job_id: job_id,
         eval_stage: 'code_critic',
+        name: `code_critic for ${job_id.slice(0, 8)}`,
         prompt: jobScope + CODE_CRITIC_PREAMBLE + '## Implementation Output\n\n' + outputStr,
         output,
-      });
+        ...(resolvedFeature ? { feature: resolvedFeature } : {}),
+      };
 
-      // Test critic: gets job scope + spec + test files, reviews whether tests are sufficient
-      const testCriticJob = jobManager.startJob('eval', {
+      const testCriticParams = {
         source_job_id: job_id,
         eval_stage: 'test_critic',
+        name: `test_critic for ${job_id.slice(0, 8)}`,
         prompt: jobScope + TEST_CRITIC_PREAMBLE + '## Test Files and Spec\n\n' + outputStr,
         output,
-      });
+        ...(resolvedFeature ? { feature: resolvedFeature } : {}),
+      };
 
-      // Playwright eval: runs scripted tests + exploratory testing via Playwright MCP
-      const playwrightEvalJob = jobManager.startJob('playwright_eval', {
+      const playwrightParams = {
         source_job_id: job_id,
         eval_stage: 'playwright_eval',
+        name: `playwright_eval for ${job_id.slice(0, 8)}`,
         prompt: jobScope + PLAYWRIGHT_EVAL_PREAMBLE,
         output,
-      });
+        ...(resolvedFeature ? { feature: resolvedFeature } : {}),
+      };
+
+      let codeCriticJob;
+      let testCriticJob;
+      let playwrightEvalJob;
+
+      if (parallelSafe) {
+        codeCriticJob = jobManager.startJob('critic_eval', codeCriticParams);
+        testCriticJob = jobManager.startJob('eval', testCriticParams);
+        playwrightEvalJob = jobManager.startJob('playwright_eval', playwrightParams);
+      } else {
+        // Sequential: dispatch code critic; register test critic + playwright as pending
+        // with auto_dispatch_on_parent_complete so job-manager chains them on success.
+        codeCriticJob = jobManager.startJob('critic_eval', codeCriticParams);
+        testCriticJob = jobManager.createPendingJob(
+          'eval',
+          { ...testCriticParams, auto_dispatch_on_parent_complete: true },
+          codeCriticJob.id,
+        );
+        playwrightEvalJob = jobManager.createPendingJob(
+          'playwright_eval',
+          { ...playwrightParams, auto_dispatch_on_parent_complete: true },
+          testCriticJob.id,
+        );
+      }
 
       return jsonResult({
         code_critic_job_id: codeCriticJob.id,
         test_critic_job_id: testCriticJob.id,
         playwright_eval_job_id: playwrightEvalJob.id,
-        message: 'Code critic, test critic, and Playwright eval dispatched. Wait for all three using tenet_job_wait + tenet_job_result. ALL must pass.',
+        eval_parallel_safe: parallelSafe,
+        execution_mode: parallelSafe ? 'parallel' : 'sequential',
+        message: parallelSafe
+          ? 'Code critic, test critic, and Playwright eval dispatched in parallel. Wait for all three using tenet_job_wait + tenet_job_result. ALL must pass.'
+          : 'Critics dispatched sequentially (code → test → playwright) based on readiness verdict. Wait for each via tenet_job_wait + tenet_job_result. ALL must pass.',
       });
     },
   );

@@ -37,9 +37,11 @@ const stringifyOutput = (value: unknown): string => {
 export class ClaudeAdapter implements AgentAdapter {
   public readonly name = 'claude-code';
   private readonly timeoutMs: number;
+  private readonly extraArgs: readonly string[];
 
-  constructor(timeoutMs = DEFAULT_TIMEOUT_MS) {
+  constructor(timeoutMs = DEFAULT_TIMEOUT_MS, extraArgs: string[] = []) {
     this.timeoutMs = timeoutMs;
+    this.extraArgs = extraArgs;
   }
 
   async invoke(invocation: AgentInvocation): Promise<AgentResponse> {
@@ -48,8 +50,9 @@ export class ClaudeAdapter implements AgentAdapter {
 
     return new Promise((resolve) => {
       const tools = invocation.allowedTools ?? DEFAULT_ALLOWED_TOOLS;
-      // Pass prompt via stdin because --allowedTools is variadic and swallows positional args
-      const args = ['--print', '--output-format', 'json', '--allowedTools', ...tools];
+      // Pass prompt via stdin because --allowedTools is variadic and swallows positional args.
+      // Extra args come first so they can influence mode/model before flags that consume tokens.
+      const args = [...this.extraArgs, '--print', '--output-format', 'json', '--allowedTools', ...tools];
 
       const child = spawn(
         'claude',

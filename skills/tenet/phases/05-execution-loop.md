@@ -73,6 +73,74 @@ After every job:
 - Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion.
 - If the job produced reusable technical insight, also write a knowledge entry via `tenet_update_knowledge(type="knowledge")` with appropriate confidence tag.
 
+## Report-Only Jobs (remediation escape hatch)
+
+Some jobs are **report-only** — their deliverable is an assessment or final acceptance report, not code. They must NOT edit project files (other than writing the report itself).
+
+### Marking a job report-only
+
+When registering jobs via `tenet_register_jobs`, include `report_only: true` in the job's params:
+
+```json
+{ "id": "e2e-final", "name": "Final acceptance sweep", "report_only": true, "prompt": "..." }
+```
+
+Typical cases: final acceptance sweeps, architectural reviews, test-flakiness audits, post-integration drift checks.
+
+### What happens automatically
+
+When a report-only job's context is compiled, `tenet_compile_context` prepends a **Report-Only Scope** preamble telling the worker:
+
+- You MUST NOT edit project files.
+- If you find a real bug that must be fixed for the report to be trustworthy, call `tenet_request_remediation({ job_id, reason, suggested_fix, target_files })` instead of editing.
+
+### Remediation flow
+
+1. Report-only agent discovers a real bug during verification.
+2. Agent calls `tenet_request_remediation(job_id=<self>, reason=..., suggested_fix=..., target_files=[...])`.
+3. Tenet marks the agent's job as `blocked_remediation_required` and spawns a child `dev` job with the requested fix.
+4. Agent ends its turn.
+5. Orchestrator processes the child like any other dev job: dispatch → eval via `tenet_start_eval` → if all three critics pass, Tenet **auto-resumes** the report-only parent (flips it from `blocked_remediation_required` → `pending`).
+6. Orchestrator picks up the parent via `tenet_continue()` and redispatches it with fresh context (it now sees the post-fix state).
+
+### Why this shape
+
+- Report-only scope remains inviolate (code critic would otherwise fail the job for editing files out of scope).
+- Real bugs still get fixed (not silently worked around or left in the report).
+- The orchestrator doesn't need to second-guess scope — the escape hatch is structured.
+
+## Finding-category dispatch
+
+When `tenet_start_eval` returns failing critics, read each finding's `category` and dispatch the correct follow-up:
+
+```
+for finding in code_output.findings + test_output.findings:
+    if finding.category == "product_bug":
+        tenet_retry_job(job_id=source_job.id)    # fix the source job
+    elif finding.category == "test_bug":
+        create_test_fix_job(source_job, finding.detail)
+    elif finding.category == "harness_bug":
+        create_harness_fix_job(finding.detail)   # dev job scoped to build/CI/scripts
+    elif finding.category == "evidence_mismatch":
+        create_evidence_refresh_job(source_job)  # re-run verification, update report
+    elif finding.category == "contention":
+        # If we're in parallel mode for this feature, switch to sequential:
+        tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="directive")
+        tenet_retry_job(job_id=source_job.id)
+    elif finding.category == "scope_conflict":
+        # Likely a report-only job edited files. The remediation escape hatch
+        # handles this — see the report-only section above. If the source wasn't
+        # marked report_only, the finding is accurate: mark it report_only going forward
+        # and retry with the preamble.
+        ...
+```
+
+Plain "just retry" wastes cycles on test/harness/evidence bugs — route by category.
+
+## Eval-mode decision (reminder)
+
+The three critics dispatched by `tenet_start_eval` run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step — just call `tenet_start_eval` and wait for all three job IDs it returns.
+
 ## Git-Aware Pipeline
 
 When the project is a git repository (`.git/` exists), the orchestrator should integrate git operations into the workflow. This is optional — if no git directory exists, skip all git steps.

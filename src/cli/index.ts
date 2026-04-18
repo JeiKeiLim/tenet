@@ -11,6 +11,9 @@ import {
   initProject,
   installPlaywrightMcp,
   isPlaywrightMcpInstalled,
+  mergeClaudeLocalSettings,
+  mergeCodexProjectTrust,
+  mergeOpenCodePermission,
   promptAgent,
   promptYesNo,
   readStateConfig,
@@ -24,6 +27,87 @@ const ensureStateDir = (projectPath: string): string => {
   const stateDir = path.join(projectPath, '.tenet', '.state');
   fs.mkdirSync(stateDir, { recursive: true });
   return stateDir;
+};
+
+const runMcpPreApprovalFlow = async (
+  projectPath: string,
+  options: { assumeYes?: boolean },
+): Promise<void> => {
+  const ask = async (question: string): Promise<boolean> => {
+    if (options.assumeYes) return true;
+    return promptYesNo(question);
+  };
+
+  console.log('\nPre-approve Tenet MCP tools?');
+  console.log('Each Tenet MCP tool normally triggers an approval prompt on first use (17 tools × agents).');
+
+  const doClaude = await ask(
+    '\nClaude Code: add Tenet tool allowlist to .claude/settings.local.json (gitignored)?',
+  );
+  if (doClaude) {
+    const status = mergeClaudeLocalSettings(projectPath);
+    switch (status) {
+      case 'created':
+        console.log('  ✓ .claude/settings.local.json created with Tenet tool allowlist.');
+        break;
+      case 'merged':
+        console.log('  ✓ Merged Tenet tool entries into existing .claude/settings.local.json.');
+        break;
+      case 'unchanged':
+        console.log('  ✓ Tenet tools already allowed in .claude/settings.local.json.');
+        break;
+      case 'skipped_invalid_json':
+        console.log('  ⚠ .claude/settings.local.json has invalid JSON — skipped. Fix and re-run `tenet init --upgrade`.');
+        break;
+      default:
+        break;
+    }
+  }
+
+  const doOpenCode = await ask(
+    'OpenCode: add permission.mcp.tenet="allow" to opencode.json?',
+  );
+  if (doOpenCode) {
+    const status = mergeOpenCodePermission(projectPath);
+    switch (status) {
+      case 'created':
+      case 'merged':
+        console.log('  ✓ opencode.json: permission.mcp.tenet set to "allow".');
+        break;
+      case 'unchanged':
+        console.log('  ✓ opencode.json already grants "allow" to Tenet MCP.');
+        break;
+      case 'skipped_invalid_json':
+        console.log('  ⚠ opencode.json has invalid JSON — skipped.');
+        break;
+      default:
+        break;
+    }
+  }
+
+  const doCodex = await ask(
+    'Codex: mark this project as trusted in .codex/config.toml (project-scoped, not global)?',
+  );
+  if (doCodex) {
+    const status = mergeCodexProjectTrust(projectPath);
+    switch (status) {
+      case 'created':
+      case 'merged':
+        console.log('  ✓ .codex/config.toml: project trust_level set to "trusted".');
+        break;
+      case 'unchanged':
+        console.log('  ✓ Project already trusted in .codex/config.toml.');
+        break;
+      case 'skipped_user_untrusted':
+        console.log('  ⚠ .codex/config.toml has this project marked "untrusted" — respecting your choice. Edit manually if you want to change it.');
+        break;
+      case 'skipped_invalid_json':
+        console.log('  ⚠ .codex/config.toml unreadable — skipped.');
+        break;
+      default:
+        break;
+    }
+  }
 };
 
 const runPlaywrightCheckFlow = async (projectPath: string): Promise<void> => {
@@ -98,8 +182,16 @@ const run = async (): Promise<void> => {
     .option('--agent <name>', 'Default agent adapter (claude-code, opencode, codex)')
     .option('--upgrade', 'Upgrade existing project: overwrite skills and MCP configs, preserve user docs')
     .option('--skip-playwright-check', 'Skip the Playwright MCP availability check (useful for one-line installs)')
+    .option('--skip-pre-approval', 'Skip the MCP tool pre-approval flow (do not touch .claude/settings.local.json, opencode.json permissions, .codex/config.toml trust)')
+    .option('-y, --yes', 'Assume yes for all interactive prompts (non-interactive init, useful for CI)')
     .description('Initialize Tenet project scaffold')
-    .action(async (targetPath: string, options: { agent?: string; upgrade?: boolean; skipPlaywrightCheck?: boolean }) => {
+    .action(async (targetPath: string, options: {
+      agent?: string;
+      upgrade?: boolean;
+      skipPlaywrightCheck?: boolean;
+      skipPreApproval?: boolean;
+      yes?: boolean;
+    }) => {
       const projectPath = path.resolve(targetPath);
 
       if (options.upgrade) {
@@ -118,11 +210,15 @@ const run = async (): Promise<void> => {
         if (!options.skipPlaywrightCheck) {
           await runPlaywrightCheckFlow(projectPath);
         }
+
+        if (!options.skipPreApproval) {
+          await runMcpPreApprovalFlow(projectPath, { assumeYes: options.yes });
+        }
         return;
       }
 
       let agent = options.agent;
-      if (!agent) {
+      if (!agent && !options.yes) {
         agent = await promptAgent();
       }
 
@@ -137,15 +233,19 @@ const run = async (): Promise<void> => {
       }
 
       // Playwright MCP setup flow
-      if (!options.skipPlaywrightCheck) {
+      if (!options.skipPlaywrightCheck && !options.yes) {
         await runPlaywrightCheckFlow(projectPath);
       }
 
+      if (!options.skipPreApproval) {
+        await runMcpPreApprovalFlow(projectPath, { assumeYes: options.yes });
+      }
+
       console.log(`\nInitialized Tenet scaffold at ${path.join(projectPath, '.tenet')}`);
-      console.log(`Default agent: ${agent}`);
+      console.log(`Default agent: ${agent ?? '(unset — run `tenet config --agent <name>`)'}`);
       console.log('\nNext steps:');
       console.log('- Review .tenet/harness/current.md and set project-specific constraints');
-      console.log(`- Start ${agent} in this directory`);
+      console.log(`- Start ${agent ?? 'your agent'} in this directory`);
       console.log('- To change agent later: tenet config --agent <name>');
     });
 
@@ -184,7 +284,27 @@ const run = async (): Promise<void> => {
     .option('--agent <name>', 'Set default agent (claude-code, opencode, codex)')
     .option('--max-retries <n>', 'Set max retries per job (default: 3)')
     .option('--timeout <minutes>', 'Set job timeout in minutes (default: 30)')
-    .action(async (options: { project: string; agent?: string; maxRetries?: string; timeout?: string }) => {
+    .option(
+      '--claude-args <args>',
+      'Extra CLI args to pass to every claude-code subprocess (e.g. "--allowedTools Bash,Read,Write"). Use "" to clear.',
+    )
+    .option(
+      '--opencode-args <args>',
+      'Extra CLI args to pass to every opencode subprocess (e.g. "--model github-copilot/claude-opus-4-5"). Use "" to clear.',
+    )
+    .option(
+      '--codex-args <args>',
+      'Extra CLI args to pass to every codex subprocess (e.g. "--approval-mode never"). Use "" to clear.',
+    )
+    .action(async (options: {
+      project: string;
+      agent?: string;
+      maxRetries?: string;
+      timeout?: string;
+      claudeArgs?: string;
+      opencodeArgs?: string;
+      codexArgs?: string;
+    }) => {
       const projectPath = resolveProjectPath(options.project);
       const tenetRoot = path.join(projectPath, '.tenet');
 
@@ -224,8 +344,47 @@ const run = async (): Promise<void> => {
         console.log(`Job timeout set to: ${t} minutes`);
       }
 
+      if (options.claudeArgs !== undefined) {
+        const trimmed = options.claudeArgs.trim();
+        if (trimmed.length === 0) {
+          delete config.claude_args;
+          console.log('Cleared claude_args.');
+        } else {
+          config.claude_args = trimmed;
+          console.log(`claude_args set to: ${trimmed}`);
+        }
+        changed = true;
+      }
+
+      if (options.opencodeArgs !== undefined) {
+        const trimmed = options.opencodeArgs.trim();
+        if (trimmed.length === 0) {
+          delete config.opencode_args;
+          console.log('Cleared opencode_args.');
+        } else {
+          config.opencode_args = trimmed;
+          console.log(`opencode_args set to: ${trimmed}`);
+        }
+        changed = true;
+      }
+
+      if (options.codexArgs !== undefined) {
+        const trimmed = options.codexArgs.trim();
+        if (trimmed.length === 0) {
+          delete config.codex_args;
+          console.log('Cleared codex_args.');
+        } else {
+          config.codex_args = trimmed;
+          console.log(`codex_args set to: ${trimmed}`);
+        }
+        changed = true;
+      }
+
       if (changed) {
         writeStateConfig(tenetRoot, config);
+        if (options.claudeArgs !== undefined || options.opencodeArgs !== undefined || options.codexArgs !== undefined) {
+          console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
+        }
         return;
       }
 
@@ -233,7 +392,15 @@ const run = async (): Promise<void> => {
       console.log(`  default_agent: ${config.default_agent ?? '(not set)'}`);
       console.log(`  max_retries: ${config.max_retries ?? 3} (default: 3)`);
       console.log(`  timeout: ${config.timeout_minutes ?? 30} minutes (default: 30)`);
-      console.log('\nTo change: tenet config --agent <name> --max-retries <n> --timeout <minutes>');
+      console.log(`  claude_args: ${config.claude_args ?? '(none)'}`);
+      console.log(`  opencode_args: ${config.opencode_args ?? '(none)'}`);
+      console.log(`  codex_args: ${config.codex_args ?? '(none)'}`);
+      console.log(
+        '\nTo change: tenet config --agent <name> --max-retries <n> --timeout <minutes> \\',
+      );
+      console.log(
+        '                         --claude-args "..." --opencode-args "..." --codex-args "..."',
+      );
     });
 
   await program.parseAsync(process.argv);

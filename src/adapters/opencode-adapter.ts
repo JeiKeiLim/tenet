@@ -6,16 +6,19 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 export class OpenCodeAdapter implements AgentAdapter {
   public readonly name = 'opencode';
   private readonly timeoutMs: number;
+  private readonly extraArgs: readonly string[];
 
-  constructor(timeoutMs = DEFAULT_TIMEOUT_MS) {
+  constructor(timeoutMs = DEFAULT_TIMEOUT_MS, extraArgs: string[] = []) {
     this.timeoutMs = timeoutMs;
+    this.extraArgs = extraArgs;
   }
 
   async invoke(invocation: AgentInvocation): Promise<AgentResponse> {
     const startedAt = Date.now();
     const prompt = invocation.context ? `${invocation.context}\n\n${invocation.prompt}` : invocation.prompt;
 
-    const args = ['run', prompt, '--format', 'json'];
+    // Opencode's global flags (e.g. --model) must come BEFORE the `run` subcommand.
+    const args = [...this.extraArgs, 'run', prompt, '--format', 'json'];
     if (invocation.workdir) {
       args.push('--dir', invocation.workdir);
     }

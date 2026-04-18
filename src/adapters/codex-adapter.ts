@@ -6,9 +6,11 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 export class CodexAdapter implements AgentAdapter {
   public readonly name = 'codex';
   private readonly timeoutMs: number;
+  private readonly extraArgs: readonly string[];
 
-  constructor(timeoutMs = DEFAULT_TIMEOUT_MS) {
+  constructor(timeoutMs = DEFAULT_TIMEOUT_MS, extraArgs: string[] = []) {
     this.timeoutMs = timeoutMs;
+    this.extraArgs = extraArgs;
   }
 
   async invoke(invocation: AgentInvocation): Promise<AgentResponse> {
@@ -16,8 +18,9 @@ export class CodexAdapter implements AgentAdapter {
     const prompt = invocation.context ? `${invocation.context}\n\n${invocation.prompt}` : invocation.prompt;
 
     return new Promise((resolve) => {
-      // --full-auto disables sandbox mode that Codex enables by default in non-TTY (subprocess) mode
-      const child = spawn('codex', ['exec', '--full-auto', prompt], {
+      // --full-auto disables sandbox mode that Codex enables by default in non-TTY (subprocess) mode.
+      // User-supplied extra args come AFTER exec subcommand and the safety flag, but BEFORE the prompt.
+      const child = spawn('codex', ['exec', '--full-auto', ...this.extraArgs, prompt], {
         cwd: invocation.workdir,
         stdio: ['ignore', 'pipe', 'pipe'],
       });

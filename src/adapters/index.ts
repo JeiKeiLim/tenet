@@ -3,14 +3,37 @@ import { CodexAdapter } from './codex-adapter.js';
 import { OpenCodeAdapter } from './opencode-adapter.js';
 import type { AgentAdapter } from './base.js';
 
+export type AdapterExtraArgs = {
+  claude?: string[];
+  opencode?: string[];
+  codex?: string[];
+};
+
+const splitArgs = (raw: string | undefined): string[] => {
+  if (!raw) return [];
+  // Whitespace split is intentionally naive — see planning doc §4.
+  // If users need values with embedded spaces, switch storage to a JSON array.
+  return raw.trim().split(/\s+/).filter((t) => t.length > 0);
+};
+
+export const parseAdapterExtraArgs = (config: {
+  claude_args?: string;
+  opencode_args?: string;
+  codex_args?: string;
+}): AdapterExtraArgs => ({
+  claude: splitArgs(config.claude_args),
+  opencode: splitArgs(config.opencode_args),
+  codex: splitArgs(config.codex_args),
+});
+
 export class AdapterRegistry {
   private readonly adapters: Map<string, AgentAdapter>;
 
-  constructor() {
+  constructor(extraArgs: AdapterExtraArgs = {}) {
     this.adapters = new Map<string, AgentAdapter>();
-    this.register(new ClaudeAdapter());
-    this.register(new OpenCodeAdapter());
-    this.register(new CodexAdapter());
+    this.register(new ClaudeAdapter(undefined, extraArgs.claude));
+    this.register(new OpenCodeAdapter(undefined, extraArgs.opencode));
+    this.register(new CodexAdapter(undefined, extraArgs.codex));
   }
 
   register(adapter: AgentAdapter): void {

@@ -55,6 +55,18 @@ For each category, assign one of: "ready", "partial", "blocked".
 - Build/test commands runnable.
 - Version pins where needed.
 
+## Eval Execution Mode (separate judgment, not a scored category)
+
+Answer this independent question about the feature's test surface:
+
+> Do this feature's tests share mutable state (DB rows, sessions, rate limits, ports, files, long-lived processes, Playwright lock dirs)?
+
+If YES — parallel critics will collide on that state and produce false failures that look like product bugs. Mark "eval_parallel_safe" as false and explain in "eval_parallel_rationale" which specific resource(s) are shared.
+
+If NO — the feature is a pure library, CLI, data transformation, or otherwise stateless between runs. Mark "eval_parallel_safe" as true.
+
+When in doubt, prefer false — the cost of sequential is a few extra minutes; the cost of parallel collision is a full cycle of false failures.
+
 ## Rules
 
 - Be specific. Do not invent requirements the spec does not imply. If the spec says "no external calls," do not demand an LLM key.
@@ -84,6 +96,8 @@ Respond with ONLY this JSON (no markdown, no explanation):
     "integration": "ready|ready_with_mocks|blocked|not_applicable",
     "e2e": "ready|ready_with_mocks|blocked|not_applicable"
   },
+  "eval_parallel_safe": <boolean>,
+  "eval_parallel_rationale": "<1-2 sentence explanation of why parallel critics are or are not safe for this feature>",
   "rationale": "<1-3 sentence summary of why the gate passed or failed and what the agent must do next>"
 }
 

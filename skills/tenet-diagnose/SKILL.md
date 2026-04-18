@@ -176,6 +176,39 @@ cat .mcp.json | grep -A3 playwright
 npx playwright install --dry-run
 ```
 
+### Adapter picking the wrong model / wrong behavior
+
+If an agent CLI works interactively but fails when invoked by Tenet as a subprocess, it's almost always because the subprocess sees a different default (model, auth profile, sandbox mode) than your interactive session.
+
+Common symptom: `opencode` works for you manually, but Tenet-spawned opencode jobs fail with "model not available" or similar auth errors — because `opencode run` picked a built-in default model, not the one in your config.
+
+**Diagnose:**
+```bash
+# See what adapter args Tenet is passing
+cat .tenet/.state/config.json | grep -E "opencode_args|codex_args|claude_args"
+
+# See what the CLI thinks its default is
+opencode --help | head -30
+codex --help | head -30
+claude --help | head -30
+```
+
+**Fix** by pinning the flag Tenet should inject on every subprocess call:
+```bash
+tenet config --opencode-args "--model github-copilot/claude-opus-4-5"
+tenet config --codex-args "--approval-mode never"
+tenet config --claude-args "--allowedTools Bash,Read,Write,Edit"
+```
+
+Pass an empty string to clear a setting: `tenet config --opencode-args ""`.
+
+**Restart the Tenet MCP server after changing adapter args** — they're read at server startup.
+
+Notes on the mechanism:
+- Extra args are stored in `.tenet/.state/config.json` under `claude_args` / `opencode_args` / `codex_args`.
+- They're injected per-CLI at the known-safe position (before `run`/`exec`, after `--full-auto` for Codex).
+- Argument splitting is whitespace-based — values cannot contain embedded spaces in v1. If you need quoted values, file an issue.
+
 ## Reporting
 
 After running diagnostics, summarize:

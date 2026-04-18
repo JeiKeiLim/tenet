@@ -9,10 +9,12 @@ import { StateStore } from './state-store.js';
 class MockAdapter implements AgentAdapter {
   public readonly name: string;
   private readonly delayMs: number;
+  private readonly outputOverride?: string;
 
-  constructor(name: string, delayMs = 0) {
+  constructor(name: string, delayMs = 0, outputOverride?: string) {
     this.name = name;
     this.delayMs = delayMs;
+    this.outputOverride = outputOverride;
   }
 
   async invoke(invocation: AgentInvocation): Promise<AgentResponse> {
@@ -24,7 +26,7 @@ class MockAdapter implements AgentAdapter {
 
     return {
       success: true,
-      output: `ok:${invocation.prompt}`,
+      output: this.outputOverride ?? `ok:${invocation.prompt}`,
       durationMs: this.delayMs,
     };
   }
@@ -37,16 +39,20 @@ class MockAdapter implements AgentAdapter {
 const tempDirs: string[] = [];
 const stores: StateStore[] = [];
 
-const createHarness = (adapterDelayMs = 0): { store: StateStore; manager: JobManager } => {
+const createHarness = (
+  adapterDelayMs = 0,
+  outputOverride?: string,
+): { store: StateStore; manager: JobManager } => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
   const store = new StateStore(tempDir);
   tempDirs.push(tempDir);
   stores.push(store);
 
   store.setConfig('agent_override_dev', 'mock-adapter');
+  store.setConfig('agent_override_eval', 'mock-adapter');
 
   const registry = new AdapterRegistry();
-  registry.register(new MockAdapter('mock-adapter', adapterDelayMs));
+  registry.register(new MockAdapter('mock-adapter', adapterDelayMs, outputOverride));
 
   const manager = new JobManager(store, registry, {
     heartbeatTimeoutMs: 100,
@@ -170,6 +176,78 @@ describe('JobManager', () => {
     const updated = store.getJob(stale.id);
     expect(updated?.status).toBe('failed');
     expect(updated?.error).toBe('stall detected');
+  });
+
+  it('persists eval_parallel_safe verdict to config when readiness eval completes', async () => {
+    const rubricJson = JSON.stringify({
+      passed: true,
+      eval_parallel_safe: false,
+      eval_parallel_rationale: 'shared DB',
+    });
+    const { store, manager } = createHarness(0, rubricJson);
+
+    const job = manager.startJob('eval', {
+      prompt: 'readiness',
+      eval_type: 'readiness_validation',
+      feature: 'oauth',
+    });
+    await manager.waitForJob(job.id, null, 5_000);
+
+    expect(store.getConfig('eval_parallel_safe:oauth')).toBe('false');
+  });
+
+  it('handles rubric JSON wrapped in code fences', async () => {
+    const rubricJson =
+      '```json\n' + JSON.stringify({ passed: true, eval_parallel_safe: true }) + '\n```';
+    const { store, manager } = createHarness(0, rubricJson);
+
+    const job = manager.startJob('eval', {
+      prompt: 'readiness',
+      eval_type: 'readiness_validation',
+      feature: 'payments',
+    });
+    await manager.waitForJob(job.id, null, 5_000);
+
+    expect(store.getConfig('eval_parallel_safe:payments')).toBe('true');
+  });
+
+  it('auto-dispatches pending children marked with auto_dispatch_on_parent_complete', async () => {
+    const { store, manager } = createHarness();
+
+    const parent = manager.startJob('eval', { prompt: 'parent' });
+    const child = manager.createPendingJob(
+      'eval',
+      {
+        prompt: 'child',
+        auto_dispatch_on_parent_complete: true,
+      },
+      parent.id,
+    );
+
+    await manager.waitForJob(parent.id, null, 5_000);
+    // Child should have been auto-dispatched
+    await manager.waitForJob(child.id, null, 5_000);
+
+    expect(store.getJob(parent.id)?.status).toBe('completed');
+    expect(store.getJob(child.id)?.status).toBe('completed');
+  });
+
+  it('does not auto-dispatch pending children without the flag', async () => {
+    const { store, manager } = createHarness();
+
+    const parent = manager.startJob('eval', { prompt: 'parent' });
+    const child = manager.createPendingJob(
+      'eval',
+      { prompt: 'child' }, // no auto_dispatch flag
+      parent.id,
+    );
+
+    await manager.waitForJob(parent.id, null, 5_000);
+    // Give any auto-dispatch a tick to run if it were going to
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+    expect(store.getJob(parent.id)?.status).toBe('completed');
+    expect(store.getJob(child.id)?.status).toBe('pending');
   });
 
   it('tracks active concurrency with configured max cap', () => {

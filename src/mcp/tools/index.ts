@@ -12,6 +12,7 @@ import { registerTenetJobWaitTool } from './tenet-job-wait.js';
 import { registerTenetAddSteerTool } from './tenet-add-steer.js';
 import { registerTenetProcessSteerTool } from './tenet-process-steer.js';
 import { registerTenetRegisterJobsTool } from './tenet-register-jobs.js';
+import { registerTenetRequestRemediationTool } from './tenet-request-remediation.js';
 import { registerTenetRetryJobTool } from './tenet-retry-job.js';
 // set_agent is CLI-only — not exposed via MCP to prevent agents from switching their own runtime
 import { registerTenetStartEvalTool } from './tenet-start-eval.js';
@@ -54,6 +55,7 @@ export const registerAllTools = (server: McpServer, jobManager: JobManager, stat
   safeRegister(() => registerTenetGetStatusTool(registerTool, stateStore));
   // tenet_set_agent removed from MCP — available via CLI only
   safeRegister(() => registerTenetRegisterJobsTool(registerTool, stateStore));
+  safeRegister(() => registerTenetRequestRemediationTool(registerTool, jobManager, stateStore));
   safeRegister(() => registerTenetRetryJobTool(registerTool, jobManager));
   safeRegister(() => registerTenetValidateClarityTool(registerTool, jobManager, stateStore));
   safeRegister(() => registerTenetValidateReadinessTool(registerTool, jobManager, stateStore));

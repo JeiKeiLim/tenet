@@ -151,6 +151,24 @@ describe('tenet_validate_readiness', () => {
     await manager.waitForJob(parsed.job_id as string, null, 5_000);
   });
 
+  it('rubric prompt includes the eval parallel safety question and output fields', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Spec');
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const prompt = job?.params.prompt as string;
+
+    expect(prompt).toContain('Eval Execution Mode');
+    expect(prompt).toContain('eval_parallel_safe');
+    expect(prompt).toContain('eval_parallel_rationale');
+    expect(prompt).toContain('share mutable state');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
   it('includes optional scenarios and interview when present', async () => {
     const { handler, projectPath, store, manager } = createHarness();
     writeFile(projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Spec');

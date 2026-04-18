@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 
 const REQUIRED_DIRS = [
   'interview',
@@ -77,6 +78,9 @@ type StateConfig = {
   default_agent?: string;
   max_retries?: number;
   timeout_minutes?: number;
+  opencode_args?: string;
+  codex_args?: string;
+  claude_args?: string;
 };
 
 export const writeStateConfig = (tenetRoot: string, config: StateConfig): void => {
@@ -448,4 +452,171 @@ const mergeOpenCodeConfig = (projectPath: string): void => {
   }
   const config = { mcp: { tenet: OPENCODE_MCP_ENTRY } };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+};
+
+// --- MCP tool pre-approval helpers (Part 5) -----------------------------
+
+export type PreApprovalStatus =
+  | 'created'
+  | 'merged'
+  | 'unchanged'
+  | 'skipped_invalid_json'
+  | 'skipped_user_untrusted';
+
+/**
+ * Merge Tenet MCP tool names into .claude/settings.local.json (gitignored, user-local).
+ * Never touches settings.json (which may be checked into team repos).
+ *
+ * Behavior:
+ * - File missing → create with Tenet tool names allowed and "tenet" in enabledMcpjsonServers.
+ * - File present → additively merge. Never remove existing entries.
+ * - Invalid JSON → skip, return 'skipped_invalid_json'.
+ */
+export const mergeClaudeLocalSettings = (projectPath: string): PreApprovalStatus => {
+  const claudeDir = path.join(projectPath, '.claude');
+  const settingsPath = path.join(claudeDir, 'settings.local.json');
+
+  const allowList = TENET_MCP_TOOL_NAMES.map((name) => `mcp__tenet__${name}`);
+  const enabledServer = 'tenet';
+
+  if (!fs.existsSync(settingsPath)) {
+    fs.mkdirSync(claudeDir, { recursive: true });
+    const content = {
+      permissions: { allow: allowList },
+      enabledMcpjsonServers: [enabledServer],
+    };
+    fs.writeFileSync(settingsPath, JSON.stringify(content, null, 2) + '\n', 'utf8');
+    return 'created';
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return 'skipped_invalid_json';
+  }
+
+  let changed = false;
+
+  const permissions = (parsed.permissions ?? {}) as Record<string, unknown>;
+  const existingAllow = Array.isArray(permissions.allow) ? (permissions.allow as string[]) : [];
+  const allowSet = new Set(existingAllow);
+  for (const entry of allowList) {
+    if (!allowSet.has(entry)) {
+      allowSet.add(entry);
+      changed = true;
+    }
+  }
+  permissions.allow = Array.from(allowSet);
+  parsed.permissions = permissions;
+
+  const existingServers = Array.isArray(parsed.enabledMcpjsonServers)
+    ? (parsed.enabledMcpjsonServers as string[])
+    : [];
+  if (!existingServers.includes(enabledServer)) {
+    existingServers.push(enabledServer);
+    parsed.enabledMcpjsonServers = existingServers;
+    changed = true;
+  } else {
+    parsed.enabledMcpjsonServers = existingServers;
+  }
+
+  if (!changed) {
+    return 'unchanged';
+  }
+
+  fs.writeFileSync(settingsPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+  return 'merged';
+};
+
+/**
+ * Add `permission.mcp.tenet: "allow"` to opencode.json so OpenCode auto-approves
+ * all tools from the Tenet MCP server. Merge is additive — never overwrites
+ * existing permission keys.
+ */
+export const mergeOpenCodePermission = (projectPath: string): PreApprovalStatus => {
+  const configPath = path.join(projectPath, 'opencode.json');
+  if (!fs.existsSync(configPath)) {
+    // opencode.json should have been created by initProject's MCP discovery step.
+    // Create a minimal one with just the permission block if it's missing.
+    const content = { permission: { mcp: { tenet: 'allow' } } };
+    fs.writeFileSync(configPath, JSON.stringify(content, null, 2) + '\n', 'utf8');
+    return 'created';
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return 'skipped_invalid_json';
+  }
+
+  const permission = (parsed.permission ?? {}) as Record<string, unknown>;
+  const mcp = (permission.mcp ?? {}) as Record<string, unknown>;
+  if (mcp.tenet === 'allow') {
+    return 'unchanged';
+  }
+
+  mcp.tenet = 'allow';
+  permission.mcp = mcp;
+  parsed.permission = permission;
+  fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+  return 'merged';
+};
+
+/**
+ * Add project-scoped trust to .codex/config.toml so Codex auto-approves this
+ * project (and only this project — global approval_policy is untouched).
+ *
+ * - Missing block → append `[projects."<abs>"] trust_level = "trusted"`.
+ * - Present with trust_level="trusted" → skip (unchanged).
+ * - Present with trust_level="untrusted" → respect user choice, return
+ *   'skipped_user_untrusted' so the caller can warn.
+ */
+export const mergeCodexProjectTrust = (projectPath: string): PreApprovalStatus => {
+  const absPath = fs.realpathSync(path.resolve(projectPath));
+  const codexDir = path.join(projectPath, '.codex');
+  const configPath = path.join(codexDir, 'config.toml');
+
+  const blockHeader = `[projects."${absPath}"]`;
+  const newBlock = `${blockHeader}\ntrust_level = "trusted"\n`;
+
+  if (!fs.existsSync(configPath)) {
+    fs.mkdirSync(codexDir, { recursive: true });
+    fs.writeFileSync(configPath, newBlock, 'utf8');
+    return 'created';
+  }
+
+  const existing = fs.readFileSync(configPath, 'utf8');
+
+  // Look for an existing [projects."<abs>"] block and check its trust_level.
+  // Naive scan — sufficient because TOML headers are line-anchored and exact-match.
+  const headerIndex = existing.indexOf(blockHeader);
+  if (headerIndex === -1) {
+    const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+    fs.appendFileSync(configPath, `${separator}${newBlock}`, 'utf8');
+    return 'merged';
+  }
+
+  // Extract the rest of the block up to the next [section] header or EOF.
+  const afterHeader = existing.slice(headerIndex + blockHeader.length);
+  const nextHeaderMatch = afterHeader.match(/\n\[/);
+  const blockBody = nextHeaderMatch
+    ? afterHeader.slice(0, nextHeaderMatch.index)
+    : afterHeader;
+
+  if (/trust_level\s*=\s*"trusted"/.test(blockBody)) {
+    return 'unchanged';
+  }
+  if (/trust_level\s*=\s*"untrusted"/.test(blockBody)) {
+    return 'skipped_user_untrusted';
+  }
+
+  // Block exists but lacks trust_level — append the field to the block.
+  // Safe strategy: insert the field right after the header line.
+  const insertAt = headerIndex + blockHeader.length;
+  const updated =
+    existing.slice(0, insertAt) + '\ntrust_level = "trusted"' + existing.slice(insertAt);
+  fs.writeFileSync(configPath, updated, 'utf8');
+  return 'merged';
 };

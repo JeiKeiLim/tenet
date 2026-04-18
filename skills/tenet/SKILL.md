@@ -25,6 +25,7 @@ allowed-tools:
   - tenet_process_steer
   - tenet_health_check
   - tenet_get_status
+  - tenet_request_remediation
   # tenet_set_agent is CLI-only — not exposed via MCP
   # Host agent tools (used during crystallization phase)
   - Bash

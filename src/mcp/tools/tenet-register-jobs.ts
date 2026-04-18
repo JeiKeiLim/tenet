@@ -8,6 +8,14 @@ const jobEntrySchema = z.object({
   type: z.enum(['dev', 'integration_test']).default('dev').describe('Job type: "dev" for implementation, "integration_test" for checkpoint tests'),
   depends_on: z.array(z.string()).default([]).describe('IDs of jobs this depends on'),
   prompt: z.string().min(1).describe('Work description for the agent executing this job'),
+  report_only: z
+    .boolean()
+    .optional()
+    .describe(
+      'If true, the job produces an assessment/report only and MUST NOT edit project files. ' +
+        'Use tenet_request_remediation to escalate real bugs discovered during verification. ' +
+        'Typical cases: final acceptance sweeps, architectural reviews, drift audits.',
+    ),
 });
 
 export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateStore: StateStore): void => {
@@ -39,6 +47,7 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
             prompt: entry.prompt,
             depends_on: entry.depends_on,
             feature,
+            ...(entry.report_only === true ? { report_only: true } : {}),
           },
           retryCount: 0,
           maxRetries,

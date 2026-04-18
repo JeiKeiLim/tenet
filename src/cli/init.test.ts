@@ -2,7 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initProject } from './init.js';
+import {
+  initProject,
+  mergeClaudeLocalSettings,
+  mergeCodexProjectTrust,
+  mergeOpenCodePermission,
+} from './init.js';
+import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 
 const tempDirs: string[] = [];
 
@@ -221,5 +227,172 @@ describe('initProject', () => {
     expect(content.model).toBe('claude-sonnet');
     expect(content.mcp.github).toBeDefined();
     expect(content.mcp.tenet).toBeDefined();
+  });
+});
+
+describe('mergeClaudeLocalSettings', () => {
+  it('creates .claude/settings.local.json with Tenet tool allowlist when missing', () => {
+    const projectPath = createTempDir();
+
+    const status = mergeClaudeLocalSettings(projectPath);
+
+    expect(status).toBe('created');
+    const settingsPath = path.join(projectPath, '.claude', 'settings.local.json');
+    expect(fs.existsSync(settingsPath)).toBe(true);
+
+    const content = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    const allow = content.permissions.allow as string[];
+    for (const name of TENET_MCP_TOOL_NAMES) {
+      expect(allow).toContain(`mcp__tenet__${name}`);
+    }
+    expect(content.enabledMcpjsonServers).toContain('tenet');
+  });
+
+  it('additively merges into existing settings.local.json without removing other entries', () => {
+    const projectPath = createTempDir();
+    const settingsPath = path.join(projectPath, '.claude', 'settings.local.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        permissions: { allow: ['Bash(git status)', 'mcp__other__existing_tool'] },
+        enabledMcpjsonServers: ['other-server'],
+        customKey: 'preserve-me',
+      }),
+      'utf8',
+    );
+
+    const status = mergeClaudeLocalSettings(projectPath);
+    expect(status).toBe('merged');
+
+    const content = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(content.permissions.allow).toContain('Bash(git status)');
+    expect(content.permissions.allow).toContain('mcp__other__existing_tool');
+    expect(content.permissions.allow).toContain('mcp__tenet__tenet_init');
+    expect(content.enabledMcpjsonServers).toContain('other-server');
+    expect(content.enabledMcpjsonServers).toContain('tenet');
+    expect(content.customKey).toBe('preserve-me');
+  });
+
+  it('returns "unchanged" when Tenet tools are already allowed', () => {
+    const projectPath = createTempDir();
+    mergeClaudeLocalSettings(projectPath);
+    const status = mergeClaudeLocalSettings(projectPath);
+    expect(status).toBe('unchanged');
+  });
+
+  it('skips with invalid JSON status when settings.local.json is malformed', () => {
+    const projectPath = createTempDir();
+    const settingsPath = path.join(projectPath, '.claude', 'settings.local.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, '{ not json', 'utf8');
+
+    const status = mergeClaudeLocalSettings(projectPath);
+    expect(status).toBe('skipped_invalid_json');
+    // File is left untouched
+    expect(fs.readFileSync(settingsPath, 'utf8')).toBe('{ not json');
+  });
+});
+
+describe('mergeOpenCodePermission', () => {
+  it('adds permission.mcp.tenet="allow" to existing opencode.json without overwriting existing config', () => {
+    const projectPath = createTempDir();
+    const configPath = path.join(projectPath, 'opencode.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        model: 'claude-sonnet',
+        mcp: { tenet: { type: 'local', command: ['tenet', 'serve'] } },
+        permission: { bash: 'ask' },
+      }),
+      'utf8',
+    );
+
+    const status = mergeOpenCodePermission(projectPath);
+    expect(status).toBe('merged');
+
+    const content = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(content.model).toBe('claude-sonnet');
+    expect(content.mcp.tenet).toBeDefined();
+    expect(content.permission.bash).toBe('ask');
+    expect(content.permission.mcp.tenet).toBe('allow');
+  });
+
+  it('returns "unchanged" when tenet already has allow permission', () => {
+    const projectPath = createTempDir();
+    const configPath = path.join(projectPath, 'opencode.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ permission: { mcp: { tenet: 'allow' } } }),
+      'utf8',
+    );
+
+    const status = mergeOpenCodePermission(projectPath);
+    expect(status).toBe('unchanged');
+  });
+
+  it('skips on invalid JSON', () => {
+    const projectPath = createTempDir();
+    const configPath = path.join(projectPath, 'opencode.json');
+    fs.writeFileSync(configPath, 'not json', 'utf8');
+
+    const status = mergeOpenCodePermission(projectPath);
+    expect(status).toBe('skipped_invalid_json');
+  });
+});
+
+describe('mergeCodexProjectTrust', () => {
+  it('appends [projects."<abs>"] trust_level="trusted" when missing', () => {
+    const projectPath = createTempDir();
+    const configPath = path.join(projectPath, '.codex', 'config.toml');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, '[mcp_servers.tenet]\ncommand = "tenet"\nargs = ["serve"]\n', 'utf8');
+
+    const status = mergeCodexProjectTrust(projectPath);
+    expect(status).toBe('merged');
+
+    const content = fs.readFileSync(configPath, 'utf8');
+    expect(content).toContain('[mcp_servers.tenet]');
+    const absPath = fs.realpathSync(path.resolve(projectPath));
+    expect(content).toContain(`[projects."${absPath}"]`);
+    expect(content).toContain('trust_level = "trusted"');
+  });
+
+  it('creates the config when it does not exist', () => {
+    const projectPath = createTempDir();
+    const status = mergeCodexProjectTrust(projectPath);
+    expect(status).toBe('created');
+
+    const configPath = path.join(projectPath, '.codex', 'config.toml');
+    expect(fs.existsSync(configPath)).toBe(true);
+    const content = fs.readFileSync(configPath, 'utf8');
+    expect(content).toContain('trust_level = "trusted"');
+  });
+
+  it('returns "unchanged" when already trusted', () => {
+    const projectPath = createTempDir();
+    mergeCodexProjectTrust(projectPath);
+    const status = mergeCodexProjectTrust(projectPath);
+    expect(status).toBe('unchanged');
+  });
+
+  it('respects existing trust_level="untrusted" and does NOT overwrite', () => {
+    const projectPath = createTempDir();
+    const configPath = path.join(projectPath, '.codex', 'config.toml');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const absPath = fs.realpathSync(path.resolve(projectPath));
+    fs.writeFileSync(
+      configPath,
+      `[projects."${absPath}"]\ntrust_level = "untrusted"\n`,
+      'utf8',
+    );
+
+    const status = mergeCodexProjectTrust(projectPath);
+    expect(status).toBe('skipped_user_untrusted');
+
+    // File is not changed
+    const content = fs.readFileSync(configPath, 'utf8');
+    expect(content).toContain('trust_level = "untrusted"');
+    expect(content).not.toContain('trust_level = "trusted"');
   });
 });

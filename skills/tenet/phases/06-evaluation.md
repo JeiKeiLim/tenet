@@ -2,6 +2,40 @@
 
 The evaluation pipeline ensures that all implemented work meets both mechanical requirements and the original intent. It enforces a strict separation between the author and the critic to prevent leniency.
 
+## Finding Categories
+
+Every critic finding (code critic, test critic) MUST include a `category` so the orchestrator can route fix work correctly instead of blindly retrying the source job:
+
+| Category | Meaning | Orchestrator action |
+|----------|---------|---------------------|
+| `product_bug` | Implementation does not match spec intent | Retry the source dev job |
+| `test_bug` | Tests assert wrong thing or would pass when they should fail | Spawn a test-fix job (strengthen/replace the asserting test) |
+| `harness_bug` | Build/lint/test harness itself is broken | Spawn a harness-fix job (may touch `tests/`, CI config, scripts) |
+| `evidence_mismatch` | Report numbers don't match fresh command output | Re-run the source job's verification commands, refresh report |
+| `contention` | Failure looks like sibling eval stepping on shared state | Re-run after siblings complete, or switch to sequential mode |
+| `scope_conflict` | Job edited files outside its declared scope (e.g. report-only job touched code) | Trigger the remediation escape hatch (see 05-execution-loop.md) |
+
+The critic emits findings as objects: `{"category": "...", "detail": "..."}`. Orchestrators MUST read the category to pick the right response — plain retry loops waste cycles on bugs that aren't product bugs.
+
+## Playwright Layer 2 Honesty
+
+The Playwright eval returns a `layer2_status` field so downstream readers can distinguish "fully verified" from "Layer 1 only":
+
+- `completed` — Layer 2 exploratory testing ran via Playwright MCP. Findings reflect real interactive use.
+- `skipped_no_mcp` — Playwright MCP was not installed. Only scripted (Layer 1) results are reported.
+- `failed` — Layer 2 was attempted but could not complete (app wouldn't start, MCP errors).
+
+`tenet_get_status` surfaces the latest completed playwright_eval's `layer2_status` as `latest_playwright_layer2_status` so final reports can state honestly whether visual verification happened. A "passed" verdict with `layer2_status: skipped_no_mcp` is NOT the same as fully verified — say so in the final report.
+
+## Parallel vs Sequential Critics
+
+The three critic jobs (code critic, test critic, Playwright eval) may run **in parallel** or **sequentially**, decided by the readiness gate verdict (`eval_parallel_safe:{feature}` in the config table):
+
+- **Parallel** (verdict `true`) — pure libraries, CLIs, data pipelines with no shared mutable state. Critics start concurrently; completion time ≈ slowest single critic.
+- **Sequential** (verdict `false` or missing) — stateful web apps where critics would collide on shared state (DB rows, sessions, rate-limit counters, ports, Playwright lock dirs). Critics run code → test → playwright. The caller still receives all three job IDs up front; job-manager auto-dispatches each downstream critic when its predecessor completes.
+
+`tenet_start_eval` reads the verdict automatically — no orchestrator code change needed. If the verdict is missing, Tenet defaults to sequential (safe fallback).
+
 ## The 5 Evaluation Stages
 
 ### Stage 1: Mechanical

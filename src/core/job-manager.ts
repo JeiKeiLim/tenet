@@ -18,6 +18,48 @@ const sleep = async (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+const extractRubricJson = (rawOutput: unknown): Record<string, unknown> | null => {
+  if (rawOutput && typeof rawOutput === 'object') {
+    return rawOutput as Record<string, unknown>;
+  }
+
+  if (typeof rawOutput !== 'string') {
+    return null;
+  }
+
+  const stripped = rawOutput.trim();
+  const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidates = fenced ? [fenced[1].trim(), stripped] : [stripped];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Try next candidate
+    }
+
+    // Fallback: locate the outermost JSON object substring
+    const start = candidate.indexOf('{');
+    const end = candidate.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        const sliced = candidate.slice(start, end + 1);
+        const parsed = JSON.parse(sliced);
+        if (parsed && typeof parsed === 'object') {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Give up
+      }
+    }
+  }
+
+  return null;
+};
+
 export class JobManager {
   private readonly stateStore: StateStore;
   private readonly adapterRegistry: AdapterRegistry;
@@ -65,7 +107,10 @@ export class JobManager {
     this.stateStore.appendEvent(jobId, 'job_started', { type: job.type });
 
     setTimeout(() => {
-      void this.executeJob(jobId);
+      this.executeJob(jobId).catch(() => {
+        // executeJob handles its own errors via job status; swallow any late failures
+        // (e.g. state-store closed during test teardown) to avoid unhandled rejections.
+      });
     }, 0);
 
     const updated = this.stateStore.getJob(jobId);
@@ -85,6 +130,24 @@ export class JobManager {
       }
     }
     return 3;
+  }
+
+  createPendingJob(type: JobType, params: Record<string, unknown>, parentJobId?: string): Job {
+    if (!params.name || typeof params.name !== 'string') {
+      params = { ...params, name: `${type}-${Date.now().toString(36)}` };
+    }
+
+    const job = this.stateStore.createJob({
+      type,
+      status: 'pending',
+      params,
+      agentName: this.resolveAgentName(type),
+      retryCount: 0,
+      maxRetries: this.getMaxRetries(),
+      parentJobId,
+    });
+
+    return job;
   }
 
   startJob(type: JobType, params: Record<string, unknown>): Job {
@@ -121,7 +184,9 @@ export class JobManager {
     this.stateStore.appendEvent(job.id, 'job_started', { type });
 
     setTimeout(() => {
-      void this.executeJob(job.id);
+      this.executeJob(job.id).catch(() => {
+        // See setTimeout in dispatchJob for rationale
+      });
     }, 0);
 
     const created = this.stateStore.getJob(job.id);
@@ -442,6 +507,10 @@ export class JobManager {
           adapter: adapter.name,
           duration_ms: response.durationMs,
         });
+
+        this.persistReadinessVerdict(job, response.output);
+        this.dispatchChainedChildren(jobId);
+        this.checkRemediationResume(job, response.output);
         return;
       }
 
@@ -670,6 +739,128 @@ export class JobManager {
     }
   }
 
+  private persistReadinessVerdict(job: Job, rawOutput: unknown): void {
+    if (job.type !== 'eval' || job.params.eval_type !== 'readiness_validation') {
+      return;
+    }
+
+    const feature = typeof job.params.feature === 'string' ? job.params.feature : undefined;
+    if (!feature) {
+      return;
+    }
+
+    const parsed = extractRubricJson(rawOutput);
+    if (!parsed) {
+      return;
+    }
+
+    if (typeof parsed.eval_parallel_safe === 'boolean') {
+      this.stateStore.setConfig(
+        `eval_parallel_safe:${feature}`,
+        parsed.eval_parallel_safe ? 'true' : 'false',
+      );
+      this.stateStore.appendEvent(job.id, 'readiness_verdict_persisted', {
+        feature,
+        eval_parallel_safe: parsed.eval_parallel_safe,
+      });
+    }
+  }
+
+  private checkRemediationResume(completedJob: Job, rawOutput: unknown): void {
+    const evalStages = new Set(['code_critic', 'test_critic', 'playwright_eval']);
+    if (!evalStages.has(typeof completedJob.params.eval_stage === 'string' ? completedJob.params.eval_stage : '')) {
+      return;
+    }
+
+    const sourceJobId =
+      typeof completedJob.params.source_job_id === 'string' ? completedJob.params.source_job_id : undefined;
+    if (!sourceJobId) {
+      return;
+    }
+
+    const sourceJob = this.stateStore.getJob(sourceJobId);
+    if (!sourceJob) {
+      return;
+    }
+
+    const remediationFor =
+      typeof sourceJob.params.remediation_for === 'string' ? sourceJob.params.remediation_for : undefined;
+    if (!remediationFor) {
+      return;
+    }
+
+    const parent = this.stateStore.getJob(remediationFor);
+    if (!parent || parent.status !== 'blocked_remediation_required') {
+      return;
+    }
+
+    // Parse this critic's output to confirm it passed
+    const thisCritic = extractRubricJson(rawOutput);
+    if (!thisCritic || thisCritic.passed !== true) {
+      return;
+    }
+
+    const siblings = this.stateStore.getEvalsForSource(sourceJobId);
+    const evalSiblings = siblings.filter((s) => {
+      const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
+      return evalStages.has(stage);
+    });
+
+    // Need all three critic stages present and all completed with passed:true
+    const stages = new Set(evalSiblings.map((s) => s.params.eval_stage as string));
+    if (stages.size < 3) {
+      return;
+    }
+
+    for (const s of evalSiblings) {
+      if (s.status !== 'completed') {
+        return;
+      }
+      const siblingOutput = this.stateStore.getJobOutput(s.id);
+      const rawSibling = this.extractAdapterRawOutput(siblingOutput);
+      const parsed = extractRubricJson(rawSibling);
+      if (!parsed || parsed.passed !== true) {
+        return;
+      }
+    }
+
+    // All three critics passed — auto-resume the remediation parent
+    this.stateStore.updateJob(remediationFor, {
+      status: 'pending',
+      startedAt: undefined,
+      completedAt: undefined,
+      lastHeartbeat: undefined,
+      error: undefined,
+    });
+    this.stateStore.appendEvent(remediationFor, 'remediation_resumed', {
+      child_job_id: sourceJobId,
+    });
+  }
+
+  private extractAdapterRawOutput(output: unknown): unknown {
+    if (output && typeof output === 'object' && 'output' in (output as Record<string, unknown>)) {
+      return (output as { output: unknown }).output;
+    }
+    return output;
+  }
+
+  private dispatchChainedChildren(parentJobId: string): void {
+    const children = this.stateStore.getChildJobs(parentJobId);
+    for (const child of children) {
+      if (child.status !== 'pending') {
+        continue;
+      }
+      if (child.params.auto_dispatch_on_parent_complete !== true) {
+        continue;
+      }
+      try {
+        this.dispatchJob(child.id);
+      } catch {
+        // If dispatch fails (e.g. status already changed), skip silently
+      }
+    }
+  }
+
   private progressLine(status: Job['status']): string {
     switch (status) {
       case 'pending':
@@ -684,6 +875,8 @@ export class JobManager {
         return 'job cancelled';
       case 'blocked':
         return 'job blocked';
+      case 'blocked_remediation_required':
+        return 'job blocked — waiting for child remediation';
       default:
         return 'job status unknown';
     }
