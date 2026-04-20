@@ -49,7 +49,10 @@ unlink: ## Remove global tenet shims
 	rm -f "$$(pnpm root -g)/../tenet" "$$(pnpm root -g)/../tenet-mcp"
 
 # Publishing
-publish: check ## Full check + npm publish
+# NOTE: the preferred path is automated — push a tag, then click Publish
+# on the draft GitHub Release. The targets below are emergency manual
+# fallbacks. See docs/release-runbook.md.
+publish: check ## Manual fallback: check + npm publish (prefer the automated release flow)
 	npm publish
 
 bump-patch: ## Bump patch version (26.4.1 -> 26.4.2)
@@ -66,6 +69,6 @@ bump-month: ## Reset to current month (YY.MM.0)
 	sed -i '' "s/\"version\": \"$$current\"/\"version\": \"$$new\"/" package.json; \
 	echo "$$current -> $$new"
 
-release: bump-patch check ## Bump patch + check + publish
+release: bump-patch check ## Manual fallback: bump + check + publish (prefer the automated release flow)
 	npm publish
 	@echo "Published $$(node -p "require('./package.json').version")"

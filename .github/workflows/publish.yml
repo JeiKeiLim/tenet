@@ -1,0 +1,70 @@
+# Publish @jeikeilim/tenet to npm when a GitHub Release is published.
+#
+# Trigger: a draft release (created by `release.yml` on tag push) is promoted
+# to Published via the GitHub Releases UI. That click is the human gate.
+#
+# Auth: OIDC trusted publishing (no NPM_TOKEN secret). One-time setup required
+# on npmjs.com — see docs/release-runbook.md for the steps.
+#
+# Pre-publish gate: typecheck + unit/integration tests MUST pass. Lint is
+# skipped (eslint isn't currently a devDep). E2E canaries are NOT run here —
+# they cost real money and are meant for manual maintainer runs.
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write  # required for npm provenance via OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify version matches tag
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          EXPECTED_TAG="v${PKG_VERSION}"
+          if [ "${TAG_NAME}" != "${EXPECTED_TAG}" ]; then
+            echo "::error::tag ${TAG_NAME} does not match package.json version ${PKG_VERSION} (expected ${EXPECTED_TAG})"
+            exit 1
+          fi
+          echo "✓ tag ${TAG_NAME} matches package.json"
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Publish with provenance
+        # npm publish picks up the package.json; prepublishOnly runs clean+build again
+        # which is harmless. --provenance requires id-token: write (set above).
+        # --access public because this is a scoped package (@jeikeilim/*).
+        run: npm publish --provenance --access public

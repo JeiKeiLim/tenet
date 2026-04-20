@@ -1,0 +1,35 @@
+# Create a draft GitHub Release when a version tag is pushed.
+#
+# Flow: `git push origin vYY.MM.PATCH` → this workflow runs → creates a DRAFT
+# release on GitHub with auto-generated notes. You review the notes in the
+# Releases UI and click "Publish release" when ready. That click triggers
+# the separate `publish.yml` workflow which handles npm publishing.
+#
+# Keeping the release as a draft is the human gate: a mistaken tag push does
+# NOT publish to npm. You have to deliberately click Publish.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so --generate-notes can diff against previous tag
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --generate-notes \
+            --title "${GITHUB_REF_NAME}"

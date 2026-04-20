@@ -85,15 +85,20 @@ Dev-type jobs get a "Deliverable Requirements" preamble prepended to their promp
 
 Uses **CalVer** (`YY.MM.PATCH`): e.g., `26.4.0` is the first release in April 2026, `26.4.1` is the second. New month resets patch to 0. This communicates freshness in a fast-moving AI tooling space while staying npm-compatible.
 
-**Release flow (only when the user explicitly requests a new version):**
+**Release flow (automated — only when the user explicitly requests a new version):**
 
 1. Bump via `make bump-patch` (same month) or `make bump-month` (new month).
-2. Commit the `package.json` change.
-3. Run `make release` (or `make check && npm publish`) to publish to npm.
-4. Tag the commit: `git tag vYY.MM.PATCH && git push origin vYY.MM.PATCH`.
-5. Create the GitHub release with `gh release create vYY.MM.PATCH --generate-notes` (add `--title` / `--notes` when the user provides specifics).
+2. Commit the `package.json` change with message `chore: bump to YY.MM.PATCH`.
+3. Push the commit: `git push origin main`.
+4. Tag the commit: `git tag -a vYY.MM.PATCH -m "..."` then `git push origin vYY.MM.PATCH`.
+5. Wait for `.github/workflows/release.yml` to create a **draft** release on GitHub (automatic, ~30s).
+6. Tell the user: "Draft release created at https://github.com/JeiKeiLim/tenet/releases. Review the notes and click 'Publish release' to trigger npm publishing."
 
-Never tag or create a GitHub release without an explicit user request — version bumps are always user-initiated.
+The user clicking "Publish release" fires `.github/workflows/publish.yml`, which runs typecheck + tests + `npm publish --provenance` via OIDC. No manual `npm publish` needed.
+
+Manual fallback (for automation outages only): `make release` still works locally if the maintainer has `npm login`.
+
+Never tag or create a GitHub release without an explicit user request — version bumps are always user-initiated. See `docs/release-runbook.md` for the full runbook including OIDC setup and failure recovery.
 
 ## Planning Docs
 
