@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -112,6 +113,22 @@ export async function runCanary(spec: CanarySpec, options: CanaryRunOptions = {}
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), `tenet-e2e-${spec.feature}-`));
   log(`[${spec.name}] workdir: ${workdir}`);
   log(`[${spec.name}] agent: ${agentName}`);
+
+  // Initialize the workdir as a git repo. Real Tenet projects are git repos
+  // (the dev-job preamble expects to `git commit` deliverables), and codex
+  // specifically refuses to run in a non-trusted non-git directory without
+  // --skip-git-repo-check. Match production shape by git-init'ing here.
+  try {
+    execSync('git init -q && git config user.email "tenet-e2e@local" && git config user.name "Tenet E2E" && git commit --allow-empty -m "init" -q', {
+      cwd: workdir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10_000,
+    });
+  } catch (error) {
+    throw new Error(
+      `failed to git init e2e workdir: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   let cycles = 0;
   let passed = false;
