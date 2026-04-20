@@ -1,0 +1,1 @@
+{"passed": false, "stage": "code_critic", "findings": [{"category": "product_bug", "detail": "Login handler redirects to /login on success instead of /dashboard, contradicting the spec."}, {"category": "test_bug", "detail": "The login acceptance test asserts only that the page does NOT contain /error, which passes even when login actually fails."}]}

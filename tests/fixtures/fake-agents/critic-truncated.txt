@@ -1,0 +1,3 @@
+I began my review of the diff and the spec. Starting with the security
+attack angle I noticed that the input validation for the email field
+appears to reject empty strings correctly, but

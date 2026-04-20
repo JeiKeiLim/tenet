@@ -1,0 +1,1 @@
+{"passed": false, "stage": "playwright_eval", "layer2_status": "failed", "scripted_results": "42 passed, 0 failed", "exploratory_findings": ["Dev server failed to start: port 3000 already in use. Layer 2 could not run."], "screenshots": []}

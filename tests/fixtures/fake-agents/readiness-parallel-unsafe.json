@@ -1,0 +1,3 @@
+```json
+{"passed": true, "categories": {"spec_sufficiency": "ready", "research_prior_art": "ready", "interface_contracts": "ready", "external_service_access": "ready", "env_runtime": "ready", "test_data_fixtures": "ready", "test_strategy": "ready", "deps_tooling": "ready"}, "blockers": [], "missing_info": [], "testable_surfaces": {"unit": "ready", "integration": "ready", "e2e": "ready"}, "eval_parallel_safe": false, "eval_parallel_rationale": "Tests share Prisma SQLite DB, auth session rows, and rate-limit counters; parallel critics would collide.", "rationale": "Gate passes with all categories ready, but critic contention requires sequential eval execution."}
+```
