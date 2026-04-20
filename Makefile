@@ -1,4 +1,4 @@
-.PHONY: help build clean test lint typecheck check dev publish link unlink
+.PHONY: help build clean test test-e2e lint typecheck check dev publish link unlink e2e-cli e2e-api e2e-web e2e-all
 
 .DEFAULT_GOAL := help
 
@@ -26,6 +26,20 @@ typecheck: ## Type-check without emitting
 	pnpm run typecheck
 
 check: clean build typecheck lint test ## Run all checks (pre-publish gate)
+
+# E2E canaries (manual — each runs a real agent CLI end-to-end; costs money/time)
+# See docs/e2e-runbook.md for setup, cost estimates, and troubleshooting.
+e2e-cli: ## E2E: build a tiny CLI tool canary (~5-10 min, ~$0.05-0.80)
+	pnpm vitest run --config vitest.e2e.config.ts tests/e2e/canary-cli.e2e.test.ts
+
+e2e-api: ## E2E: build an in-memory notes API canary (~10-15 min, ~$0.08-1.20)
+	pnpm vitest run --config vitest.e2e.config.ts tests/e2e/canary-api.e2e.test.ts
+
+e2e-web: ## E2E: build a static click-counter page canary (~8-12 min, ~$0.07-1.00)
+	pnpm vitest run --config vitest.e2e.config.ts tests/e2e/canary-web.e2e.test.ts
+
+e2e-all: ## E2E: run all three canaries sequentially (~25-35 min, ~$0.20-2.50)
+	pnpm vitest run --config vitest.e2e.config.ts
 
 # Local development
 link: build ## Build and link globally for local dev

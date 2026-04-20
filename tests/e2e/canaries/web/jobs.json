@@ -1,0 +1,9 @@
+[
+  {
+    "id": "job-1",
+    "name": "implement click-counter static page",
+    "type": "dev",
+    "depends_on": [],
+    "prompt": "Implement the click-counter static page per the feature spec (.tenet/spec/) and harness (.tenet/harness/current.md). Create index.html, the jsdom test, and a minimal package.json. Install devDeps (vitest, jsdom), run the test, ensure it passes. Commit locally as 'tenet(click-counter): initial implementation'. Deliverables: index.html, tests/click-counter.test.ts, package.json."
+  }
+]

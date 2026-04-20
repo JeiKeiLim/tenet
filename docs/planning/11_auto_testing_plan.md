@@ -85,44 +85,46 @@ tests/fixtures/fake-agents/
 - True concurrent-execution races (FakeAdapter returns synchronously).
 - Long-run state accumulation.
 
-### Tier 2 — Nightly E2E against one real agent (target: land after Tier 1 is stable)
+### Tier 2 — Manual E2E canaries against a real agent (shipped 2026-04-20)
 
 **Goal:** Catch class-4 bugs (adapter argv, CLI contract drift, MCP registration drift at runtime).
 
-**Approach:** A single end-to-end test that exercises the full loop against a real agent. Pick the cheapest + fastest adapter — likely Claude Code CLI with Haiku, though this becomes a config knob.
+**Decision: manual, not nightly.** The original plan called for nightly CI runs. Dropped in favor of on-demand invocation — the API spend is real and the signal frequency isn't worth it for a single-maintainer project. When an automated trigger becomes valuable (multiple maintainers, release cadence picks up), revisit.
 
-**The canary project:** a tiny scaffolded app in `tests/e2e/canary-project/` — something like a 3-endpoint Express API or a 2-page static site. Small enough that one dev job implements it in <2 minutes, cheap enough that a full cycle costs cents, stateful enough that `eval_parallel_safe=false` is the expected verdict.
+**Approach:** Three separate canary projects, each exercising one distinct Tenet path. Each runs the real agent end-to-end via the host's logged-in CLI (no API key plumbing — `claude` / `opencode` / `codex` already have auth).
 
-**The test script** (`tests/e2e/full-loop.e2e.ts`):
+| Target | Canary | Path exercised |
+|---|---|---|
+| `make e2e-cli` | `tests/e2e/canaries/cli` (key-count tool) | parallel critics (`eval_parallel_safe=true`) |
+| `make e2e-api` | `tests/e2e/canaries/api` (in-memory note-store) | sequential critics (`eval_parallel_safe=false`) |
+| `make e2e-web` | `tests/e2e/canaries/web` (static click-counter) | Playwright Layer 2 reporting |
+| `make e2e-all` | all three | full coverage in one sweep |
 
-1. Copy canary project to a temp dir.
-2. Run `tenet init --yes --agent claude-code` (exercises plan 10 part 5).
-3. Write a spec + harness (pre-canned, not agent-generated).
-4. Call `tenet_validate_readiness` — assert verdict JSON contains `eval_parallel_safe`.
-5. Register a 2-job DAG via `tenet_register_jobs`.
-6. Run the loop: `tenet_continue → start_job → job_wait → job_result → start_eval → wait → result` for each job.
-7. Assert at each step:
-   - MCP tools are callable (no silent registration regressions).
-   - Dev job produced git-tracked changes.
-   - Critics emitted parseable JSON.
-   - `tenet_get_status` returns the expected shape (including `latest_playwright_layer2_status`).
-8. Teardown.
+**Harness:** `tests/e2e/harness.ts` — `runCanary({ feature, name, canaryDir })` spins up a temp workdir, calls `initProject`, seeds spec/harness/DAG, and drives the MCP tool handlers (readiness → register → continue/start/wait/result → start_eval → wait) in order. The same handlers the skill invokes in production.
 
-**CI integration:** Runs nightly on `main`, NOT on every PR. Blocks release tagging. Failure auto-creates a GitHub issue labeled `e2e-regression`.
+**Per-canary shape:**
+- `spec.md`, `harness.md`, `jobs.json` — pre-canned content seeded into `.tenet/`.
+- `verify.ts` — post-run smoke check that runs the artifact the agent built and asserts observable behavior.
 
-**Budget:** ~10–20 minutes per run, ~$0.50 per run at Haiku pricing. ~$15/month for daily runs. Trivial for the signal it provides.
+**Execution:** Vitest with a dedicated config (`vitest.e2e.config.ts`) that uses long timeouts (30 min per test), disables file parallelism, and single-forks to avoid racing real agents against shared rate limits. Files matching `tests/e2e/**/*.e2e.test.ts` run ONLY under this config — `pnpm test` does not touch them.
 
-**Investment:** ~1 day for harness + canary project + GitHub Actions workflow. Ongoing API budget.
+**Runbook:** `docs/e2e-runbook.md` — cost estimates, prerequisites, failure-triage recipes.
+
+**Budget per full sweep (all three canaries):** 25-35 minutes wall-clock, ~$0.20-$0.50 on Haiku or ~$1.00-$2.50 on Sonnet depending on the host's configured model.
+
+**Investment:** Shipped in ~half a day (harness + 3 canaries + Makefile targets + runbook).
 
 **What Tier 2 catches:**
 - Adapter argv misalignment with real CLI.
 - `tenet init` permission/trust merges that don't actually silence prompts.
 - Registration regressions where we ship a broken MCP tool that looked fine in unit tests.
 - Real-world JSON output shapes we didn't think to fixture in Tier 1.
+- Cross-canary path coverage: each canary proves one of the three eval-mode branches.
 
 **What Tier 2 does NOT catch:**
 - Long-run emergent bugs (one cycle ≠ 200 cycles).
-- Behavior on the other two adapters (deliberately scoped to one to keep cost down).
+- Behavior on the other two adapters (scoped to whatever adapter is currently configured).
+- Bugs that only manifest under scheduled/repeated invocation — manual runs are bursty, so latent clock/cache-drift issues won't show.
 
 ### Tier 3 — Replay harness from captured runs (target: after first production bug report)
 
@@ -165,10 +167,10 @@ tests/fixtures/fake-agents/
            ↓ passing tier 1 is precondition for merge
 ┌──────────────────────────────────────────────────────────────────┐
 │ Tier 2: Real-agent nightly E2E                                   │
-│   Runs: nightly on main, ~15min, ~$0.50                          │
+│   Runs: manual (make e2e-{cli,api,web,all}), ~5-30min per run    │
 │   Catches: adapter argv, CLI contract, init merge correctness    │
 └──────────────────────────────────────────────────────────────────┘
-           ↓ passing tier 2 for 3 consecutive nights is a release precondition
+           ↓ run tier 2 before release tags; no nightly automation
 ┌──────────────────────────────────────────────────────────────────┐
 │ Tier 3: Replay harness                                           │
 │   Runs: ad-hoc + pre-refactor + grown corpus                     │
@@ -185,13 +187,16 @@ tests/fixtures/fake-agents/
 - `src/core/integration.test.ts` — **new.** Spins up real JobManager + StateStore + FakeAdapter, runs one end-to-end scenario per fixture, asserts on DB state.
 - `src/core/integration-helpers.ts` — **new (small).** Shared test harness: `createIntegrationHarness(fixture: string)` returning `{store, manager, cleanup}`.
 
-### Tier 2 (Week 2)
+### Tier 2 (shipped 2026-04-20)
 
-- `tests/e2e/canary-project/` — **new.** Minimal scaffolded app (Express or Vite) with spec + harness pre-written.
-- `tests/e2e/full-loop.e2e.ts` — **new.** End-to-end test script (not under vitest — standalone Node script).
-- `.github/workflows/nightly-e2e.yml` — **new.** GitHub Actions workflow: runs at 03:00 UTC daily, uses `ANTHROPIC_API_KEY` secret, files an issue on failure.
-- `docs/e2e-runbook.md` — **new.** How to reproduce the E2E test locally when it fails in CI.
-- `package.json` — add `test:e2e` script.
+- `tests/e2e/harness.ts` — **new.** `runCanary()` — temp-workdir lifecycle + MCP tool handler driver + verify hook.
+- `tests/e2e/canaries/cli/` — **new.** key-count CLI canary (spec, harness, jobs, verify).
+- `tests/e2e/canaries/api/` — **new.** note-store in-memory API canary.
+- `tests/e2e/canaries/web/` — **new.** click-counter static HTML canary.
+- `tests/e2e/canary-{cli,api,web}.e2e.test.ts` — **new.** Vitest drivers, one per canary.
+- `vitest.e2e.config.ts` — **new.** Separate config with 30-minute timeout, single-fork execution, excluded from `pnpm test`.
+- `Makefile` — **modified.** `e2e-cli`, `e2e-api`, `e2e-web`, `e2e-all` targets.
+- `docs/e2e-runbook.md` — **new.** Setup, cost estimates, failure triage.
 
 ### Tier 3 (ad-hoc, after first production bug)
 
@@ -219,9 +224,10 @@ tests/fixtures/fake-agents/
 - A new contributor can add a scenario with ~10 lines of test + one fixture file.
 
 ### Tier 2 done when:
-- Nightly workflow runs green for 7 consecutive days on `main`.
-- Injecting a deliberate regression (e.g., break `extractRubricJson`) causes the next nightly to fail and auto-file an issue.
-- Cost under $20/month at current CI cadence.
+- Three canaries exist and each has been run green at least once by a maintainer.
+- `make e2e-cli` exits 0 on a cold checkout with a logged-in agent CLI.
+- Injecting a deliberate regression (e.g., break `extractRubricJson`) causes the relevant canary to fail with an actionable error message, not a hang.
+- `docs/e2e-runbook.md` covers the common failure modes maintainers actually hit.
 
 ### Tier 3 done when:
 - `tenet replay <db>` produces a human-readable diff of decisions.

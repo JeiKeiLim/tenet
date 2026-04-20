@@ -1,0 +1,9 @@
+[
+  {
+    "id": "job-1",
+    "name": "implement note-store API",
+    "type": "dev",
+    "depends_on": [],
+    "prompt": "Implement the note-store API per the feature spec (.tenet/spec/) and harness (.tenet/harness/current.md). Build it, write behavioral tests using supertest or fetch against an ephemeral listener, run the tests, ensure they pass. Commit locally as 'tenet(note-store): initial implementation'. Deliverables: src/server.ts, src/index.ts, tests/server.test.ts, tsconfig.json, package.json, dist/ after build."
+  }
+]

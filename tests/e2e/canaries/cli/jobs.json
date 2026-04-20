@@ -1,0 +1,9 @@
+[
+  {
+    "id": "job-1",
+    "name": "implement key-count CLI",
+    "type": "dev",
+    "depends_on": [],
+    "prompt": "Implement the key-count CLI per the feature spec (.tenet/spec/) and harness (.tenet/harness/current.md). Build it, write tests, run the tests, ensure they pass. Commit locally as 'tenet(key-count): initial implementation'. Deliverables: src/key-count.ts, tests/key-count.test.ts, tsconfig.json, package.json, dist/ after build."
+  }
+]
