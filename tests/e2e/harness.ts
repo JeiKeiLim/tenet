@@ -92,13 +92,20 @@ export async function runCanary(spec: CanarySpec, options: CanaryRunOptions = {}
   const failures: string[] = [];
   const startedAt = Date.now();
 
-  // Resolve agent: explicit option → default from repo config → undefined (uses registry default).
+  // Resolve agent: explicit option → TENET_E2E_AGENT env var → default from repo config.
+  // The env var lets you override for a single run (e.g. `TENET_E2E_AGENT=codex make e2e-cli`)
+  // without touching the repo's own tenet config.
   const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
-  const agentName = options.agentName ?? resolveDefaultAgent(repoRoot);
+  const agentName =
+    options.agentName ??
+    (process.env.TENET_E2E_AGENT && process.env.TENET_E2E_AGENT.trim().length > 0
+      ? process.env.TENET_E2E_AGENT.trim()
+      : undefined) ??
+    resolveDefaultAgent(repoRoot);
 
   if (!agentName) {
     throw new Error(
-      'No agent configured. Either pass options.agentName or run `tenet config --agent <name>` in the repo first.',
+      'No agent configured. Either set TENET_E2E_AGENT=<name>, pass options.agentName, or run `tenet config --agent <name>` in the repo first.',
     );
   }
 

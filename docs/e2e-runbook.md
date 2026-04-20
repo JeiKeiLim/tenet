@@ -42,6 +42,18 @@ make e2e-web          # static + playwright-eval path
 make e2e-all          # all three
 ```
 
+### Choosing a specific agent
+
+The harness uses whatever `tenet config --agent` is set to in this repo by default. To override for a single run **without touching the repo's config**:
+
+```bash
+TENET_E2E_AGENT=claude-code make e2e-cli
+TENET_E2E_AGENT=opencode    make e2e-cli
+TENET_E2E_AGENT=codex       make e2e-cli
+```
+
+Useful for exercising each adapter's CLI contract separately — `claude-code` hits the `claude` adapter's argv, `opencode` hits `opencode run` (the one that motivated plan 10 part 4), and `codex` hits `codex exec --full-auto`. A finding on one but not another usually points at adapter-specific wiring.
+
 The harness prints timestamped progress. Each job shows up as "cycle N: dispatching <job-name>" followed by "eval dispatched (sequential|parallel)". Agents take minutes per call; console looks idle for long stretches. That's normal.
 
 ## What a pass looks like
