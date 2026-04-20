@@ -13,7 +13,15 @@ name: Publish to npm
 
 on:
   release:
-    types: [published]
+    types: [published, released, created]
+  # Manual trigger — useful to retry a publish after a transient failure
+  # or to test the pipeline end-to-end without creating a new release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v26.4.3)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -23,9 +31,18 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve tag to check out
+        id: resolve_tag
+        run: |
+          if [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ steps.resolve_tag.outputs.tag }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -44,7 +61,7 @@ jobs:
 
       - name: Verify version matches tag
         env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          TAG_NAME: ${{ steps.resolve_tag.outputs.tag }}
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           EXPECTED_TAG="v${PKG_VERSION}"
