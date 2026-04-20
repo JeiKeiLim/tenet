@@ -31,15 +31,26 @@ export async function verify(workdir: string): Promise<{ passed: boolean; detail
   } else {
     // The agent may not have run tsc; try to build ourselves to get a smoke check.
     try {
-      execSync('npx tsc', { cwd: workdir, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
+      const out = execSync('npx tsc', {
+        cwd: workdir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 60_000,
+      });
+      if (out && out.trim().length > 0) {
+        checks.push(`tsc stdout: ${out.trim().slice(0, 200)}`);
+      }
       if (fs.existsSync(distPath)) {
         checks.push('dist/key-count.js built by verify fallback');
       } else {
-        failures.push('dist/key-count.js missing after tsc fallback');
+        const distDir = path.join(workdir, 'dist');
+        const contents = fs.existsSync(distDir) ? fs.readdirSync(distDir).join(', ') : '(no dist/)';
+        failures.push(`dist/key-count.js missing after tsc fallback; dist/ contains: [${contents}]`);
       }
     } catch (error) {
+      const err = error as { stdout?: string; stderr?: string; message?: string };
       failures.push(
-        `tsc build failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
+        `tsc build failed: stdout=${(err.stdout ?? '').slice(0, 300)} stderr=${(err.stderr ?? err.message ?? '').slice(0, 300)}`,
       );
     }
   }

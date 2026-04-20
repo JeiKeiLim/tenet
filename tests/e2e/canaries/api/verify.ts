@@ -19,21 +19,41 @@ export async function verify(workdir: string): Promise<{ passed: boolean; detail
     failures.push('tests/server.test.ts missing');
   }
 
-  // Build fallback if agent didn't run tsc
+  // Build fallback if agent didn't run tsc. Capture stdout+stderr so the
+  // failure reason (missing tsconfig, type errors, wrong outDir) is visible
+  // without re-running the canary.
   const entryJs = path.join(workdir, 'dist', 'index.js');
   if (!fs.existsSync(entryJs)) {
     try {
-      execSync('npx tsc', { cwd: workdir, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
+      const out = execSync('npx tsc', {
+        cwd: workdir,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 60_000,
+      });
+      if (out && out.trim().length > 0) {
+        checks.push(`tsc stdout: ${out.trim().slice(0, 200)}`);
+      }
     } catch (error) {
+      const err = error as { stdout?: string; stderr?: string; message?: string };
       failures.push(
-        `tsc fallback failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
+        `tsc fallback failed: stdout=${(err.stdout ?? '').slice(0, 300)} stderr=${(err.stderr ?? err.message ?? '').slice(0, 300)}`,
       );
     }
   }
   if (fs.existsSync(entryJs)) {
     checks.push('dist/index.js exists');
   } else {
-    failures.push('dist/index.js missing after fallback build');
+    // Surface what the agent ACTUALLY produced so the root cause is visible.
+    const distDir = path.join(workdir, 'dist');
+    if (fs.existsSync(distDir)) {
+      const contents = fs.readdirSync(distDir).join(', ');
+      failures.push(`dist/index.js missing; dist/ contains: [${contents}]`);
+    } else {
+      const srcDir = path.join(workdir, 'src');
+      const srcContents = fs.existsSync(srcDir) ? fs.readdirSync(srcDir).join(', ') : '(no src/)';
+      failures.push(`dist/index.js missing; dist/ does not exist. src/ contains: [${srcContents}]`);
+    }
     return summarize(checks, failures);
   }
 

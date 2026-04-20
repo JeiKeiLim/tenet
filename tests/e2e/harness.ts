@@ -295,7 +295,12 @@ export async function runCanary(spec: CanarySpec, options: CanaryRunOptions = {}
 
   function finalize(): CanaryResult {
     const durationMs = Date.now() - startedAt;
-    if (!options.keepWorkdir) {
+    const runPassed = passed && failures.length === 0;
+    // Default behavior: keep the workdir on failure so maintainers can inspect
+    // without having to rerun (which costs money). Explicit keepWorkdir:true
+    // keeps it always; explicit keepWorkdir:false still forces cleanup.
+    const shouldCleanup = options.keepWorkdir === false || (options.keepWorkdir === undefined && runPassed);
+    if (shouldCleanup) {
       try {
         fs.rmSync(workdir, { recursive: true, force: true });
       } catch {
@@ -306,7 +311,7 @@ export async function runCanary(spec: CanarySpec, options: CanaryRunOptions = {}
     }
     return {
       canary: spec.name,
-      passed: passed && failures.length === 0,
+      passed: runPassed,
       workdir,
       durationMs,
       cycles,
