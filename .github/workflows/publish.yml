@@ -57,13 +57,10 @@ jobs:
           cache: 'pnpm'
 
       # npm OIDC trusted publishing requires Node >= 22.14.0 AND npm >= 11.5.1
-      # per https://docs.npmjs.com/trusted-publishers. Node 22 images on GitHub
-      # runners still bundle npm 10.x; without this upgrade, `npm publish
-      # --provenance` attempts a tokenless publish (no OIDC exchange) and the
-      # registry returns 404 for scoped packages.
-      - name: Ensure npm version supports OIDC
+      # per https://docs.npmjs.com/trusted-publishers. Print versions so a
+      # failed publish due to version-too-old is diagnosable from the log.
+      - name: Print runtime versions
         run: |
-          npm install -g npm@latest
           echo "node: $(node --version)"
           echo "npm:  $(npm --version)"
 
