@@ -2,6 +2,14 @@
   "name": "@jeikeilim/tenet",
   "version": "26.4.3",
   "description": "Cross-platform AI agent plugin for 12+ hour autonomous development cycles",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JeiKeiLim/tenet.git"
+  },
+  "homepage": "https://github.com/JeiKeiLim/tenet",
+  "bugs": {
+    "url": "https://github.com/JeiKeiLim/tenet/issues"
+  },
   "type": "module",
   "bin": {
     "tenet": "./dist/cli/index.js",
