@@ -52,9 +52,20 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
+
+      # npm OIDC trusted publishing requires Node >= 22.14.0 AND npm >= 11.5.1
+      # per https://docs.npmjs.com/trusted-publishers. Node 22 images on GitHub
+      # runners still bundle npm 10.x; without this upgrade, `npm publish
+      # --provenance` attempts a tokenless publish (no OIDC exchange) and the
+      # registry returns 404 for scoped packages.
+      - name: Ensure npm version supports OIDC
+        run: |
+          npm install -g npm@latest
+          echo "node: $(node --version)"
+          echo "npm:  $(npm --version)"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
