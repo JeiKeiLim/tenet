@@ -92,7 +92,26 @@ Uses **CalVer** (`YY.MM.PATCH`): e.g., `26.4.0` is the first release in April 20
 3. Push the commit: `git push origin main`.
 4. Tag the commit: `git tag -a vYY.MM.PATCH -m "..."` then `git push origin vYY.MM.PATCH`.
 5. Wait for `.github/workflows/release.yml` to create a **draft** release on GitHub (automatic, ~30s).
-6. Tell the user: "Draft release created at https://github.com/JeiKeiLim/tenet/releases. Review the notes and click 'Publish release' to trigger npm publishing."
+6. **Write the release notes yourself** and overwrite the auto-generated draft. The workflow seeds the draft with `gh --generate-notes` (a raw commit list); that's not a release note. Replace it:
+   ```bash
+   gh release edit vYY.MM.PATCH --notes "$(cat <<'EOF'
+   ## Highlights
+   - <user-facing summary of the main change>
+   - <another highlight>
+
+   ## Changes
+   - <bullet per meaningful commit or planning-doc section>
+
+   ## Breaking changes
+   <none | describe>
+
+   ## Full changelog
+   https://github.com/JeiKeiLim/tenet/compare/vPREV...vYY.MM.PATCH
+   EOF
+   )"
+   ```
+   Write notes in user-facing language (what changed for the user, not what files moved). Pull structure from any planning doc that motivated the release; skip mechanical commits like `chore: bump`.
+7. Tell the user: "Draft release created with notes at https://github.com/JeiKeiLim/tenet/releases/tag/vYY.MM.PATCH. Review and click 'Publish release' to trigger npm publishing."
 
 The user clicking "Publish release" fires `.github/workflows/publish.yml`, which runs typecheck + tests + `npm publish --provenance` via OIDC. No manual `npm publish` needed.
 

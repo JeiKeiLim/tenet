@@ -13,10 +13,29 @@ git push origin vYY.MM.PATCH       ← here automation kicks in
 ```
 
 Once the tag is pushed, `.github/workflows/release.yml` fires automatically:
-1. Creates a **draft** GitHub Release with auto-generated notes.
+1. Creates a **draft** GitHub Release with auto-generated notes (raw commit list).
 2. Stops. Nothing else happens.
 
-You then go to the GitHub Releases page, review the draft (edit the notes if needed), and click **Publish release**. That click triggers `.github/workflows/publish.yml`:
+The auto-generated notes are a seed, not a release note. Overwrite them with human-quality notes before publishing:
+
+```bash
+gh release edit vYY.MM.PATCH --notes "$(cat <<'EOF'
+## Highlights
+- …
+
+## Changes
+- …
+
+## Breaking changes
+(none, or describe)
+
+## Full changelog
+https://github.com/JeiKeiLim/tenet/compare/vPREV...vYY.MM.PATCH
+EOF
+)"
+```
+
+Then visit the GitHub Releases page, review the final draft, and click **Publish release**. That click triggers `.github/workflows/publish.yml`:
 1. Checks out the tagged commit.
 2. Verifies `package.json` version matches the tag.
 3. Runs typecheck + tests.
