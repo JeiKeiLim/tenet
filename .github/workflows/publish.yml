@@ -89,7 +89,11 @@ jobs:
         run: pnpm run build
 
       - name: Publish with provenance
-        # npm publish picks up the package.json; prepublishOnly runs clean+build again
-        # which is harmless. --provenance requires id-token: write (set above).
+        # Use `npx npm@latest` to pick up the OIDC-capable npm (>= 11.5.1) per
+        # https://docs.npmjs.com/trusted-publishers. Node 22.x still bundles
+        # npm 10.9.7, and `npm install -g npm@latest` fails on hosted runners
+        # with MODULE_NOT_FOUND during self-upgrade. npx sidesteps both by
+        # running a sandboxed copy of the latest npm directly.
+        # --provenance requires id-token: write (set above).
         # --access public because this is a scoped package (@jeikeilim/*).
-        run: npm publish --provenance --access public
+        run: npx --yes npm@latest publish --provenance --access public
