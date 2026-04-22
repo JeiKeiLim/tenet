@@ -1,5 +1,7 @@
 # Tenet
 
+![](docs/assets/tenet-logo.png)
+
 > **T**alk. **E**stablish. **N**onstop. **E**valuate. **T**enet.
 
 **Cross-platform AI agent plugin for 12+ hour autonomous development cycles.**
