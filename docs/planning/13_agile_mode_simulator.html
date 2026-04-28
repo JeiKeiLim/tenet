@@ -1,0 +1,1599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenet Agile Mode — Simulator</title>
+<style>
+  :root {
+    --bg-base: #0d1117;
+    --bg-surface: #161b22;
+    --bg-card: #1c2128;
+    --bg-hover: #22272e;
+    --border: #30363d;
+    --border-strong: #484f58;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --text-dim: #6e7681;
+    --accent-blue: #4fa3f7;
+    --accent-purple: #a78bfa;
+    --accent-green: #3fb950;
+    --accent-orange: #d29922;
+    --accent-red: #f85149;
+    --accent-teal: #2dd4bf;
+    --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg-base);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.2px; }
+  header .meta { color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; }
+  header .actions { display: flex; gap: 8px; }
+  .btn {
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn:hover { background: var(--bg-hover); border-color: var(--text-muted); }
+  .btn:disabled { cursor: not-allowed; opacity: 0.5; }
+  .btn.primary { background: var(--accent-blue); border-color: var(--accent-blue); color: #0d1117; font-weight: 600; }
+  .btn.primary:hover { background: #6ab5ff; border-color: #6ab5ff; }
+  .btn.green { background: var(--accent-green); border-color: var(--accent-green); color: #0d1117; font-weight: 600; }
+  .btn.green:hover { background: #4fc56b; }
+  .btn.purple { background: var(--accent-purple); border-color: var(--accent-purple); color: #0d1117; font-weight: 600; }
+  .btn.purple:hover { background: #b59cff; }
+  .btn.red { background: var(--accent-red); border-color: var(--accent-red); color: #0d1117; font-weight: 600; }
+  .btn.red:hover { background: #ff6e63; }
+  .btn.ghost { background: transparent; border-color: var(--border); color: var(--text-muted); font-size: 12px; padding: 6px 12px; }
+  .btn.ghost:hover { color: var(--text); border-color: var(--border-strong); }
+
+  main { flex: 1; display: grid; grid-template-columns: 1.4fr 1fr; overflow: hidden; }
+
+  .chat-pane { overflow-y: auto; padding: 24px 32px 200px; border-right: 1px solid var(--border); scroll-behavior: smooth; }
+  .chat-pane .stream { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+
+  .msg { display: flex; gap: 12px; animation: fadeIn 0.3s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .msg .avatar { width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+  .msg.agent .avatar { background: var(--accent-blue); color: #0d1117; }
+  .msg.user .avatar { background: var(--accent-orange); color: #0d1117; }
+  .msg.system .avatar { background: var(--accent-purple); color: #0d1117; }
+  .msg .body { flex: 1; min-width: 0; }
+  .msg .body .who { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .msg .body .text { color: var(--text); }
+  .msg .body .text p { margin-bottom: 8px; }
+  .msg .body .text p:last-child { margin-bottom: 0; }
+  .msg .body .text code { background: var(--bg-card); font-family: var(--font-mono); font-size: 12px; padding: 1px 6px; border-radius: 3px; color: var(--accent-teal); }
+
+  .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; animation: fadeIn 0.3s ease-out; }
+  .card.checkpoint { border-color: var(--accent-purple); border-width: 1.5px; box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.08); }
+  .card.plan-checkpoint { border-color: var(--accent-orange); border-width: 1.5px; box-shadow: 0 0 0 3px rgba(210, 153, 34, 0.08); }
+  .card.terminal { border-color: var(--accent-green); }
+  .card h3 { font-size: 14px; margin-bottom: 8px; color: var(--text); font-weight: 600; }
+  .card .sub { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+  .card .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+  .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .choice {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: left;
+    color: var(--text);
+    font-family: inherit;
+  }
+  .choice:hover { background: var(--bg-hover); border-color: var(--accent-blue); transform: translateY(-1px); }
+  .choice.green:hover { border-color: var(--accent-green); }
+  .choice.orange:hover { border-color: var(--accent-orange); }
+  .choice .label { font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+  .choice .label.green { color: var(--accent-green); }
+  .choice .label.orange { color: var(--accent-orange); }
+  .choice .desc { font-size: 12px; color: var(--text-muted); }
+
+  .feedback-list { display: flex; flex-direction: column; gap: 8px; }
+  .feedback-list .choice { padding: 10px 14px; }
+  .feedback-list .choice .label { margin-bottom: 0; font-weight: 500; font-size: 13px; color: var(--text); }
+
+  .input-row { display: flex; gap: 8px; }
+  .input-row input, .input-row textarea {
+    flex: 1; background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
+    padding: 10px 12px; border-radius: 6px; font-family: inherit; font-size: 13px; resize: vertical;
+  }
+  .input-row input:focus, .input-row textarea:focus { outline: none; border-color: var(--accent-blue); }
+
+  .build-log {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.7; color: var(--text-muted);
+  }
+  .build-log .line { display: flex; gap: 8px; align-items: baseline; }
+  .build-log .line.done { color: var(--text); }
+  .build-log .line .tag { color: var(--accent-teal); min-width: 60px; }
+  .build-log .line .check { color: var(--accent-green); }
+
+  .mock-app {
+    background: #fff; color: #1a1a1a; border-radius: 8px; padding: 24px 20px; margin: 12px 0;
+    font-family: var(--font-sans); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  .mock-app.wireframe {
+    background: #fafafa; border: 1.5px dashed #aaa; box-shadow: none; position: relative;
+  }
+  .mock-app.wireframe::before {
+    content: 'MOCKUP'; position: absolute; top: -10px; right: 12px;
+    background: var(--accent-orange); color: #0d1117; font-family: var(--font-mono); font-size: 10px;
+    font-weight: 700; padding: 2px 8px; border-radius: 3px; letter-spacing: 0.5px;
+  }
+  .mock-app .url { font-family: var(--font-mono); font-size: 11px; color: #6e7681; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e5e5; }
+  .mock-app h4 { font-size: 18px; margin-bottom: 14px; color: #1a1a1a; }
+  .mock-app .field { margin-bottom: 10px; }
+  .mock-app .field label { display: block; font-size: 11px; color: #6e7681; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .mock-app .field .input { background: #f5f5f5; padding: 8px 10px; border-radius: 4px; font-size: 13px; color: #444; }
+  .mock-app .submit { background: #4fa3f7; color: white; padding: 10px 14px; border-radius: 4px; text-align: center; font-weight: 600; font-size: 13px; margin-top: 12px; }
+  .mock-app.wireframe .submit { background: #aaa; }
+  .mock-app .feed { display: flex; flex-direction: column; gap: 10px; }
+  .mock-app .post { background: #f5f5f5; padding: 10px 12px; border-radius: 6px; font-size: 13px; }
+  .mock-app .post .who { font-weight: 600; font-size: 12px; color: #1a1a1a; margin-bottom: 4px; }
+  .mock-app .post .text { color: #444; font-size: 13px; }
+
+  /* Right: doc tabs pane */
+  .docs-pane { display: flex; flex-direction: column; background: var(--bg-surface); overflow: hidden; }
+  .doc-tabs {
+    display: flex; gap: 2px; padding: 12px 16px 0;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .tab {
+    background: transparent; border: none; color: var(--text-muted);
+    padding: 8px 12px; cursor: pointer; font-family: var(--font-mono); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; position: relative; transition: color 0.15s, border-color 0.15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent-blue); }
+  .tab.updated::after {
+    content: ''; position: absolute; top: 6px; right: 4px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--accent-orange);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .doc-content { flex: 1; overflow-y: auto; padding: 16px 20px 60px; }
+  .doc-pane { display: none; font-family: var(--font-mono); font-size: 12px; line-height: 1.7; }
+  .doc-pane.active { display: block; }
+  .doc-filename { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-bottom: 12px; text-transform: lowercase; letter-spacing: 0.3px; }
+  .doc-h2 { color: var(--accent-purple); font-weight: 700; margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .doc-h2:first-child { margin-top: 0; }
+  .doc-line { color: var(--text); white-space: pre-wrap; }
+  .doc-empty { color: var(--text-dim); font-style: italic; }
+  .doc-amend { color: var(--accent-orange); font-size: 10px; padding: 1px 5px; background: rgba(210, 153, 34, 0.12); border-radius: 3px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.4px; }
+
+  /* spec doc structure (special rendering) */
+  .spec-section { margin-bottom: 14px; }
+  .spec-section .key { color: var(--accent-purple); }
+  .spec-section .val { color: var(--accent-teal); }
+  .spec-section .h { color: var(--text); font-weight: 600; margin-bottom: 6px; display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .spec-section .indent { padding-left: 14px; color: var(--text-muted); }
+  .slice { display: flex; align-items: center; gap: 8px; padding: 4px 0; color: var(--text-muted); transition: all 0.3s; }
+  .slice.done { color: var(--text); }
+  .slice.in-progress { color: var(--accent-purple); font-weight: 600; }
+  .slice.planned { color: var(--text-dim); }
+  .slice .marker { font-family: var(--font-mono); width: 16px; }
+  .slice.done .marker { color: var(--accent-green); }
+  .slice.in-progress .marker { color: var(--accent-purple); }
+  .slice.planned .marker { color: var(--text-dim); }
+  .slice-detail {
+    margin-top: 4px; padding: 6px 10px; background: var(--bg-base);
+    border-left: 2px solid var(--border); color: var(--text-dim); font-size: 11px; border-radius: 0 3px 3px 0;
+  }
+  .slice-detail.amended { border-left-color: var(--accent-orange); color: var(--text-muted); }
+
+  /* file tree */
+  .tree { font-family: var(--font-mono); font-size: 11px; line-height: 1.85; margin-top: 4px; }
+  .tree-line { display: flex; align-items: baseline; gap: 4px; }
+  .tree-prefix { color: var(--text-dim); white-space: pre; }
+  .tree-dir { color: var(--accent-blue); font-weight: 600; }
+  .tree-file { color: var(--text); }
+  .tree-file.empty { color: var(--text-dim); font-style: italic; }
+  .tree-file.recent { color: var(--accent-orange); font-weight: 600; }
+  .tree-file.touched { color: var(--text); }
+  .tree-meta { color: var(--text-dim); font-size: 10px; margin-left: auto; padding-left: 12px; }
+  .tree-recent-dot { color: var(--accent-orange); margin-left: 4px; animation: pulse 1.5s ease-in-out infinite; }
+
+  .mcp-log { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .mcp-entry {
+    background: var(--bg-card); padding: 7px 10px; border-radius: 4px;
+    border-left: 2px solid var(--accent-purple); font-family: var(--font-mono); font-size: 11px;
+  }
+  .mcp-entry.recent { border-left-color: var(--accent-orange); background: rgba(210, 153, 34, 0.06); }
+  .mcp-tool { color: var(--accent-purple); font-weight: 700; }
+  .mcp-args { color: var(--text-muted); font-size: 10px; padding-left: 4px; margin-top: 2px; }
+  .mcp-result { color: var(--accent-green); margin-top: 3px; font-size: 10px; }
+
+  /* compact mcp message in chat */
+  .msg.mcp .avatar { background: var(--accent-purple); color: #0d1117; }
+  .msg.mcp .body .text { font-family: var(--font-mono); font-size: 11px; }
+  .msg.mcp .body .text .tool { color: var(--accent-purple); font-weight: 700; }
+  .msg.mcp .body .text .args { color: var(--text-muted); }
+  .msg.mcp .body .text .result { color: var(--accent-green); }
+
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border-strong); border-top-color: var(--accent-blue); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress { background: var(--bg-card); border-radius: 4px; overflow: hidden; height: 6px; margin: 10px 0; }
+  .progress .bar { height: 100%; background: var(--accent-blue); transition: width 0.4s; }
+  .pill { display: inline-block; font-family: var(--font-mono); font-size: 10px; padding: 2px 8px; border-radius: 10px; background: var(--bg-card); color: var(--text-muted); margin-left: 6px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .pill.done { background: rgba(63, 185, 80, 0.15); color: var(--accent-green); }
+  .pill.active { background: rgba(167, 139, 250, 0.15); color: var(--accent-purple); }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr 320px; }
+    .chat-pane { border-right: none; border-bottom: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Tenet Agile Mode — Simulator</h1>
+    <div class="meta">scenario: build a small SNS app · upfront whole-product mockup, then build → use-checkpoint per slice</div>
+  </div>
+  <div class="actions">
+    <button class="btn ghost" id="step-counter">step 1</button>
+    <button class="btn ghost" onclick="reset()">↻ reset</button>
+  </div>
+</header>
+
+<main>
+  <div class="chat-pane" id="chat">
+    <div class="stream" id="stream"></div>
+  </div>
+  <aside class="docs-pane">
+    <div class="doc-tabs">
+      <button class="tab active" data-tab="spec" onclick="switchTab('spec')">spec</button>
+      <button class="tab" data-tab="interview" onclick="switchTab('interview')">interview</button>
+      <button class="tab" data-tab="mockup" onclick="switchTab('mockup')">mockup</button>
+      <button class="tab" data-tab="decomposition" onclick="switchTab('decomposition')">decomp</button>
+      <button class="tab" data-tab="harness" onclick="switchTab('harness')">harness</button>
+      <button class="tab" data-tab="files" onclick="switchTab('files')">files + mcp</button>
+    </div>
+    <div class="doc-content">
+      <div class="doc-pane active" data-pane="spec"></div>
+      <div class="doc-pane" data-pane="interview"></div>
+      <div class="doc-pane" data-pane="mockup"></div>
+      <div class="doc-pane" data-pane="decomposition"></div>
+      <div class="doc-pane" data-pane="harness"></div>
+      <div class="doc-pane" data-pane="files"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+// ────────────────────────────────────────────────────────────────
+// State
+// ────────────────────────────────────────────────────────────────
+const state = {
+  step: 0,
+  mode: null,
+  product: 'SNS app',
+  goal: '',
+  slices: [],
+  currentSlice: -1,
+};
+
+const docs = {
+  interview: '',
+  mockup: '',
+  decomposition: '',
+  harness: '',
+};
+
+const fileMap = {
+  spec: '.tenet/spec/2026-04-27-sns.md',
+  interview: '.tenet/interview/2026-04-27-sns.md',
+  mockup: '.tenet/mockup/2026-04-27-sns.md',
+  decomposition: '.tenet/decomposition/2026-04-27-sns.md',
+  harness: '.tenet/harness/current.md',
+};
+
+const files = {
+  '.tenet/.state/tenet.db':                 { exists: true,  type: 'sqlite', desc: 'persistent jobs + events store' },
+  '.tenet/spec/2026-04-27-sns.md':          { exists: false, type: 'md',     lines: 0 },
+  '.tenet/interview/2026-04-27-sns.md':     { exists: false, type: 'md',     lines: 0 },
+  '.tenet/mockup/2026-04-27-sns.md':        { exists: false, type: 'md',     lines: 0 },
+  '.tenet/decomposition/2026-04-27-sns.md': { exists: false, type: 'md',     lines: 0 },
+  '.tenet/harness/current.md':              { exists: false, type: 'md',     lines: 0 },
+  '.tenet/steer/inbox.md':                  { exists: true,  type: 'md',     lines: 0, desc: 'singleton, empty' },
+  '.tenet/status/status.md':                { exists: true,  type: 'auto',   desc: 'auto-generated from db' },
+  '.tenet/status/job-queue.md':             { exists: true,  type: 'auto',   desc: 'auto-generated from db' },
+};
+
+let recentlyTouched = null;
+const mcpLog = [];
+
+function touchFile(path, lineCount) {
+  if (!files[path]) return;
+  files[path].exists = true;
+  if (lineCount != null) files[path].lines = lineCount;
+  recentlyTouched = path;
+  renderFiles();
+  pulseTab('files');
+}
+
+function mcp(tool, args, result) {
+  mcpLog.unshift({ tool, args, result });
+  if (mcpLog.length > 12) mcpLog.length = 12;
+  // Compact chat message
+  const div = document.createElement('div');
+  div.className = 'msg mcp';
+  div.innerHTML = `<div class="avatar">M</div><div class="body"><div class="who">MCP</div><div class="text"><span class="tool">${tool}</span>${args ? ` <span class="args">${args}</span>` : ''} <span class="result">→ ${result}</span></div></div>`;
+  stream.appendChild(div);
+  scrollToBottom();
+  renderFiles();
+  pulseTab('files');
+}
+
+const initialSlicePlan = [
+  { name: 'login + signup',  status: 'planned', detail: 'email + password auth, sessions, signup form, login form, "remember me"' },
+  { name: 'posting',         status: 'planned', detail: 'create short text posts, view own feed' },
+  { name: 'friends',         status: 'planned', detail: 'find users, send/accept friend request, see friends\' posts in feed' },
+  { name: 'notifications',   status: 'planned', detail: 'in-app bell icon, alert on friend request + new post from friend' },
+];
+
+// ────────────────────────────────────────────────────────────────
+// DOM helpers
+// ────────────────────────────────────────────────────────────────
+const stream = document.getElementById('stream');
+const stepCounter = document.getElementById('step-counter');
+
+function bumpStep() { state.step++; stepCounter.textContent = `step ${state.step}`; }
+
+function scrollToBottom() {
+  const chat = document.getElementById('chat');
+  setTimeout(() => { chat.scrollTop = chat.scrollHeight; }, 50);
+}
+
+function escapeHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function agentMsg(text) { return msg('agent', 'AI', text); }
+function userMsg(text)  { return msg('user', 'YOU', text); }
+function systemMsg(text){ return msg('system', 'SYS', text); }
+function msg(kind, who, text) {
+  const div = document.createElement('div');
+  div.className = `msg ${kind}`;
+  div.innerHTML = `<div class="avatar">${who[0]}</div><div class="body"><div class="who">${who}</div><div class="text"><p>${text}</p></div></div>`;
+  stream.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+function card(html, klass = '') {
+  const div = document.createElement('div');
+  div.className = `card ${klass}`;
+  div.innerHTML = html;
+  stream.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+function disablePrev() {
+  const cards = document.querySelectorAll('.card');
+  cards.forEach((c, i) => {
+    if (i < cards.length - 1) {
+      c.querySelectorAll('button').forEach(b => b.disabled = true);
+      c.style.opacity = '0.55';
+    }
+  });
+}
+
+// ────────────────────────────────────────────────────────────────
+// Doc rendering
+// ────────────────────────────────────────────────────────────────
+function appendDoc(name, sectionTitle, body, opts = {}) {
+  const sep = docs[name] ? '\n\n' : '';
+  const amendTag = opts.amend ? ' [amend]' : '';
+  docs[name] = docs[name] + sep + `## ${sectionTitle}${amendTag}\n${body}`;
+  renderDocs();
+  pulseTab(name);
+  if (fileMap[name]) touchFile(fileMap[name], docs[name].split('\n').length);
+}
+
+function renderFiles() {
+  const pane = document.querySelector('[data-pane="files"]');
+  if (!pane) return;
+  const layout = [
+    { kind: 'dir',  name: '.state',         prefix: '├─' },
+    { kind: 'file', path: '.tenet/.state/tenet.db',                 prefix: '│  └─' },
+    { kind: 'dir',  name: 'spec',           prefix: '├─' },
+    { kind: 'file', path: '.tenet/spec/2026-04-27-sns.md',          prefix: '│  └─' },
+    { kind: 'dir',  name: 'interview',      prefix: '├─' },
+    { kind: 'file', path: '.tenet/interview/2026-04-27-sns.md',     prefix: '│  └─' },
+    { kind: 'dir',  name: 'mockup',         prefix: '├─' },
+    { kind: 'file', path: '.tenet/mockup/2026-04-27-sns.md',        prefix: '│  └─' },
+    { kind: 'dir',  name: 'decomposition',  prefix: '├─' },
+    { kind: 'file', path: '.tenet/decomposition/2026-04-27-sns.md', prefix: '│  └─' },
+    { kind: 'dir',  name: 'harness',        prefix: '├─' },
+    { kind: 'file', path: '.tenet/harness/current.md',              prefix: '│  └─' },
+    { kind: 'dir',  name: 'steer',          prefix: '├─' },
+    { kind: 'file', path: '.tenet/steer/inbox.md',                  prefix: '│  └─' },
+    { kind: 'dir',  name: 'status',         prefix: '└─' },
+    { kind: 'file', path: '.tenet/status/status.md',                prefix: '   ├─' },
+    { kind: 'file', path: '.tenet/status/job-queue.md',             prefix: '   └─' },
+  ];
+
+  let html = `<div class="doc-filename">.tenet/ — live file tree</div>`;
+  html += `<div class="tree">`;
+  html += `<div class="tree-line"><span class="tree-dir">.tenet/</span></div>`;
+  layout.forEach(node => {
+    if (node.kind === 'dir') {
+      html += `<div class="tree-line"><span class="tree-prefix">${node.prefix}</span><span class="tree-dir">${node.name}/</span></div>`;
+    } else {
+      const f = files[node.path];
+      const name = node.path.split('/').pop();
+      let meta;
+      if (f.type === 'sqlite' || f.type === 'auto') meta = f.desc;
+      else if (!f.exists) meta = '<not yet>';
+      else meta = f.lines === 0 ? (f.desc || 'empty') : `${f.lines} lines`;
+      const cls = recentlyTouched === node.path ? 'tree-file recent' : f.exists ? 'tree-file touched' : 'tree-file empty';
+      const dot = recentlyTouched === node.path ? '<span class="tree-recent-dot">●</span>' : '';
+      html += `<div class="tree-line"><span class="tree-prefix">${node.prefix}</span><span class="${cls}">${name}</span>${dot}<span class="tree-meta">${meta}</span></div>`;
+    }
+  });
+  html += `</div>`;
+
+  html += `<div class="doc-h2" style="margin-top: 24px">recent mcp calls</div>`;
+  if (mcpLog.length === 0) {
+    html += `<div class="doc-empty">no mcp calls yet — they'll appear here as phases run</div>`;
+  } else {
+    html += `<div class="mcp-log">`;
+    mcpLog.forEach((c, i) => {
+      const cls = i === 0 ? 'mcp-entry recent' : 'mcp-entry';
+      html += `<div class="${cls}"><div class="mcp-tool">${c.tool}</div>`;
+      if (c.args) html += `<div class="mcp-args">${c.args}</div>`;
+      html += `<div class="mcp-result">→ ${c.result}</div></div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<div class="doc-h2" style="margin-top: 24px">how mcp tools find documents</div>`;
+  html += `<div style="font-family: var(--font-sans); font-size: 12px; color: var(--text-muted); line-height: 1.6">`;
+  html += `<p style="margin-bottom: 8px"><code style="background: var(--bg-card); color: var(--accent-teal); font-family: var(--font-mono); padding: 1px 5px; border-radius: 3px; font-size: 11px">tenet_compile_context</code> globs <code style="background: var(--bg-card); color: var(--accent-teal); font-family: var(--font-mono); padding: 1px 5px; border-radius: 3px; font-size: 11px">*-{feature}.md</code> in spec/interview/mockup/decomposition, picks the latest by date prefix, plus <code style="background: var(--bg-card); color: var(--accent-teal); font-family: var(--font-mono); padding: 1px 5px; border-radius: 3px; font-size: 11px">harness/current.md</code> singleton. In agile mode this resolves to the same single feature-scoped file — the agent reads its slice-headed sections inside.</p>`;
+  html += `<p><code style="background: var(--bg-card); color: var(--accent-teal); font-family: var(--font-mono); padding: 1px 5px; border-radius: 3px; font-size: 11px">tenet_register_jobs</code> takes a <code style="background: var(--bg-card); color: var(--accent-teal); font-family: var(--font-mono); padding: 1px 5px; border-radius: 3px; font-size: 11px">feature</code> slug and writes jobs to the SQLite db. In agile mode it's called once per slice, with the slice's mini-DAG.</p>`;
+  html += `</div>`;
+
+  pane.innerHTML = html;
+}
+
+function pulseTab(name) {
+  const tab = document.querySelector(`[data-tab="${name}"]`);
+  if (tab && !tab.classList.contains('active')) tab.classList.add('updated');
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.doc-pane').forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+  const tab = document.querySelector(`[data-tab="${name}"]`);
+  if (tab) tab.classList.remove('updated');
+}
+
+function formatDoc(content, filename) {
+  if (!content) return `<div class="doc-filename">${filename}</div><div class="doc-empty">no content yet — phase hasn't run</div>`;
+  let html = `<div class="doc-filename">${filename}</div>`;
+  content.split('\n').forEach(line => {
+    if (line.startsWith('## ')) {
+      const rest = line.slice(3);
+      const amend = rest.endsWith(' [amend]');
+      const title = amend ? rest.slice(0, -8) : rest;
+      html += `<div class="doc-h2">${escapeHtml(title)}${amend ? '<span class="doc-amend">amend</span>' : ''}</div>`;
+    } else if (line === '') {
+      html += '<div style="height: 4px"></div>';
+    } else {
+      html += `<div class="doc-line">${escapeHtml(line)}</div>`;
+    }
+  });
+  return html;
+}
+
+function renderSpecPane() {
+  const pane = document.querySelector('[data-pane="spec"]');
+  if (state.step === 0) {
+    pane.innerHTML = `<div class="doc-filename">spec/2026-04-27-sns.md</div><div class="doc-empty">no spec yet — interview first</div>`;
+    return;
+  }
+  let html = `<div class="doc-filename">spec/2026-04-27-sns.md</div>`;
+  if (state.goal) {
+    html += `<div class="spec-section"><span class="key">mode:</span> <span class="val">${state.mode || '<not set>'}</span></div>`;
+    html += `<div class="spec-section"><span class="h">overall product goal</span><div class="indent">${state.goal}</div></div>`;
+  }
+  if (state.mode === 'agile' && state.slices.length > 0) {
+    html += `<div class="spec-section"><span class="h">slice plan <span class="pill">${state.slices.filter(s=>s.status==='done').length}/${state.slices.length}</span></span>`;
+    state.slices.forEach((slice, i) => {
+      const marker = slice.status === 'done' ? '✓' : slice.status === 'in-progress' ? '◆' : '·';
+      html += `<div class="slice ${slice.status}"><span class="marker">${marker}</span><span>${i+1}. ${slice.name}</span></div>`;
+      if (slice.detail && (slice.status === 'in-progress' || slice.status === 'done')) {
+        html += `<div class="slice-detail ${slice.amended ? 'amended' : ''}">${slice.amended ? '✎ amended · ' : ''}${slice.detail}</div>`;
+      }
+    });
+    html += `</div>`;
+  } else if (state.mode === 'autonomous') {
+    html += `<div class="spec-section"><span class="h">decomposition (autonomous DAG)</span><div class="indent">[auth] · [posts] · [friends] · [notifications] → [assemble] → [eval]</div></div>`;
+  }
+  pane.innerHTML = html;
+}
+
+function renderDocs() {
+  renderSpecPane();
+  document.querySelector('[data-pane="interview"]').innerHTML     = formatDoc(docs.interview,     'interview/2026-04-27-sns.md');
+  document.querySelector('[data-pane="mockup"]').innerHTML        = formatDoc(docs.mockup,        'mockup/2026-04-27-sns.md');
+  document.querySelector('[data-pane="decomposition"]').innerHTML = formatDoc(docs.decomposition, 'decomposition/2026-04-27-sns.md');
+  document.querySelector('[data-pane="harness"]').innerHTML       = formatDoc(docs.harness,       'harness/current.md');
+  renderFiles();
+}
+
+// ────────────────────────────────────────────────────────────────
+// Flow
+// ────────────────────────────────────────────────────────────────
+function start() {
+  bumpStep();
+  mcp('tenet_init', 'project=tenet-sns', 'scaffolded .tenet/ + initialized sqlite');
+  agentMsg(`Hi — I'm Tenet. You said you want to build a small <strong>SNS (social network) app</strong>. I'll ask a few quick questions, then we'll pick a build mode. Click <strong>Continue</strong> to walk through the interview.`);
+  card(`<div class="actions"><button class="btn primary" onclick="interview1()">Continue</button></div>`);
+}
+
+function interview1() {
+  disablePrev();
+  bumpStep();
+  agentMsg(`What are you building?`);
+  userMsg(`A small social network — users can sign up, post short updates, and follow friends. Just for me and a few people I know.`);
+  card(`<div class="actions"><button class="btn primary" onclick="interview2()">Next question →</button></div>`);
+}
+
+function interview2() {
+  disablePrev();
+  bumpStep();
+  agentMsg(`Web only or mobile too? Any must-have features?`);
+  userMsg(`Web only. Must-have: login, posting, friends list. Notifications would be nice but later.`);
+  card(`<div class="actions"><button class="btn primary" onclick="interview3()">Next question →</button></div>`);
+}
+
+function interview3() {
+  disablePrev();
+  bumpStep();
+  agentMsg(`Anything to skip? Any specific tech you want?`);
+  userMsg(`No DMs for now. Use whatever stack is fastest to ship.`);
+  state.goal = 'A small web SNS — signup, posting, friends, notifications. Personal scale. No DMs in v1.';
+
+  appendDoc('interview', 'Initial interview (2026-04-27)',
+`Q: What are you building?
+A: small social network — signup, posts, friends. just for me and a few people.
+
+Q: Web only? Must-haves?
+A: web only. login, posting, friends required. notifications later.
+
+Q: Anything to skip? Specific tech?
+A: no DMs in v1. fastest stack to ship.
+
+Inferred features (4): login+signup · posting · friends · notifications`);
+
+  appendDoc('harness', 'Project harness',
+`commands
+  start: pnpm dev
+  test:  pnpm test
+  e2e:   pnpm playwright
+
+env
+  PORT=3000
+  DATABASE_URL=sqlite:./local.db
+  SESSION_SECRET=<dev-default>
+
+services
+  none external (sqlite local)
+
+testing
+  unit: vitest
+  e2e:  playwright (chromium)`);
+
+  renderDocs();
+  mcp('tenet_validate_clarity', 'feature=sns', 'passed (0.92, threshold 0.8)');
+  card(`<div class="actions"><button class="btn primary" onclick="modePick()">Got it — pick build mode</button></div>`);
+}
+
+function modePick() {
+  disablePrev();
+  bumpStep();
+  agentMsg(`I have enough. I see <strong>4 features</strong> in scope: login+signup, posting, friends, notifications. <br><br>How do you want me to build this?`);
+  card(`
+    <h3>How do you want me to build this?</h3>
+    <div class="sub">Picked once, stored on the spec, drives how decomposition shapes the DAG.</div>
+    <div class="choice-grid">
+      <button class="choice" onclick="pickAutonomous()">
+        <div class="label">⚡ AUTONOMOUS</div>
+        <div class="desc">I plan everything, build the whole app, then show you the result. ~5–10 hours uninterrupted. You see nothing until done.</div>
+      </button>
+      <button class="choice orange" onclick="pickAgile()">
+        <div class="label orange">◆ AGILE</div>
+        <div class="desc">Mockup → you confirm → build → you run it. Per slice, two checkpoints. You can redirect at either.</div>
+      </button>
+    </div>
+  `);
+}
+
+function pickAutonomous() {
+  disablePrev();
+  bumpStep();
+  state.mode = 'autonomous';
+  renderDocs();
+  agentMsg(`Autonomous mode picked. Decomposing into a component DAG: auth → posts → friends → notifications → assemble → eval.`);
+
+  const c = card(`
+    <h3><span class="spinner"></span>Running ~5 hour autonomous build...</h3>
+    <div class="sub">No checkpoints. You'll see the result when it's done.</div>
+    <div class="progress"><div class="bar" style="width: 0%"></div></div>
+    <div class="sub" id="auto-status">Decomposition...</div>
+  `);
+
+  const bar = c.querySelector('.bar');
+  const status = c.querySelector('#auto-status');
+  const steps = ['Decomposing...', 'Building [auth]...', 'Building [posts]...', 'Building [friends]...', 'Building [notifications]...', 'Assembling...', 'Eval...'];
+  let i = 0;
+  const tick = setInterval(() => {
+    i++;
+    bar.style.width = `${(i/steps.length)*100}%`;
+    if (i < steps.length) status.textContent = steps[i];
+    else {
+      clearInterval(tick);
+      status.innerHTML = `<span style="color: var(--accent-green)">✓ Build complete — localhost:3000</span>`;
+      card(`
+        <h3>Build finished</h3>
+        <div class="sub">All 4 features ready. But you had no visibility for 5 hours. If something was off, you'd be finding out now.</div>
+        <div class="actions">
+          <button class="btn purple" onclick="reset(); pickAgile()">Try agile mode instead →</button>
+          <button class="btn ghost" onclick="reset()">Reset</button>
+        </div>
+      `);
+    }
+  }, 600);
+}
+
+function pickAgile() {
+  disablePrev();
+  bumpStep();
+  state.mode = 'agile';
+  state.slices = JSON.parse(JSON.stringify(initialSlicePlan));
+  touchFile(fileMap.spec, 8 + state.slices.length * 3);
+  renderDocs();
+  agentMsg(`Agile mode picked. I drafted a slice plan — see the <code>spec</code> tab on the right. <br><br>Cadence: I'll <strong>mockup the whole product upfront</strong> (like a freelancer pitching the full design), one plan-checkpoint to align, then build slice-by-slice with a use-checkpoint after each. The plan-checkpoint only re-opens mid-run if a redirect actually changes design.`);
+  card(`
+    <h3>Slice plan ready</h3>
+    <div class="sub">${state.slices.length} slices, additive. I'll now mockup all of them so you can see the full product before any code.</div>
+    <div class="actions">
+      <button class="btn primary" onclick="wholeMockupPhase()">Draft mockups for the whole product →</button>
+    </div>
+  `);
+}
+
+// ────────────────────────────────────────────────────────────────
+// WHOLE-PRODUCT MOCKUP — once upfront
+// ────────────────────────────────────────────────────────────────
+function wholeMockupPhase() {
+  disablePrev();
+  bumpStep();
+  mcp('tenet_compile_context', 'feature=sns,phase=mockup', 'returned spec + interview + harness');
+  agentMsg(`Drafting mockups upfront. Two views, same alignment: <strong>final product</strong> (the destination — the integrated app at completion), then <strong>slice by slice</strong> (the path — what each iteration delivers). The freelancer way: show what they're getting, then how you'll deliver it.`);
+
+  // Doc body covers UI + architecture + per-slice
+  let mockupBody = `Whole-product mockup pass — final product + architecture + slice-by-slice path.\n\n`;
+  mockupBody += `### Final product (integrated)\n${finalProductDescription()}\n\n`;
+  mockupBody += `### ${architectureDescription('initial')}\n\n`;
+  mockupBody += `### Slice-by-slice path\n`;
+  state.slices.forEach((slice, i) => {
+    mockupBody += `\n#### Slice ${i+1}: ${slice.name}\n${mockupDescriptionFor(slice.name)}\n`;
+  });
+  appendDoc('mockup', `Whole-product mockup (initial)`, mockupBody.trim());
+
+  const perSliceHtml = state.slices.map((slice, i) =>
+    `<div style="margin-bottom: 12px">
+       <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px">Slice ${i+1} · ${slice.name}</div>
+       ${mockAppFor(slice.name, true)}
+     </div>`
+  ).join('');
+
+  card(`
+    <h3>Mockup pass — full product</h3>
+    <div class="sub">Three views. UI · architecture · slice path. Mockup phase covers all of them when relevant. Confirm at the plan checkpoint.</div>
+
+    <div style="font-family: var(--font-mono); font-size: 10px; color: var(--accent-orange); text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 6px; font-weight: 700">▸ Final product · what it looks like when everything is shipped</div>
+    ${finalProductMockup()}
+    <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px; margin-bottom: 18px; padding-left: 10px; border-left: 2px solid var(--border)">${finalProductDescription()}</div>
+
+    <div style="font-family: var(--font-mono); font-size: 10px; color: var(--accent-orange); text-transform: uppercase; letter-spacing: 0.5px; margin: 18px 0 6px; font-weight: 700">▸ Architecture · how the parts fit</div>
+    ${architectureDiagram('initial')}
+    <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px; margin-bottom: 18px; padding-left: 10px; border-left: 2px solid var(--border)">Mockup phase produces architecture sketches when scope warrants — usually for the upfront whole-product pass and any redirect that introduces a new external service or schema shift.</div>
+
+    <div style="font-family: var(--font-mono); font-size: 10px; color: var(--accent-orange); text-transform: uppercase; letter-spacing: 0.5px; margin: 18px 0 6px; font-weight: 700">▸ Slice by slice · the path to get there</div>
+    ${perSliceHtml}
+
+    <div class="actions">
+      <button class="btn primary" onclick="initialPlanCheckpoint()">Continue to plan checkpoint →</button>
+    </div>
+  `);
+}
+
+function architectureDiagram(variant) {
+  const hasEmail = variant === 'with-email';
+  return `<div class="mock-app wireframe" style="padding: 18px 16px">
+    <svg viewBox="0 0 460 ${hasEmail ? 220 : 180}" xmlns="http://www.w3.org/2000/svg" style="width: 100%; max-width: 460px">
+      <defs>
+        <marker id="archarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#444"/>
+        </marker>
+      </defs>
+      <!-- Browser -->
+      <rect x="10"  y="70" width="90" height="40" fill="#fff" stroke="#444" stroke-width="1.5" rx="4"/>
+      <text x="55"  y="93" text-anchor="middle" font-family="monospace" font-size="12" fill="#1a1a1a">Browser</text>
+      <line x1="100" y1="90" x2="170" y2="90" stroke="#444" stroke-width="1.5" marker-end="url(#archarrow)"/>
+      <!-- Web Server -->
+      <rect x="170" y="40" width="140" height="100" fill="#fff" stroke="#1a1a1a" stroke-width="1.8" rx="4"/>
+      <text x="240" y="60" text-anchor="middle" font-family="monospace" font-size="12" font-weight="bold" fill="#1a1a1a">Web Server (Node)</text>
+      <line x1="180" y1="68" x2="300" y2="68" stroke="#ccc" stroke-width="1"/>
+      <text x="240" y="83"  text-anchor="middle" font-family="monospace" font-size="10" fill="#666">/auth · /posts</text>
+      <text x="240" y="98"  text-anchor="middle" font-family="monospace" font-size="10" fill="#666">/friends · /notifications</text>
+      <text x="240" y="113" text-anchor="middle" font-family="monospace" font-size="10" fill="#666">sessions · middleware</text>
+      ${hasEmail ? '<text x="240" y="128" text-anchor="middle" font-family="monospace" font-size="10" fill="#d29922" font-weight="bold">/password-reset</text>' : ''}
+      <line x1="310" y1="90" x2="380" y2="90" stroke="#444" stroke-width="1.5" marker-end="url(#archarrow)"/>
+      <!-- SQLite -->
+      <rect x="380" y="60" width="70" height="60" fill="#fff" stroke="#444" stroke-width="1.5" rx="4"/>
+      <text x="415" y="78" text-anchor="middle" font-family="monospace" font-size="11" font-weight="bold" fill="#1a1a1a">SQLite</text>
+      <text x="415" y="93" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">users · posts</text>
+      <text x="415" y="106" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">friendships</text>
+      ${hasEmail ? '<text x="415" y="118" text-anchor="middle" font-family="monospace" font-size="9" fill="#d29922" font-weight="bold">reset_tokens</text>' : ''}
+      ${hasEmail ? `
+      <!-- Email service -->
+      <line x1="240" y1="140" x2="240" y2="170" stroke="#d29922" stroke-width="1.5" marker-end="url(#archarrow)" stroke-dasharray="4,3"/>
+      <rect x="170" y="170" width="140" height="36" fill="#fff" stroke="#d29922" stroke-width="1.8" rx="4"/>
+      <text x="240" y="193" text-anchor="middle" font-family="monospace" font-size="11" font-weight="bold" fill="#d29922">Email Service (NEW)</text>
+      ` : ''}
+    </svg>
+    <div style="font-family: var(--font-mono); font-size: 10px; color: ${hasEmail ? '#d29922' : '#666'}; margin-top: 8px; text-align: center; font-weight: 600">
+      architecture · ${hasEmail ? 'with email service for password reset' : 'browser → web server → sqlite'}
+    </div>
+  </div>`;
+}
+
+function architectureDescription(variant) {
+  if (variant === 'with-email') {
+    return `Architecture (with email service):
+  Browser → Web Server (Node) → SQLite (users, posts, friendships, reset_tokens)
+                              ↓
+                              Email Service (Resend/Postmark/etc) — for password reset links
+  Web Server gets /password-reset endpoint. New reset_tokens table. Email service is new external dependency.`;
+  }
+  return `Architecture (initial):
+  Browser → Web Server (Node) → SQLite (users, posts, friendships, notifications)
+  Web Server hosts /auth, /posts, /friends, /notifications endpoints + session middleware.
+  No external services in v1. Single backend process. Sqlite for personal scale.`;
+}
+
+function finalProductMockup() {
+  return `<div class="mock-app wireframe">
+    <div class="url">https://localhost:3000/feed</div>
+    <div style="display: flex; align-items: center; gap: 14px; padding-bottom: 10px; margin-bottom: 14px; border-bottom: 1px solid #e5e5e5; font-size: 13px">
+      <strong style="color: #1a1a1a">SNS</strong>
+      <span style="color: #4fa3f7; font-weight: 600">Feed</span>
+      <span style="color: #888">Friends</span>
+      <span style="margin-left: auto; color: #888">🔔<span style="background: #f85149; color: white; font-size: 9px; padding: 1px 5px; border-radius: 8px; margin-left: 2px; font-weight: 700">3</span></span>
+      <span style="color: #888">jongkuk ▾</span>
+    </div>
+    <div class="field"><label>What's on your mind?</label><div class="input">Just shipped agile mode in Tenet 🚀</div></div>
+    <div class="submit">Post</div>
+    <div class="feed" style="margin-top: 16px">
+      <div class="post"><div class="who">jane <span style="color: #4fa3f7; font-weight: 400; font-size: 10px">friend</span> · 2m ago</div><div class="text">Hi everyone!</div></div>
+      <div class="post"><div class="who">you · 1h ago</div><div class="text">Just shipped agile mode in Tenet 🚀</div></div>
+      <div class="post"><div class="who">john <span style="color: #4fa3f7; font-weight: 400; font-size: 10px">friend</span> · 3h ago</div><div class="text">Coffee is good today</div></div>
+    </div>
+  </div>`;
+}
+
+function finalProductDescription() {
+  return `Integrated SNS at completion: top nav with Feed / Friends / 🔔 notifications (with unread badge) / user menu. Post composer at top of feed. Mixed feed of own posts + friends' posts, newest first, "friend" tag on others' posts. All four planned slices integrated into one experience.`;
+}
+
+function initialPlanCheckpoint() {
+  disablePrev();
+  bumpStep();
+  systemMsg(`◆ initial plan checkpoint — agent paused for full-product design confirmation`);
+  card(`
+    <h3>◆ Initial plan checkpoint</h3>
+    <div class="sub">Mockups above cover the entire planned product. Confirm the design direction once, and I'll build slice-by-slice. You can still redirect at every <em>use</em>-checkpoint — this plan-checkpoint only reopens if a redirect actually changes design.</div>
+    <div class="actions">
+      <button class="btn green" onclick="initialPlanApprove()">✓ Direction is right — start building slice 1</button>
+      <button class="btn purple" onclick="initialPlanAdjust()">✎ Adjust mockups before building</button>
+    </div>
+  `, 'plan-checkpoint');
+}
+
+function initialPlanApprove() {
+  disablePrev();
+  bumpStep();
+  userMsg(`Direction is right. Build slice by slice.`);
+  agentMsg(`Approved. Starting with slice 1: <strong>${state.slices[0].name}</strong>. From here on, no plan-checkpoint per slice — just build then use-checkpoint.`);
+  mcp('tenet_validate_readiness', `feature=sns,slice=1`, 'passed (8/8 categories ready)');
+  setTimeout(() => buildSlice(0), 800);
+}
+
+function initialPlanAdjust() {
+  disablePrev();
+  bumpStep();
+  agentMsg(`What needs to change in the mockups?`);
+  const opts = [
+    { label: 'Login should use email magic link instead of password',  slice: 0, note: 'magic link auth' },
+    { label: 'Posts should support image uploads',                      slice: 1, note: 'image uploads' },
+    { label: 'Friends search by username, not email',                   slice: 2, note: 'username search' },
+    { label: 'Group similar notifications (3 friend reqs = 1 row)',     slice: 3, note: 'notification grouping' },
+  ];
+  const wrap = document.createElement('div');
+  wrap.className = 'feedback-list';
+  opts.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'choice';
+    btn.innerHTML = `<div class="label">${opt.label}</div>`;
+    btn.onclick = () => applyInitialAdjust(opt);
+    wrap.appendChild(btn);
+  });
+  const c = document.createElement('div');
+  c.className = 'card';
+  c.innerHTML = `<h3>Pick a change to apply across the mockup pass</h3>`;
+  c.appendChild(wrap);
+  stream.appendChild(c);
+  scrollToBottom();
+}
+
+function applyInitialAdjust(opt) {
+  disablePrev();
+  bumpStep();
+  userMsg(opt.label);
+  state.slices[opt.slice].amended = true;
+  state.slices[opt.slice].detail += ` · ✎ initial design tweak: ${opt.note}`;
+  appendDoc('mockup', `Whole-product mockup (revision)`,
+`User adjustment at initial plan checkpoint: "${opt.label}"
+Affected slice: ${opt.slice + 1} (${state.slices[opt.slice].name})
+Re-drafted with adjustment applied.`, { amend: true });
+  renderDocs();
+  agentMsg(`Got it. Re-drafting that mockup. The other slices are unchanged so I'm only re-showing the affected one.`);
+  setTimeout(() => {
+    const slice = state.slices[opt.slice];
+    const mockHtml = mockAppFor(slice.name, true);
+    card(`
+      <h3>Mockup re-drafted — slice ${opt.slice+1}: ${slice.name}</h3>
+      <div class="sub">Just the affected slice. The rest of the product mockup stands.</div>
+      ${mockHtml}
+      <div class="actions">
+        <button class="btn green" onclick="initialPlanApprove()">✓ Now it's right — start building</button>
+      </div>
+    `);
+  }, 700);
+}
+
+// ────────────────────────────────────────────────────────────────
+// MOCKUP PHASE — new
+// ────────────────────────────────────────────────────────────────
+function mockupPhase(idx) {
+  disablePrev();
+  bumpStep();
+  state.currentSlice = idx;
+  state.slices[idx].status = 'in-progress';
+  renderDocs();
+
+  const slice = state.slices[idx];
+  mcp('tenet_compile_context', `feature=sns,phase=mockup,slice=${idx+1}`, 'returned spec + interview + harness');
+  agentMsg(`Drafting mockup for slice ${idx+1}: <strong>${slice.name}</strong>. Thinking about layout, fields, primary action, edge states.`);
+
+  const mockHtml = mockAppFor(slice.name, true);
+  const mockupDescription = mockupDescriptionFor(slice.name);
+
+  appendDoc('mockup', `Slice ${idx+1}: ${slice.name}`, mockupDescription, { amend: slice.amended });
+
+  card(`
+    <h3>Mockup drafted</h3>
+    <div class="sub">A wireframe for what slice ${idx+1} should look and feel like. No code yet — this is the cheapest place to catch a design issue.</div>
+    ${mockHtml}
+    <div class="actions">
+      <button class="btn primary" onclick="planCheckpoint(${idx})">Continue to plan checkpoint →</button>
+    </div>
+  `);
+}
+
+function planCheckpoint(idx) {
+  disablePrev();
+  bumpStep();
+  const slice = state.slices[idx];
+  systemMsg(`◆ plan checkpoint — agent paused, waiting on your design confirmation`);
+
+  card(`
+    <h3>◆ Plan checkpoint — slice ${idx+1}: ${slice.name}</h3>
+    <div class="sub">The mockup above is the agent's plan. Does it match what you want before any code is written?</div>
+    <div class="actions">
+      <button class="btn green" onclick="planApprove(${idx})">✓ Mockup looks right — build it</button>
+      <button class="btn purple" onclick="planAdjust(${idx})">✎ Adjust the mockup</button>
+    </div>
+    <div class="sub" style="margin-top: 10px; font-size: 11px;">For tiny additive slices the agent may skip this checkpoint and go straight to build — shown here for clarity.</div>
+  `, 'plan-checkpoint');
+}
+
+function planApprove(idx) {
+  disablePrev();
+  bumpStep();
+  userMsg(`Mockup is right. Build it.`);
+  agentMsg(`Approved. Writing spec amendment, decomposing into jobs, then executing.`);
+  touchFile(fileMap.spec, 8 + state.slices.length * 4);
+  mcp('tenet_validate_readiness', `feature=sns,slice=${idx+1}`, 'passed (8/8 categories ready)');
+  setTimeout(() => buildSlice(idx), 600);
+}
+
+function planAdjust(idx) {
+  disablePrev();
+  bumpStep();
+  agentMsg(`What needs to change in the mockup?`);
+  const slice = state.slices[idx];
+  const options = mockupAdjustOptionsFor(slice.name);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'feedback-list';
+  options.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'choice';
+    btn.innerHTML = `<div class="label">${opt.label}</div>`;
+    btn.onclick = () => applyMockupAdjust(idx, opt);
+    wrap.appendChild(btn);
+  });
+  const c = document.createElement('div');
+  c.className = 'card';
+  c.innerHTML = `<h3>Pick a mockup change</h3>`;
+  c.appendChild(wrap);
+  stream.appendChild(c);
+  scrollToBottom();
+}
+
+function applyMockupAdjust(idx, opt) {
+  disablePrev();
+  bumpStep();
+  userMsg(opt.label);
+  agentMsg(`Got it. Re-drafting the mockup with that change. (No spec change yet — mockup happens before spec amendment, so this is cheap.)`);
+  state.slices[idx].amended = true;
+  state.slices[idx].detail += ` · ✎ design tweak: ${opt.note}`;
+  appendDoc('mockup', `Slice ${idx+1}: ${state.slices[idx].name} (revision)`,
+`Design change: ${opt.note}
+Re-drafted mockup with adjustment. Same fields/flow, design tweak applied.`, { amend: true });
+  renderDocs();
+  setTimeout(() => mockupPhaseRedraft(idx), 800);
+}
+
+function mockupPhaseRedraft(idx) {
+  const slice = state.slices[idx];
+  const mockHtml = mockAppFor(slice.name, true);
+  card(`
+    <h3>Mockup re-drafted</h3>
+    <div class="sub">With your tweak applied. Ready to confirm again.</div>
+    ${mockHtml}
+    <div class="actions">
+      <button class="btn green" onclick="planApprove(${idx})">✓ Now it's right — build it</button>
+    </div>
+  `);
+}
+
+// ────────────────────────────────────────────────────────────────
+// BUILD
+// ────────────────────────────────────────────────────────────────
+function buildSlice(idx) {
+  disablePrev();
+  bumpStep();
+  const slice = state.slices[idx];
+
+  // Append spec amendment narrative
+  const sliceDecomp = decompositionFor(slice.name, idx);
+  appendDoc('decomposition', `Slice ${idx+1}: ${slice.name}`, sliceDecomp, { amend: slice.amended });
+
+  const jobCount = (sliceDecomp.match(/^  \d+\./gm) || []).length;
+  mcp('tenet_register_jobs', `feature=sns,slice=${idx+1}`, `${jobCount} jobs queued (db rows inserted)`);
+  agentMsg(`Decomposing slice ${idx+1} into jobs (see <code>decomp</code> tab). Running execution loop with per-job eval.`);
+
+  const buildCard = card(`
+    <h3>Building slice ${idx+1}: ${slice.name}</h3>
+    <div class="build-log" id="log-${idx}-${state.step}"></div>
+  `);
+
+  const log = buildCard.querySelector(`#log-${idx}-${state.step}`);
+  const buildSteps = sliceBuildSteps(slice.name);
+  let i = 0;
+  const tick = setInterval(() => {
+    if (i < buildSteps.length) {
+      const s = buildSteps[i];
+      const line = document.createElement('div');
+      line.className = 'line';
+      line.innerHTML = `<span class="tag">[${s.tag}]</span><span>${s.text}</span>`;
+      log.appendChild(line);
+      i++;
+    } else {
+      clearInterval(tick);
+      const done = document.createElement('div');
+      done.className = 'line done';
+      done.innerHTML = `<span class="check">✓</span><span>eval passed — slice ${idx+1} ready to demo</span>`;
+      log.appendChild(done);
+      state.slices[idx].status = 'done';
+      renderDocs();
+      mcp('tenet_start_eval', `slice=${idx+1}`, 'critic + test critic + playwright_eval all passed');
+      setTimeout(() => useCheckpoint(idx), 600);
+    }
+  }, 350);
+}
+
+function sliceBuildSteps(name) {
+  if (name.includes('login')) return [
+    { tag: 'ui',   text: 'building signup + login pages...' },
+    { tag: 'api',  text: 'POST /signup, POST /login, session middleware...' },
+    { tag: 'db',   text: 'users table, password hashing, sessions...' },
+    { tag: 'eval', text: 'critic + test critic + playwright...' },
+  ];
+  if (name.includes('posting')) return [
+    { tag: 'ui',   text: 'building post composer + own-feed view...' },
+    { tag: 'api',  text: 'POST /posts, GET /feed (own posts only)...' },
+    { tag: 'db',   text: 'posts table, FK to users...' },
+    { tag: 'eval', text: 'critic + test critic + playwright...' },
+  ];
+  if (name.includes('friends')) return [
+    { tag: 'ui',   text: 'find-users page, friend request UI, friends-only feed...' },
+    { tag: 'api',  text: 'POST /friend-request, accept/reject endpoints, GET /feed (friends)...' },
+    { tag: 'db',   text: 'friendships table, friend_requests table...' },
+    { tag: 'eval', text: 'critic + test critic + playwright...' },
+  ];
+  if (name.includes('notifications')) return [
+    { tag: 'ui',   text: 'bell icon, notifications dropdown, unread state...' },
+    { tag: 'api',  text: 'GET /notifications, POST /notifications/read...' },
+    { tag: 'db',   text: 'notifications table, write triggers...' },
+    { tag: 'eval', text: 'critic + test critic + playwright...' },
+  ];
+  if (name.includes('forgot')) return [
+    { tag: 'ui',   text: 'forgot-password page + email link page...' },
+    { tag: 'api',  text: 'POST /password-reset, POST /password-reset/confirm...' },
+    { tag: 'db',   text: 'reset_tokens table...' },
+    { tag: 'eval', text: 'critic + test critic + playwright...' },
+  ];
+  return [
+    { tag: 'ui',   text: 'building UI...' },
+    { tag: 'api',  text: 'building API endpoints...' },
+    { tag: 'db',   text: 'updating schema...' },
+    { tag: 'eval', text: 'critic + test critic + playwright...' },
+  ];
+}
+
+function decompositionFor(name, idx) {
+  if (name.includes('login')) return `jobs (DAG):
+  1. db.migrate    — users table, sessions table
+  2. api.auth      — POST /signup, POST /login, session middleware  (depends on 1)
+  3. ui.auth       — signup form, login form, session-aware nav     (depends on 2)
+  4. eval          — critic + test critic + playwright              (depends on 3)`;
+  if (name.includes('posting')) return `jobs (DAG):
+  1. db.migrate    — posts table (FK to users)
+  2. api.posts     — POST /posts, GET /feed (own only)              (depends on 1)
+  3. ui.feed       — post composer, own-feed view                   (depends on 2)
+  4. eval          — critic + test critic + playwright              (depends on 3)`;
+  if (name.includes('friends')) return `jobs (DAG):
+  1. db.migrate    — friendships, friend_requests tables
+  2. api.friends   — friend-request endpoints                       (depends on 1)
+  3. api.feed      — extend GET /feed to include friends' posts     (depends on 2)
+  4. ui.friends    — find-users page, requests UI, friends-feed     (depends on 3)
+  5. eval          — critic + test critic + playwright              (depends on 4)`;
+  if (name.includes('notifications')) return `jobs (DAG):
+  1. db.migrate    — notifications table
+  2. api.notif     — GET /notifications, POST /read                 (depends on 1)
+  3. trigger       — emit notif on friend_request + new post        (depends on 1)
+  4. ui.bell       — bell icon, dropdown, unread state              (depends on 2)
+  5. eval          — critic + test critic + playwright              (depends on 4)`;
+  if (name.includes('forgot')) return `jobs (DAG):
+  1. db.migrate    — reset_tokens table
+  2. api.reset     — POST /password-reset, POST /confirm            (depends on 1)
+  3. ui.reset      — forgot-password page, reset confirmation       (depends on 2)
+  4. eval          — critic + test critic + playwright              (depends on 3)`;
+  return `jobs (DAG):
+  1. db   2. api   3. ui   4. eval (chain)`;
+}
+
+function mockupDescriptionFor(name) {
+  if (name.includes('login')) return `Wireframe — slice 1: login + signup
+Two pages: /signup and /login
+Fields: email + password
+Primary action: "Create account" / "Log in"
+Secondary: link between the two pages
+After login: redirect to /feed (empty for now, slice 2 fills it)
+Edge states: invalid email, weak password, duplicate email`;
+  if (name.includes('posting')) return `Wireframe — slice 2: posting
+Page: /feed
+Top: post composer (textarea + "Post" button, 280 char limit)
+Below: list of own posts, newest first
+Each post: text + relative timestamp ("2m ago")
+Empty state: "No posts yet — write your first one above"
+Edge: empty post blocked, char counter, optimistic UI`;
+  if (name.includes('friends')) return `Wireframe — slice 3: friends
+Page: /friends
+Search box: "Find people by email"
+Result row: email + "Send friend request" button (or "Pending" / "Friends ✓")
+/feed becomes friends-feed: shows your posts + friends' posts mixed
+Notifications page: incoming friend requests with accept/reject`;
+  if (name.includes('notifications')) return `Wireframe — slice 4: notifications
+Bell icon in nav (top-right) with red dot when unread
+Click bell → dropdown of last 10 notifications
+Types: "X sent you a friend request" / "X posted something"
+Click notif → mark read, link to source
+Settings: not in v1`;
+  if (name.includes('forgot')) return `Wireframe — slice (amend): forgot password
+On /login: "Forgot password?" link
+Page /forgot-password: email input + "Send reset link" button
+Email link → /reset-password?token=xxx → new password form`;
+  return `Wireframe — slice: ${name}\n(Generic mockup placeholder)`;
+}
+
+function mockupAdjustOptionsFor(name) {
+  if (name.includes('login')) return [
+    { label: 'Use email magic link instead of password',  note: 'magic link auth' },
+    { label: 'Show password strength meter on signup',    note: 'password strength meter' },
+    { label: 'Add "Continue with Google" as an option',   note: 'OAuth Google option' },
+  ];
+  if (name.includes('posting')) return [
+    { label: 'Allow image attachments on posts',          note: 'image uploads' },
+    { label: 'Show character counter live',               note: 'live char counter' },
+  ];
+  if (name.includes('friends')) return [
+    { label: 'Search by username, not email',             note: 'username search' },
+    { label: 'Show mutual-friends count on results',      note: 'mutual count' },
+  ];
+  if (name.includes('notifications')) return [
+    { label: 'Group similar notifications (3 friend requests = 1 row)', note: 'notification grouping' },
+    { label: 'Add an unread badge in the page title',     note: 'tab title badge' },
+  ];
+  return [
+    { label: 'Make the primary action color blue, not green', note: 'color change' },
+    { label: 'Move the secondary link to the bottom',         note: 'layout tweak' },
+  ];
+}
+
+// ────────────────────────────────────────────────────────────────
+// USE CHECKPOINT
+// ────────────────────────────────────────────────────────────────
+function useCheckpoint(idx) {
+  disablePrev();
+  bumpStep();
+  const slice = state.slices[idx];
+  systemMsg(`◆ use checkpoint — slice built, eval passed, pipeline waits for you to run it`);
+
+  const mockHtml = mockAppFor(slice.name, false);
+
+  card(`
+    <h3>◆ Slice ${idx+1} live: <span style="color: var(--accent-purple)">${slice.name}</span></h3>
+    <div class="sub">App is running at <code>localhost:3000</code>. Try it. (Imagine you clicked around and the feature works.)</div>
+    ${mockHtml}
+    <div class="sub" style="margin-top: 14px">What now?</div>
+    <div class="actions">
+      <button class="btn green" onclick="approve(${idx})">✓ Approve — next slice</button>
+      <button class="btn purple" onclick="redirect(${idx})">✎ Redirect — change something</button>
+      <button class="btn red" onclick="finish(${idx})">⏹ Done — stop here</button>
+    </div>
+  `, 'checkpoint');
+}
+
+function mockAppFor(name, isWireframe) {
+  const klass = isWireframe ? 'wireframe' : '';
+  if (name.includes('login')) return `<div class="mock-app ${klass}">
+    <div class="url">https://localhost:3000/signup</div>
+    <h4>Sign up</h4>
+    <div class="field"><label>Email</label><div class="input">jongkuk@example.com</div></div>
+    <div class="field"><label>Password</label><div class="input">••••••••</div></div>
+    <div class="submit">Create account</div>
+  </div>`;
+  if (name.includes('posting')) return `<div class="mock-app ${klass}">
+    <div class="url">https://localhost:3000/feed</div>
+    <h4>Your feed</h4>
+    <div class="field"><label>What's on your mind?</label><div class="input" style="min-height: 50px">Just shipped agile mode in Tenet 🚀</div></div>
+    <div class="submit">Post</div>
+    <div class="feed" style="margin-top: 16px">
+      <div class="post"><div class="who">you · 2m ago</div><div class="text">Just shipped agile mode in Tenet 🚀</div></div>
+      <div class="post"><div class="who">you · 1h ago</div><div class="text">Hello world</div></div>
+    </div>
+  </div>`;
+  if (name.includes('friends')) return `<div class="mock-app ${klass}">
+    <div class="url">https://localhost:3000/friends</div>
+    <h4>Find friends</h4>
+    <div class="field"><label>Search</label><div class="input">jane</div></div>
+    <div class="feed" style="margin-top: 12px">
+      <div class="post"><div class="who">jane@example.com</div><div class="text" style="color: #4fa3f7">+ Send friend request</div></div>
+      <div class="post"><div class="who">janet@example.com</div><div class="text" style="color: #aaa">✓ Friends</div></div>
+    </div>
+  </div>`;
+  if (name.includes('notifications')) return `<div class="mock-app ${klass}">
+    <div class="url">https://localhost:3000/feed</div>
+    <h4>Notifications <span style="color: #f85149; font-size: 14px">●3</span></h4>
+    <div class="feed">
+      <div class="post"><div class="who">jane → friend request</div><div class="text">accepted your request</div></div>
+      <div class="post"><div class="who">john → posted</div><div class="text">"Coffee is good today"</div></div>
+      <div class="post"><div class="who">jane → posted</div><div class="text">"Hi everyone!"</div></div>
+    </div>
+  </div>`;
+  if (name.includes('forgot')) return `<div class="mock-app ${klass}">
+    <div class="url">https://localhost:3000/forgot-password</div>
+    <h4>Reset password</h4>
+    <div class="field"><label>Email</label><div class="input">jongkuk@example.com</div></div>
+    <div class="submit">Send reset link</div>
+  </div>`;
+  return '';
+}
+
+// ────────────────────────────────────────────────────────────────
+// REDIRECT (post-build)
+// ────────────────────────────────────────────────────────────────
+function approve(idx) {
+  disablePrev();
+  bumpStep();
+  userMsg(`Looks good. Build the next one.`);
+  const next = idx + 1;
+  if (next >= state.slices.length) {
+    agentMsg(`That was the last planned slice. Want to add a new feature, or wrap up?`);
+    card(`<div class="actions"><button class="btn green" onclick="addSlice()">+ Add a new feature</button><button class="btn red" onclick="finish(${idx})">⏹ Wrap up</button></div>`);
+    return;
+  }
+  agentMsg(`Approved. Building slice ${next+1}: <strong>${state.slices[next].name}</strong>. No design change → no plan-checkpoint, going straight to build.`);
+  mcp('tenet_validate_readiness', `feature=sns,slice=${next+1}`, 'passed (8/8 categories ready)');
+  setTimeout(() => buildSlice(next), 700);
+}
+
+function redirect(idx) {
+  disablePrev();
+  bumpStep();
+  agentMsg(`Got it. What would you like to change?`);
+  const slice = state.slices[idx];
+  const options = redirectOptionsFor(idx);
+  const wrap = document.createElement('div');
+  wrap.className = 'feedback-list';
+  options.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'choice';
+    btn.innerHTML = `<div class="label">${opt.label}</div>`;
+    btn.onclick = () => applyRedirect(idx, opt);
+    wrap.appendChild(btn);
+  });
+  const c = document.createElement('div');
+  c.className = 'card';
+  c.innerHTML = `<h3>Pick a change (pre-canned for the demo)</h3>`;
+  c.appendChild(wrap);
+  stream.appendChild(c);
+  scrollToBottom();
+}
+
+function redirectOptionsFor(idx) {
+  const slice = state.slices[idx];
+  if (slice.name.includes('login')) return [
+    { label: 'Add "forgot password" to slice 1 — I forgot to ask for that', kind: 'amend-current', addSliceName: 'forgot password' },
+    { label: 'Switch posting to a different next slice — do friends first',  kind: 'reorder' },
+    { label: 'Add 2FA as a new slice after notifications',                   kind: 'add-after', addSliceName: '2FA (TOTP)' },
+  ];
+  if (slice.name.includes('posting')) return [
+    { label: 'Posts should support image uploads — add to slice 2',           kind: 'amend-current', amendNote: 'images on posts' },
+    { label: 'Add "edit/delete post" as a new slice before friends',          kind: 'insert-before', addSliceName: 'edit/delete posts' },
+    { label: 'Continue as planned (no-op redirect)',                           kind: 'noop' },
+  ];
+  return [
+    { label: 'Add a search feature as a new slice', kind: 'add-after', addSliceName: 'search' },
+    { label: 'Continue as planned',                  kind: 'noop' },
+  ];
+}
+
+function applyRedirect(idx, opt) {
+  disablePrev();
+  bumpStep();
+  userMsg(opt.label);
+  mcp('tenet_add_steer', `class=directive`, 'steer message stored in db');
+  mcp('tenet_process_steer', `slice=${idx+1}`, 'steer acknowledged + acted_on');
+
+  // Special case: "add forgot password" demonstrates the readiness-blocker loop
+  if (opt.kind === 'amend-current' && opt.addSliceName === 'forgot password') {
+    agentMsg(`Re-entering at <strong>spec</strong> to add "<strong>forgot password</strong>" as a new slice extending slice ${idx+1}.`);
+    const newSlice = { name: opt.addSliceName, status: 'planned', detail: `extends slice ${idx+1}: ${opt.addSliceName}`, amended: true };
+    state.slices.splice(idx+1, 0, newSlice);
+    appendDoc('interview', `Slice ${idx+2} amendment (2026-04-28)`,
+`User feedback at use-checkpoint slice ${idx+1}: "${opt.label}"
+Decision: add new slice extending slice ${idx+1}.`, { amend: true });
+    renderDocs();
+    setTimeout(() => readinessBlockerFlow(idx+1), 800);
+    return;
+  }
+
+  // Determines whether this redirect changes design (needs mockup re-show + plan-checkpoint)
+  // or is purely structural (straight to build, like a freelancer who just changes order).
+  let designChange = false;
+  let nextIdx = idx + 1;
+
+  if (opt.kind === 'amend-current') {
+    designChange = true;
+    if (opt.addSliceName) {
+      agentMsg(`Re-entering at <strong>spec</strong> to add "<strong>${opt.addSliceName}</strong>" as a new slice extending slice ${idx+1}. New screen → mockup re-shows.`);
+      const newSlice = { name: opt.addSliceName, status: 'planned', detail: `extends slice ${idx+1}: ${opt.addSliceName}`, amended: true };
+      state.slices.splice(idx+1, 0, newSlice);
+      appendDoc('interview', `Slice ${idx+2} amendment (2026-04-28)`,
+`User feedback at use-checkpoint slice ${idx+1}: "${opt.label}"
+Decision: add new slice extending slice ${idx+1}.
+No interview re-run — broader scope already covered.`, { amend: true });
+    } else {
+      agentMsg(`Re-entering at <strong>spec</strong> to amend slice ${idx+1} with: <em>${opt.amendNote}</em>. Existing screen changes → mockup re-shows.`);
+      state.slices[idx].detail += ` · ✎ amended: ${opt.amendNote}`;
+      state.slices[idx].amended = true;
+      nextIdx = idx; // re-mockup the changed slice; next build is the inserted-into-plan slice
+    }
+  } else if (opt.kind === 'reorder') {
+    designChange = false;
+    agentMsg(`Re-entering at <strong>decomposition</strong> only — no design change, just reordering. Going straight to build, no plan-checkpoint.`);
+    if (state.slices.length > 2) {
+      const temp = state.slices[idx+1];
+      state.slices[idx+1] = state.slices[idx+2];
+      state.slices[idx+2] = temp;
+    }
+  } else if (opt.kind === 'add-after') {
+    designChange = true;
+    agentMsg(`Adding "<strong>${opt.addSliceName}</strong>" as a new slice at the end. New screen → mockup re-shows + plan-checkpoint.`);
+    state.slices.push({ name: opt.addSliceName, status: 'planned', detail: `added mid-run: ${opt.addSliceName}` });
+  } else if (opt.kind === 'insert-before') {
+    designChange = true;
+    agentMsg(`Inserting "<strong>${opt.addSliceName}</strong>" before slice ${idx+2}. New screen → mockup re-shows + plan-checkpoint.`);
+    state.slices.splice(idx+1, 0, { name: opt.addSliceName, status: 'planned', detail: `inserted: ${opt.addSliceName}` });
+  } else {
+    designChange = false;
+    agentMsg(`No change. Continuing to next planned slice — straight to build.`);
+  }
+
+  renderDocs();
+  if (designChange) {
+    setTimeout(() => mockupPhase(nextIdx), 1000);
+  } else {
+    if (nextIdx >= state.slices.length) {
+      setTimeout(() => approve(idx), 600);
+    } else {
+      mcp('tenet_validate_readiness', `feature=sns,slice=${nextIdx+1}`, 'passed (8/8 categories ready)');
+      setTimeout(() => buildSlice(nextIdx), 800);
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────────
+// READINESS-BLOCKER RESOLUTION LOOP
+// ────────────────────────────────────────────────────────────────
+function readinessBlockerFlow(newSliceIdx) {
+  bumpStep();
+  mcp('tenet_validate_readiness', `feature=sns,slice=${newSliceIdx+1}`, 'BLOCKED — 2 blockers');
+  agentMsg(`Ran <code>tenet_validate_readiness</code> on the amended spec. <strong>Blocked.</strong> Two gaps:`);
+
+  card(`
+    <h3>◆ Readiness check failed — 2 blockers</h3>
+    <div class="sub">Reusing the existing readiness gate. It read the amended spec + harness + interview and flagged what's missing.</div>
+    <div style="background: var(--bg-card); border-left: 3px solid var(--accent-red); padding: 10px 14px; border-radius: 0 4px 4px 0; margin: 10px 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.7">
+      <div style="color: var(--accent-red); font-weight: 700; margin-bottom: 6px">BLOCKERS</div>
+      <div style="color: var(--text); margin-bottom: 4px">1. <strong>External service:</strong> email API not in harness (forgot password needs to send a reset link)</div>
+      <div style="color: var(--text)">2. <strong>Mockup gap:</strong> no design for /forgot-password and /reset-password screens, no architecture for email service</div>
+    </div>
+    <div style="background: var(--bg-card); border-left: 3px solid var(--accent-purple); padding: 10px 14px; border-radius: 0 4px 4px 0; margin: 10px 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.7">
+      <div style="color: var(--accent-purple); font-weight: 700; margin-bottom: 6px">RESOLUTION → re-enter existing phases</div>
+      <div style="color: var(--text); margin-bottom: 4px">blocker 1 → <strong>harness amendment</strong> (ask user about email service)</div>
+      <div style="color: var(--text)">blocker 2 → <strong>mockup phase</strong> (UI screens + architecture delta)</div>
+    </div>
+    <div class="sub">No new tools, no new doc lanes. Same readiness gate, same harness/mockup phases — just routed by blocker category.</div>
+    <div class="actions">
+      <button class="btn primary" onclick="resolveBlockerHarness(${newSliceIdx})">Start resolution → harness amendment first</button>
+    </div>
+  `);
+}
+
+function resolveBlockerHarness(newSliceIdx) {
+  disablePrev();
+  bumpStep();
+  agentMsg(`Resolving blocker 1: harness needs an email service. I can use Resend / Postmark / SendGrid / or skip emails for now (just print the reset link to console). Which one?`);
+  const opts = [
+    { label: 'Resend (cheap, dev-friendly API)',          choice: 'Resend',   kind: 'real' },
+    { label: 'Postmark (transactional, well-known)',      choice: 'Postmark', kind: 'real' },
+    { label: 'Skip — just print reset link to server log', choice: 'console-only', kind: 'fake' },
+  ];
+  const wrap = document.createElement('div');
+  wrap.className = 'feedback-list';
+  opts.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.className = 'choice';
+    btn.innerHTML = `<div class="label">${opt.label}</div>`;
+    btn.onclick = () => commitHarnessAmendment(newSliceIdx, opt);
+    wrap.appendChild(btn);
+  });
+  const c = document.createElement('div');
+  c.className = 'card';
+  c.innerHTML = `<h3>Email service for password reset</h3>`;
+  c.appendChild(wrap);
+  stream.appendChild(c);
+  scrollToBottom();
+}
+
+function commitHarnessAmendment(newSliceIdx, opt) {
+  disablePrev();
+  bumpStep();
+  userMsg(opt.label);
+  appendDoc('harness', `Amendment (2026-04-28) — email service`,
+`Email service: ${opt.choice}
+${opt.kind === 'real'
+  ? `env vars added:
+  EMAIL_API_KEY=<user must provide>
+  EMAIL_FROM=noreply@example.com`
+  : `Mode: console-only (dev). Reset link printed to server stdout.
+No external service in v1; can swap later.`}
+Used by: /password-reset endpoint (slice "${state.slices[newSliceIdx].name}")`, { amend: true });
+  agentMsg(`Harness amended with email service = <strong>${opt.choice}</strong>. Blocker 1 resolved. Now blocker 2 — re-entering mockup phase to draw the new screens + architecture delta.`);
+  setTimeout(() => resolveBlockerMockup(newSliceIdx, opt.choice), 800);
+}
+
+function resolveBlockerMockup(newSliceIdx, emailChoice) {
+  disablePrev();
+  bumpStep();
+  mcp('tenet_compile_context', `feature=sns,phase=mockup,slice=${newSliceIdx+1}`, 'returned amended spec + amended harness + interview');
+  state.slices[newSliceIdx].status = 'in-progress';
+  renderDocs();
+
+  const slice = state.slices[newSliceIdx];
+  appendDoc('mockup', `Slice ${newSliceIdx+1}: ${slice.name} (architecture + UI delta)`,
+`Triggered by readiness blocker 2.
+${mockupDescriptionFor(slice.name)}
+
+${architectureDescription('with-email')}
+
+Note: email service (${emailChoice}) introduced. Existing slices unchanged — additive.`, { amend: true });
+  renderDocs();
+
+  agentMsg(`Re-drafted mockup for slice ${newSliceIdx+1} (UI) and the architecture delta (email service). Both views below.`);
+
+  const uiHtml = mockAppFor(slice.name, true);
+  const archHtml = architectureDiagram('with-email');
+
+  card(`
+    <h3>Mockup re-drafted — slice ${newSliceIdx+1}: ${slice.name}</h3>
+    <div class="sub">Targeted re-mockup: just the new screen + architecture delta. Other slices' mockups still stand.</div>
+
+    <div style="font-family: var(--font-mono); font-size: 10px; color: var(--accent-orange); text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 6px; font-weight: 700">▸ UI for new slice</div>
+    ${uiHtml}
+
+    <div style="font-family: var(--font-mono); font-size: 10px; color: var(--accent-orange); text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 6px; font-weight: 700">▸ Architecture delta · email service added</div>
+    ${archHtml}
+
+    <div class="actions">
+      <button class="btn primary" onclick="resolveBlockerPlanCheckpoint(${newSliceIdx})">Continue to plan checkpoint →</button>
+    </div>
+  `);
+}
+
+function resolveBlockerPlanCheckpoint(newSliceIdx) {
+  disablePrev();
+  bumpStep();
+  systemMsg(`◆ plan checkpoint — design alignment for the new slice + architecture change`);
+  card(`
+    <h3>◆ Plan checkpoint — slice ${newSliceIdx+1} (post-resolution)</h3>
+    <div class="sub">Both blockers addressed. Confirm the new mockup + architecture, then I'll re-run readiness and build.</div>
+    <div class="actions">
+      <button class="btn green" onclick="rerunReadinessAndBuild(${newSliceIdx})">✓ Looks right — re-validate + build</button>
+    </div>
+  `, 'plan-checkpoint');
+}
+
+function rerunReadinessAndBuild(newSliceIdx) {
+  disablePrev();
+  bumpStep();
+  userMsg(`Confirmed. Re-validate and build.`);
+  mcp('tenet_validate_readiness', `feature=sns,slice=${newSliceIdx+1}`, 'PASSED — 8/8 categories ready (was: blocked, now resolved)');
+  agentMsg(`Re-ran <code>tenet_validate_readiness</code>. <strong>Passed.</strong> The two blockers are gone — harness has the email service, mockup has the new screens + architecture. Building.`);
+  setTimeout(() => buildSlice(newSliceIdx), 800);
+}
+
+function addSlice() {
+  disablePrev();
+  bumpStep();
+  agentMsg(`What's the new feature?`);
+  const c = card(`
+    <div class="input-row">
+      <input id="new-feature" placeholder="e.g., dark mode, profile pictures, bookmarks..." />
+      <button class="btn primary" onclick="commitNewSlice()">Add slice</button>
+    </div>
+  `);
+  setTimeout(() => c.querySelector('input').focus(), 100);
+}
+
+function commitNewSlice() {
+  const name = document.getElementById('new-feature').value.trim() || 'new feature';
+  state.slices.push({ name, status: 'planned', detail: `added mid-run: ${name}` });
+  appendDoc('interview', `Late addition (2026-04-28)`,
+`User added new feature mid-run: "${name}"
+Re-entering at interview briefly to clarify scope, then mockup → spec → decomposition → build.`, { amend: true });
+  renderDocs();
+  userMsg(`Add: ${name}`);
+  agentMsg(`Re-entering at <strong>interview</strong> briefly (new scope), then mockup → spec → decomposition → build.`);
+  setTimeout(() => mockupPhase(state.slices.length - 1), 1000);
+}
+
+function finish(idx) {
+  disablePrev();
+  bumpStep();
+  userMsg(`Stop here. Done.`);
+  const done = state.slices.filter(s => s.status === 'done').length;
+  const planned = state.slices.length - done;
+
+  card(`
+    <h3 style="color: var(--accent-green)">✓ Project closed in agile mode</h3>
+    <div class="sub" style="margin: 10px 0">You confirmed the full-product mockup once at the initial plan-checkpoint, then ran the app at <strong>${done}</strong> use-checkpoint${done===1?'':'s'}. Plan-checkpoint reopened only when redirects involved design change. ${planned > 0 ? `${planned} planned slice${planned===1?'':'s'} left unbuilt.` : 'All planned slices shipped.'}</div>
+    <div style="background: var(--bg-card); padding: 12px 14px; border-radius: 6px; font-family: var(--font-mono); font-size: 12px; line-height: 1.7">
+      ${state.slices.map((s,i) => {
+        const m = s.status === 'done' ? '✓' : '·';
+        const c = s.status === 'done' ? 'var(--accent-green)' : 'var(--text-dim)';
+        return `<div style="color: ${c}"><span style="display:inline-block; width: 16px">${m}</span>slice ${i+1}: ${s.name}${s.amended ? ' <span style="color: var(--accent-orange)">(amended)</span>' : ''}</div>`;
+      }).join('')}
+    </div>
+    <div class="sub" style="margin-top: 14px"><strong>Documents (right pane):</strong> spec accumulated the slice plan; interview got amendment sections at each redirect; mockup got per-slice wireframes (with revision sections when adjusted); decomposition got per-slice DAGs; harness stayed singular and project-wide. All within the existing <code>{date}-{feature}.md</code> convention — no new artifact lanes.</div>
+    <div class="actions" style="margin-top: 14px">
+      <button class="btn ghost" onclick="reset()">↻ Run it again</button>
+    </div>
+  `, 'terminal');
+}
+
+function reset() {
+  state.step = 0;
+  state.mode = null;
+  state.goal = '';
+  state.slices = [];
+  state.currentSlice = -1;
+  docs.interview = '';
+  docs.mockup = '';
+  docs.decomposition = '';
+  docs.harness = '';
+  Object.keys(files).forEach(p => {
+    if (files[p].type === 'md') {
+      const isHarness = p === '.tenet/harness/current.md';
+      const isSteer = p === '.tenet/steer/inbox.md';
+      files[p].exists = isSteer ? true : false;
+      files[p].lines = 0;
+    }
+  });
+  recentlyTouched = null;
+  mcpLog.length = 0;
+  stream.innerHTML = '';
+  document.querySelectorAll('.tab.updated').forEach(t => t.classList.remove('updated'));
+  switchTab('spec');
+  renderDocs();
+  stepCounter.textContent = 'step 1';
+  start();
+}
+
+renderDocs();
+start();
+</script>
+</body>
+</html>

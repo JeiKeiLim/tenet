@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tenet — Agile Mode Design Sketch</title>
+<style>
+  :root {
+    --bg-base: #0d1117;
+    --bg-surface: #161b22;
+    --bg-card: #1c2128;
+    --border: #30363d;
+    --border-strong: #484f58;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --text-dim: #6e7681;
+    --accent-blue: #4fa3f7;
+    --accent-purple: #a78bfa;
+    --accent-green: #3fb950;
+    --accent-orange: #d29922;
+    --accent-red: #f85149;
+    --accent-teal: #2dd4bf;
+    --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-base);
+    color: var(--text);
+    font-family: var(--font-sans);
+    line-height: 1.55;
+    padding: 48px 24px 96px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header { margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 28px; letter-spacing: -0.5px; margin-bottom: 6px; }
+  .meta { color: var(--text-muted); font-size: 13px; font-family: var(--font-mono); }
+  h2 { font-size: 20px; margin: 40px 0 12px; color: var(--text); }
+  h3 { font-size: 15px; margin: 24px 0 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  p { margin-bottom: 12px; color: var(--text); }
+  p.lead { color: var(--text-muted); font-size: 15px; }
+  code { font-family: var(--font-mono); background: var(--bg-card); padding: 2px 6px; border-radius: 3px; font-size: 13px; color: var(--accent-teal); }
+  .diagram {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 16px 0 32px;
+  }
+  .diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  .caption { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
+  pre {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+  .bullets { margin: 8px 0 12px 24px; }
+  .bullets li { margin-bottom: 6px; color: var(--text); }
+  .bullets li code { font-size: 12px; }
+  .badges { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+  }
+  .badge.new { color: var(--accent-orange); border-color: var(--accent-orange); }
+  .badge.reuse { color: var(--accent-blue); border-color: var(--accent-blue); }
+  .change-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0 24px; }
+  .change-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px; padding: 16px; }
+  .change-card h4 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; font-weight: 600; }
+  .change-card.new h4 { color: var(--accent-orange); }
+  .change-card.reuse h4 { color: var(--accent-blue); }
+  .change-card ul { margin-left: 20px; }
+  .change-card li { font-size: 13px; margin-bottom: 4px; color: var(--text); }
+  .open-q {
+    background: var(--bg-card);
+    border-left: 3px solid var(--accent-purple);
+    padding: 12px 16px;
+    margin: 8px 0;
+    border-radius: 0 4px 4px 0;
+  }
+  .open-q .q { color: var(--accent-purple); font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .open-q .body { font-size: 14px; color: var(--text); }
+  @media (max-width: 720px) { .change-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Agile Mode — Design Sketch</h1>
+  <div class="meta">tenet · alignment draft · 2026-04-27</div>
+</header>
+
+<p class="lead">Optional second mode for Tenet's autonomous loop. The fully-autonomous loop stays the default. Agile mode pauses after each <em>usable</em> slice so the user can run the app, give feedback, and steer the next slice. Reuses the existing 7-phase pipeline — only decomposition output shape and a checkpoint mechanism are new.</p>
+
+<h2>1 · Same pipeline, two DAG shapes</h2>
+<p class="caption">Decomposition reads a <code>mode</code> flag from the spec and produces a different DAG. Everything before decomposition is identical; everything inside each job (eval, retries, etc.) is identical.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 900 620" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d29922"/>
+    </marker>
+  </defs>
+
+  <!-- Pipeline header -->
+  <g font-family="SF Mono, monospace" font-size="12">
+    <rect x="20"  y="30" width="120" height="44" rx="6" fill="#1c2128" stroke="#4fa3f7" stroke-width="1.2"/>
+    <text x="80"  y="57" text-anchor="middle" fill="#e6edf3">Interview</text>
+
+    <rect x="160" y="30" width="120" height="44" rx="6" fill="#1c2128" stroke="#4fa3f7" stroke-width="1.2"/>
+    <text x="220" y="57" text-anchor="middle" fill="#e6edf3">Spec</text>
+
+    <rect x="300" y="30" width="120" height="44" rx="6" fill="#1c2128" stroke="#4fa3f7" stroke-width="1.2"/>
+    <text x="360" y="57" text-anchor="middle" fill="#e6edf3">Mockup</text>
+
+    <rect x="440" y="30" width="120" height="44" rx="6" fill="#1c2128" stroke="#4fa3f7" stroke-width="1.2"/>
+    <text x="500" y="57" text-anchor="middle" fill="#e6edf3">Harness</text>
+
+    <rect x="580" y="30" width="160" height="44" rx="6" fill="#1c2128" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="660" y="57" text-anchor="middle" fill="#e6edf3" font-weight="600">Decomposition</text>
+
+    <line x1="140" y1="52" x2="160" y2="52" stroke="#8b949e" marker-end="url(#arrow)"/>
+    <line x1="280" y1="52" x2="300" y2="52" stroke="#8b949e" marker-end="url(#arrow)"/>
+    <line x1="420" y1="52" x2="440" y2="52" stroke="#8b949e" marker-end="url(#arrow)"/>
+    <line x1="560" y1="52" x2="580" y2="52" stroke="#8b949e" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- mode flag annotation -->
+  <g font-family="SF Mono, monospace" font-size="11" fill="#a78bfa">
+    <text x="660" y="98" text-anchor="middle">reads spec.mode</text>
+  </g>
+
+  <!-- Fork lines from Decomposition -->
+  <path d="M 660 110 Q 660 140 200 160" fill="none" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <path d="M 660 110 Q 660 140 720 160" fill="none" stroke="#d29922" stroke-width="1.5" marker-end="url(#arrow-orange)"/>
+
+  <!-- Column dividers / labels -->
+  <g font-family="-apple-system, sans-serif">
+    <text x="200" y="180" text-anchor="middle" font-size="13" font-weight="700" fill="#4fa3f7">AUTONOMOUS DAG</text>
+    <text x="200" y="198" text-anchor="middle" font-size="11" fill="#8b949e">components → assembly</text>
+
+    <text x="700" y="180" text-anchor="middle" font-size="13" font-weight="700" fill="#d29922">AGILE DAG (sliced)</text>
+    <text x="700" y="198" text-anchor="middle" font-size="11" fill="#8b949e">sequence of usable products</text>
+  </g>
+
+  <!-- AUTONOMOUS COLUMN -->
+  <g font-family="SF Mono, monospace" font-size="11" fill="#e6edf3">
+    <rect x="60"  y="220" width="80" height="36" rx="4" fill="#1c2128" stroke="#30363d"/>
+    <text x="100" y="243" text-anchor="middle">auth</text>
+    <rect x="160" y="220" width="80" height="36" rx="4" fill="#1c2128" stroke="#30363d"/>
+    <text x="200" y="243" text-anchor="middle">posts</text>
+    <rect x="260" y="220" width="80" height="36" rx="4" fill="#1c2128" stroke="#30363d"/>
+    <text x="300" y="243" text-anchor="middle">friends</text>
+
+    <line x1="100" y1="256" x2="170" y2="305" stroke="#8b949e" marker-end="url(#arrow)"/>
+    <line x1="200" y1="256" x2="200" y2="305" stroke="#8b949e" marker-end="url(#arrow)"/>
+    <line x1="300" y1="256" x2="230" y2="305" stroke="#8b949e" marker-end="url(#arrow)"/>
+
+    <rect x="140" y="310" width="120" height="36" rx="4" fill="#1c2128" stroke="#3fb950"/>
+    <text x="200" y="333" text-anchor="middle" fill="#3fb950">assemble</text>
+
+    <line x1="200" y1="346" x2="200" y2="385" stroke="#8b949e" marker-end="url(#arrow)"/>
+    <rect x="140" y="390" width="120" height="36" rx="4" fill="#1c2128" stroke="#30363d"/>
+    <text x="200" y="413" text-anchor="middle">eval</text>
+
+    <line x1="200" y1="426" x2="200" y2="465" stroke="#8b949e" marker-end="url(#arrow)"/>
+    <text x="200" y="490" text-anchor="middle" font-size="13" fill="#3fb950" font-weight="700">done</text>
+  </g>
+
+  <!-- AGILE COLUMN -->
+  <g font-family="SF Mono, monospace" font-size="11" fill="#e6edf3">
+    <!-- Slice 1 -->
+    <rect x="560" y="218" width="280" height="58" rx="6" fill="#1c2128" stroke="#d29922" stroke-width="1.4"/>
+    <text x="700" y="240" text-anchor="middle" fill="#d29922" font-weight="700">Slice 1: login + signup</text>
+    <text x="700" y="260" text-anchor="middle" font-size="10" fill="#8b949e">jobs: ui · api · db · eval (full-stack, runnable)</text>
+
+    <line x1="700" y1="276" x2="700" y2="305" stroke="#8b949e" marker-end="url(#arrow)"/>
+
+    <!-- Checkpoint diamond -->
+    <polygon points="700,310 790,345 700,380 610,345" fill="#1c2128" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="700" y="342" text-anchor="middle" fill="#a78bfa" font-size="11" font-weight="700">checkpoint</text>
+    <text x="700" y="357" text-anchor="middle" fill="#8b949e" font-size="9">user runs &amp; uses app</text>
+
+    <!-- Three branches -->
+    <line x1="610" y1="345" x2="540" y2="420" stroke="#3fb950" marker-end="url(#arrow)"/>
+    <text x="555" y="395" text-anchor="middle" fill="#3fb950" font-size="10" font-weight="600">approve</text>
+
+    <line x1="700" y1="380" x2="700" y2="420" stroke="#a78bfa" marker-end="url(#arrow)"/>
+    <text x="730" y="405" fill="#a78bfa" font-size="10" font-weight="600">redirect</text>
+
+    <line x1="790" y1="345" x2="860" y2="420" stroke="#f85149" marker-end="url(#arrow)"/>
+    <text x="845" y="395" fill="#f85149" font-size="10" font-weight="600">done</text>
+
+    <!-- Branch destinations -->
+    <rect x="470" y="425" width="140" height="50" rx="4" fill="#1c2128" stroke="#3fb950"/>
+    <text x="540" y="445" text-anchor="middle" fill="#3fb950" font-size="11">plan slice N+1</text>
+    <text x="540" y="461" text-anchor="middle" fill="#8b949e" font-size="9">→ build → checkpoint</text>
+
+    <rect x="630" y="425" width="140" height="50" rx="4" fill="#1c2128" stroke="#a78bfa"/>
+    <text x="700" y="445" text-anchor="middle" fill="#a78bfa" font-size="11">re-enter pipeline</text>
+    <text x="700" y="461" text-anchor="middle" fill="#8b949e" font-size="9">at the right phase</text>
+
+    <text x="855" y="450" text-anchor="middle" fill="#f85149" font-size="13" font-weight="700">STOP</text>
+
+    <!-- Loop arrow -->
+    <path d="M 540 475 Q 460 530 460 250 Q 460 218 555 218" fill="none" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+    <text x="450" y="380" text-anchor="middle" fill="#3fb950" font-size="10" transform="rotate(-90 450 380)">next slice loop</text>
+
+    <path d="M 700 475 Q 700 540 660 540 L 200 540" fill="none" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,3"/>
+    <text x="430" y="555" text-anchor="middle" fill="#a78bfa" font-size="10">redirect re-runs interview / spec / decomposition →</text>
+    <path d="M 200 540 Q 80 540 80 90 Q 80 60 80 60" fill="none" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  </g>
+</svg>
+</div>
+
+<h2>2 · Single spec doc, slice-structured inside</h2>
+<p class="caption">No new artifact lane. Same <code>spec/{date}-{feature}.md</code> file, just with a slice plan section. The plan evolves as feedback comes in — past slices stay frozen, future slices get rewritten.</p>
+
+<div class="diagram">
+<pre>spec/2026-04-27-sns.md
+├─ mode: agile
+├─ overall product goal
+│   "build a small social-network service"
+│
+├─ slice plan         ← evolves with feedback
+│    1. login + signup        ✓ done   (eval passed 2026-04-28)
+│    2. posting               ◆ in progress
+│    3. friends                 planned
+│    4. notifications           planned
+│
+└─ per-slice detail   ← added/refined as we go
+     ├─ slice 1
+     │    requirements · acceptance · eval criteria
+     ├─ slice 2
+     │    …
+     └─ …</pre>
+</div>
+
+<h2>3 · Agile loop — reuse pipeline, pause after each slice</h2>
+<p class="caption">After each slice's per-job eval passes, the loop pauses. The user runs the app. The user's response routes back into the existing pipeline at whichever phase fits the feedback.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, sans-serif">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <!-- START -->
+  <ellipse cx="450" cy="40" rx="80" ry="22" fill="#1c2128" stroke="#3fb950" stroke-width="1.4"/>
+  <text x="450" y="46" text-anchor="middle" fill="#3fb950" font-family="SF Mono, monospace" font-size="12" font-weight="700">START</text>
+  <text x="450" y="78" text-anchor="middle" fill="#8b949e" font-family="SF Mono, monospace" font-size="10">mode=agile picked after interview</text>
+
+  <line x1="450" y1="90" x2="450" y2="120" stroke="#8b949e" marker-end="url(#arrow2)"/>
+
+  <!-- Build slice -->
+  <rect x="290" y="125" width="320" height="58" rx="6" fill="#1c2128" stroke="#4fa3f7" stroke-width="1.4"/>
+  <text x="450" y="148" text-anchor="middle" fill="#4fa3f7" font-family="SF Mono, monospace" font-size="13" font-weight="700">build slice N</text>
+  <text x="450" y="168" text-anchor="middle" fill="#8b949e" font-family="SF Mono, monospace" font-size="10">existing decomposition + execution + per-job eval</text>
+
+  <line x1="450" y1="183" x2="450" y2="215" stroke="#8b949e" marker-end="url(#arrow2)"/>
+
+  <!-- Checkpoint -->
+  <polygon points="450,220 590,275 450,330 310,275" fill="#1c2128" stroke="#a78bfa" stroke-width="1.6"/>
+  <text x="450" y="270" text-anchor="middle" fill="#a78bfa" font-family="SF Mono, monospace" font-size="13" font-weight="700">◆ checkpoint</text>
+  <text x="450" y="290" text-anchor="middle" fill="#e6edf3" font-family="SF Mono, monospace" font-size="11">user runs &amp; uses app</text>
+
+  <!-- Branches -->
+  <line x1="310" y1="275" x2="180" y2="345" stroke="#3fb950" stroke-width="1.4" marker-end="url(#arrow2)"/>
+  <text x="220" y="320" text-anchor="middle" fill="#3fb950" font-family="SF Mono, monospace" font-size="11" font-weight="700">approve</text>
+
+  <line x1="450" y1="330" x2="450" y2="365" stroke="#a78bfa" stroke-width="1.4" marker-end="url(#arrow2)"/>
+  <text x="490" y="350" fill="#a78bfa" font-family="SF Mono, monospace" font-size="11" font-weight="700">redirect</text>
+
+  <line x1="590" y1="275" x2="720" y2="345" stroke="#f85149" stroke-width="1.4" marker-end="url(#arrow2)"/>
+  <text x="680" y="320" text-anchor="middle" fill="#f85149" font-family="SF Mono, monospace" font-size="11" font-weight="700">done</text>
+
+  <!-- Approve destination -->
+  <rect x="80" y="350" width="200" height="50" rx="6" fill="#1c2128" stroke="#3fb950"/>
+  <text x="180" y="372" text-anchor="middle" fill="#3fb950" font-family="SF Mono, monospace" font-size="12">plan slice N+1</text>
+  <text x="180" y="389" text-anchor="middle" fill="#8b949e" font-family="SF Mono, monospace" font-size="10">→ build slice N+1</text>
+
+  <!-- Redirect destination -->
+  <rect x="320" y="370" width="260" height="80" rx="6" fill="#1c2128" stroke="#a78bfa"/>
+  <text x="450" y="392" text-anchor="middle" fill="#a78bfa" font-family="SF Mono, monospace" font-size="12" font-weight="700">re-enter pipeline at right phase</text>
+  <text x="450" y="412" text-anchor="middle" fill="#e6edf3" font-family="SF Mono, monospace" font-size="10">interview · if scope shifted</text>
+  <text x="450" y="427" text-anchor="middle" fill="#e6edf3" font-family="SF Mono, monospace" font-size="10">spec · if requirements changed</text>
+  <text x="450" y="442" text-anchor="middle" fill="#e6edf3" font-family="SF Mono, monospace" font-size="10">decomposition · if just replan</text>
+
+  <!-- Done destination -->
+  <ellipse cx="780" cy="375" rx="70" ry="22" fill="#1c2128" stroke="#f85149" stroke-width="1.4"/>
+  <text x="780" y="380" text-anchor="middle" fill="#f85149" font-family="SF Mono, monospace" font-size="13" font-weight="700">STOP</text>
+
+  <!-- Loop back from approve -->
+  <path d="M 180 400 Q 180 460 80 460 Q 30 460 30 154 Q 30 125 290 154" fill="none" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow2)"/>
+
+  <!-- Loop back from redirect -->
+  <path d="M 580 410 Q 660 460 870 460 Q 880 460 880 100 Q 880 70 610 154" fill="none" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow2)"/>
+</svg>
+</div>
+
+<h2>What's actually new vs reused</h2>
+
+<div class="change-grid">
+  <div class="change-card new">
+    <h4>NEW (4 small additions)</h4>
+    <ul>
+      <li><strong>Mode flag on the spec</strong> — <code>autonomous</code> | <code>agile</code>. Picked after interview, stored in the spec doc.</li>
+      <li><strong>Decomposition reads the mode</strong> — produces a sliced DAG (sequence of usable products) when agile, today's component DAG when autonomous.</li>
+      <li><strong>Pause/resume mechanism</strong> — checkpoint event after each slice's eval passes; agent waits for user input.</li>
+      <li><strong>Spec template gets a slice-plan section</strong> — bigger picture present from the start, evolves with feedback.</li>
+    </ul>
+  </div>
+  <div class="change-card reuse">
+    <h4>REUSED (unchanged)</h4>
+    <ul>
+      <li>All 7 phases (interview · spec · mockup · harness · decomposition · execution · eval)</li>
+      <li>Single spec document per feature</li>
+      <li>Per-job eval (critic + test critic + playwright_eval)</li>
+      <li>All MCP tools — including <code>tenet_register_jobs</code>, <code>tenet_compile_context</code>, <code>tenet_add_steer</code></li>
+      <li>SQLite state, status writers, retry logic, orphan recovery</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Open questions still on the table</h2>
+
+<div class="open-q">
+  <div class="q">Q1 · First-slice bundling rule</div>
+  <div class="body">A slice must be <em>actually usable</em>. Login alone isn't usable without signup + sessions. The planner should be allowed to bundle dependent sub-features when they're needed for the main capability to work. Worth stating as an explicit rule in the agile-mode decomposition prompt.</div>
+</div>
+
+<div class="open-q">
+  <div class="q">Q2 · Re-entry phase selection</div>
+  <div class="body">When the user redirects, who picks which phase to re-enter — interview, spec, or just decomposition? Cleanest: agent proposes based on the redirect content, user can override.</div>
+</div>
+
+<div class="open-q">
+  <div class="q">Q3 · End condition</div>
+  <div class="body">Agile mode is open-ended (user keeps asking for next slice). Done = user explicitly chooses "done" at a checkpoint. Worth deciding whether the original slice plan acts as a soft target or just as direction.</div>
+</div>
+
+</div>
+</body>
+</html>
