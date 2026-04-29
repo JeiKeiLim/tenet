@@ -162,6 +162,7 @@ Run before decomposition when in Full mode. Each step below requires reading a d
 - MUST call `tenet_validate_clarity()` to get an independent clarity score.
 - Wait for the validation result via `tenet_job_wait` + `tenet_job_result`.
 - If Clarity < 0.8: address the gaps identified in the validation result, then re-validate.
+- **Delivery-mode selection (end of interview)** — after clarity passes, ask one final question: *"Do you want **autonomous** delivery (single end-to-end run, max autonomy, no mid-run checkpoints) or **agile** delivery (sliced delivery with user review after each slice)?"* Default to autonomous if the user is unsure or short on context. The answer becomes the spec's `delivery_mode` field. See `docs/planning/14_agile_mode.md` for the full agile-mode design.
 
 Do NOT self-score the interview. The validation must come from a separate agent context.
 Do NOT re-validate clarity after the interview — later phases have their own validation.
@@ -220,6 +221,53 @@ Do NOT re-validate clarity after the interview — later phases have their own v
 - Status files (`job-queue.md`, `status.md`) are auto-generated from the DB on state transitions.
 - Call `tenet_register_jobs` to load the DAG into the runtime queue.
 - Do NOT start execution until all status files are populated AND jobs are registered.
+- In agile mode, decomposition fires **once per slice**. Section 9 of `phases/04-decomposition.md` overrides the single-pass behavior. The first fire happens after the initial plan-checkpoint passes; later fires are triggered by use-checkpoints.
+
+## Agile-mode crystallization adaptations (when `delivery_mode: agile`)
+
+If during interview the user picks `delivery_mode: agile`, the crystallization phase reorders compared to sections A–F above. Read `docs/planning/14_agile_mode.md` for the full design rationale.
+
+### Reordered flow
+
+| Step | Phase | Notes vs autonomous flow |
+|---|---|---|
+| 1 | Interview (A) | Same as today, ending with the delivery-mode question (see A above) |
+| 2 | Pre-spec research (D) | Same as today |
+| 3 | Spec + Harness (E) | Write spec **first**, including `delivery_mode: agile` front matter and `## Slice plan` section. Mockup needs the slices, so spec moves before visuals. |
+| 4 | Visual artifacts (B) | Per `phases/03-visuals.md` § 5.1: final-product UI + architecture + per-slice wireframes. Interactive prototype becomes a slice walkthrough. |
+| 5 | **Initial plan-checkpoint** (new) | See "Initial plan-checkpoint" below. |
+| 6 | Readiness gate (E.5) | Same as today. Runs after spec + mockup are both in place. |
+| 7 | Decomposition for slice 1 (F) | Per `phases/04-decomposition.md` § 9. Registers slice 1's jobs only. |
+| 8 | Pre-execution confirmation gate (existing) | Applies to slice 1's jobs only. |
+| 9 | Autonomous execution loop | Runs slice 1 until all per-job evals pass. |
+| 10 | **Use-checkpoint** (new) | After slice 1's evals pass. Defined in step 5 of the agile-mode rollout (see `docs/planning/14_agile_mode.md` step 5). |
+| 11 | On `approve`: re-fire decomposition for slice 2; loop to step 7. On `redirect`: invoke the redirect router (step 6 of the agile-mode rollout). On `done`: terminate cleanly. |
+
+Autonomous mode keeps today's order (sections A → B → C → D → E → E.5 → F) unchanged.
+
+### Initial plan-checkpoint
+
+After the upfront mockup pass produces the final-product artifacts and per-slice wireframes:
+
+1. **Brief the user** with concrete file paths to the artifacts:
+   - Final-product architecture: `.tenet/visuals/{date}-NN-architecture.html`
+   - Final-product UI: `.tenet/visuals/{date}-NN-final-product.html`
+   - Per-slice wireframes: `.tenet/visuals/{date}-NN-slice-M-{name}.html` (one per slice)
+   - Slice plan: `.tenet/spec/{date}-{feature}.md` § Slice plan
+2. **Ask the user to review and respond** with one of three explicit options:
+   - **`approve`** — proceed to readiness gate, then decomposition for slice 1.
+   - **`redirect: <description>`** — describe the change. Agent re-enters mockup or spec, depending on what changed (handled by the redirect router, step 6).
+   - **`cancel`** — abort the run cleanly.
+3. **Wait for the response via either channel, whichever comes first:**
+   - Interactive prompt in the same session (synchronous).
+   - `tenet_add_steer` message with class `directive` and content matching one of the three options (asynchronous — the user may step away during a long run).
+   Poll `tenet_process_steer()` while waiting, in case a steer arrives.
+4. **Process the response:**
+   - `approve` → continue to readiness gate (step 6 in the table above).
+   - `redirect` → invoke the redirect router (step 6 of the agile-mode rollout). Mid-run plan-checkpoint reopens only when the redirect changes design (see `phases/03-visuals.md` § 5.2).
+   - `cancel` → call `tenet_cancel_job` on any active jobs and exit with a clear final-state report.
+
+The plan-checkpoint blocks orchestration. Do NOT proceed to readiness/decomposition until the user has explicitly responded with one of the three options. Silence is not consent.
 
 ## Standard-mode prep
 
