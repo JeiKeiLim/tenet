@@ -269,6 +269,67 @@ After the upfront mockup pass produces the final-product artifacts and per-slice
 
 The plan-checkpoint blocks orchestration. Do NOT proceed to readiness/decomposition until the user has explicitly responded with one of the three options. Silence is not consent.
 
+### Slice loop (agile mode wraps the autonomous loop)
+
+Agile mode wraps the existing autonomous execution loop in an outer per-slice loop. The inner autonomous loop is unchanged (see "Core autonomous loop" below); the outer loop fires decomposition + checkpoint per slice.
+
+```python
+slice_index = 1
+while slice_index <= total_slices_in_spec:
+    # 1. Fire decomposition for this slice (per phases/04-decomposition.md § 9)
+    write_slice_decomposition(slice_index)
+    tenet_register_jobs(feature, jobs=slice_n_jobs)
+
+    # 2. Pre-execution confirmation (slice-scoped — only this slice's jobs)
+    confirm_with_user("Ready to build slice {N}: {slice_name}? {M} jobs.")
+
+    # 3. Run the existing autonomous loop until all slice-N jobs are done
+    run_autonomous_loop_until_all_done()
+
+    # 4. Use-checkpoint — block for user review
+    response = use_checkpoint(slice_index)
+
+    if response == "approve":
+        slice_index += 1
+        continue
+    elif response.startswith("redirect:"):
+        invoke_redirect_router(response, slice_index)
+        # Router returns either a re-decomposed slice (loop back to step 1)
+        # or an updated slice_index (e.g., user reordered the plan).
+    elif response == "done":
+        break
+```
+
+The "Core autonomous loop" section below is the body of step 3. Nothing inside it changes for agile mode — per-job eval, steer processing, retry logic all still apply. Per-job eval (critic + test critic + playwright_eval) fires on every job in both modes, which means agile mode's eval cost rises ~N× (once per slice). This is the trade-off that makes "user can actually use it" honest at every checkpoint.
+
+### Use-checkpoint
+
+After all jobs in slice N complete and pass per-job eval (Stage 1 + Stage 1.5 + Stage 3 + Stage 4 + Stage 5), but BEFORE advancing to slice N+1:
+
+1. **Verify the slice is actually usable:**
+   - Confirm the slice's `integration_test` job passed.
+   - Read the spec's slice plan entry for slice N — specifically the `User can` field.
+   - Ensure the app is running (or include a clear start command in the brief).
+2. **Brief the user with what to actually do:**
+   - The slice's name and `User can` description (what the user should be able to do now).
+   - Concrete URL or entry point (e.g., `http://localhost:3000/login`).
+   - Any test credentials or setup (from harness).
+   - What's intentionally still missing (the slice plan's `Out of slice` field).
+3. **Ask the user to use the slice and respond** with one of three options:
+   - **`approve`** — slice works as expected; proceed to decomposition for slice N+1. (If slice N is the last slice, the run terminates cleanly.)
+   - **`redirect: <description>`** — describe the change. Agent invokes the redirect router (step 6 of the agile-mode rollout).
+   - **`done`** — stop here. The user is satisfied with what's built, even though additional slices remain in the plan. Terminate cleanly with a clear final-state report.
+4. **Wait for the response via either channel, whichever comes first:**
+   - Interactive prompt in the same session (synchronous).
+   - `tenet_add_steer` message with class `directive` and content matching one of the three options (asynchronous).
+   Poll `tenet_process_steer()` while waiting.
+5. **Process the response:**
+   - `approve` → advance `slice_index` and re-enter the slice loop.
+   - `redirect` → invoke the redirect router. Do NOT silently re-enter the loop; the redirect must run readiness re-validation first.
+   - `done` → call `tenet_cancel_job` on any active jobs (there shouldn't be any at this point), write a final journal entry summarizing what was built vs what remained in the plan, and exit.
+
+The use-checkpoint blocks orchestration. Do NOT advance to slice N+1 until the user has explicitly responded with one of the three options. The blocking property is what gives the user trust mid-run.
+
 ## Standard-mode prep
 
 1. Brief clarification to resolve top unknowns.
@@ -308,6 +369,8 @@ Skip this gate ONLY if the user has explicitly said "just do it" / "start buildi
 ## Core autonomous loop (all modes)
 
 **Read `phases/05-execution-loop.md` before executing. It contains the exact tool call sequence with concrete examples.**
+
+In **autonomous mode**, this loop runs once over the full feature DAG. In **agile mode**, this loop runs once per slice — the slice loop above wraps it. The body of the loop is identical in both cases.
 
 Use this control flow exactly. Worker execution is performed by MCP-dispatched agents; orchestrator only uses `tenet_*` tools. Do NOT call subagents directly — use `tenet_start_job` to dispatch all work.
 
