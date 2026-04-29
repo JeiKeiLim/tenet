@@ -43,6 +43,26 @@ CRITICAL: Do NOT write to root `.tenet/`. Use feature-scoped `$date-$feature.md`
 Use the same `{feature}` slug established during the interview phase. `{date}` is today's ISO date (YYYY-MM-DD).
 
 ## 2. Spec Requirements (`.tenet/spec/{date}-{feature}.md`)
+
+### 2.1 Front matter (REQUIRED)
+
+The spec MUST begin with a YAML front-matter block declaring the delivery mode:
+
+```yaml
+---
+delivery_mode: autonomous   # or: agile
+---
+```
+
+- **`autonomous`** (default): the agent runs the full autonomous loop end-to-end with no mid-run user checkpoints. Decomposition produces today's component DAG (`[auth] · [posts] · ... → [assemble] → [eval]`).
+- **`agile`**: the agent pauses after the upfront mockup (initial plan-checkpoint) and after each slice's eval (use-checkpoint) for user review. Decomposition produces a sliced DAG. Picking agile REQUIRES the `## Slice plan` section described in section 2.3.
+
+If the field is missing, treat as `autonomous` for backward compatibility.
+
+The field is named `delivery_mode` (not `mode`, not `execution_mode`) because both names are already taken: `mode` is the scale-adaptive crystallization mode (`full | standard | quick | unset`) and `execution_mode` is the eval critic dispatch order (`parallel | sequential`). See `docs/planning/14_agile_mode.md` for the full agile-mode design.
+
+### 2.2 Required sections
+
 The spec must include:
 - **Purpose**: 1 to 3 sentence project goal from the interview.
 - **Tech Stack**: Confirmed choices with specific versions.
@@ -52,6 +72,41 @@ The spec must include:
 - **Auth Flow**: Step by step numbered list.
 - **Success Criteria**: Numbered, measurable, and testable outcomes.
 - **Out of Scope**: List of features or behaviors the project will NOT implement.
+- **Slice Plan**: REQUIRED when `delivery_mode: agile`. OMIT when `autonomous`. See section 2.3.
+
+### 2.3 Slice Plan section (agile only)
+
+When `delivery_mode: agile`, append a `## Slice plan` section to the spec. Slices are **additive**: slice N = slice N-1 + new capability. Each slice MUST end in a runnable + eval-passing application state — the user has to be able to actually use it at the use-checkpoint.
+
+A slice = **one user-facing capability + everything needed to make it usable**. The planner is allowed and expected to bundle dependent sub-features when omitting them would leave the user with nothing to use (e.g., login alone is meaningless without signup, so slice 1 = login + signup).
+
+Format:
+
+```markdown
+## Slice plan
+
+Total slices: N
+
+### Slice 1: <short name>
+- **Adds**: <user-facing capability this slice delivers>
+- **Bundled with**: <dependent sub-features needed to make this slice usable on its own; "none" if the capability stands alone>
+- **User can**: <one-sentence description of what the user can actually do at the use-checkpoint>
+- **Out of slice**: <features explicitly deferred to later slices>
+
+### Slice 2: <short name>
+- **Adds**: <new capability on top of slice 1>
+- **Bundled with**: <…>
+- **User can**: <…>
+- **Out of slice**: <…>
+
+(continue for each slice)
+```
+
+Slice plan rules:
+- Order slices by user value, not technical convenience. Slice 1 should be the smallest thing the user wants to see working.
+- Do NOT split a slice across multiple checkpoints. Every slice ends at a use-checkpoint.
+- Pre-work that is not user-visible (foundational refactors, schema migrations) does not get its own slice; it is bundled into the first slice that needs it.
+- The plan is the bigger picture upfront, but it is allowed to evolve via redirects at use-checkpoints.
 
 ## 3. Harness Requirements (`.tenet/harness/current.md`)
 Update the `tenet init` template with project-specific values:
@@ -71,7 +126,9 @@ Define success and failure shapes:
 
 ## 5. Validation Checklist
 Verify these before proceeding:
-- [ ] `.tenet/spec/{date}-{feature}.md` exists with all 8 required sections.
+- [ ] `.tenet/spec/{date}-{feature}.md` exists with the YAML front matter (`delivery_mode: autonomous | agile`) and all required sections.
+- [ ] If `delivery_mode: agile`, the `## Slice plan` section is present and lists at least 2 slices, each with `Adds`, `Bundled with`, `User can`, and `Out of slice`.
+- [ ] If `delivery_mode: autonomous` (or missing), the `## Slice plan` section is absent.
 - [ ] `.tenet/harness/current.md` is updated, not the original template.
 - [ ] `.tenet/spec/scenarios-{date}-{feature}.md` has 3+ scenarios and 3+ anti-scenarios.
 - [ ] Spec references a mockup from `.tenet/visuals/`.

@@ -19,7 +19,7 @@ The current autonomous loop **stays the default**. Agile is opt-in.
 
 - Not a replacement for autonomous mode.
 - Not new infrastructure. Reuses every existing phase, every existing MCP tool, every existing artifact directory.
-- Not runtime-only behavior. Decomposition produces a different DAG shape when `mode=agile`.
+- Not runtime-only behavior. Decomposition produces a different DAG shape when `delivery_mode=agile`.
 - Not auto-detected in v1. The user picks the mode after interview. Planner-detected oversize routing is future work.
 - Not a new artifact lane. No `.tenet/agile/` directory. No `slice-manifest.md` file. The existing single-doc-per-artifact convention is sufficient.
 
@@ -27,16 +27,17 @@ The current autonomous loop **stays the default**. Agile is opt-in.
 
 ## Design
 
-### Mode flag
+### Delivery-mode flag (`delivery_mode`)
 
-- New field on the spec: `mode: autonomous | agile`
+- New field on the spec: `delivery_mode: autonomous | agile`
+- Named `delivery_mode` (not `mode`, not `execution_mode`) to avoid collision with the existing `mode` field on status (`full | standard | quick | unset` — scale-adaptive crystallization depth) and the existing `execution_mode` field returned by `tenet_start_eval` (`parallel | sequential` — eval critic dispatch order). The "mode" vocabulary in this codebase is overloaded; using a distinct prefix keeps the new flag unambiguous in code, JSON outputs, and status files.
 - Picked once, after interview, before mockup
-- Stored as a YAML-ish field at the top of `spec/{date}-{feature}.md`
-- Decomposition reads the mode and shapes its output accordingly
+- Stored as a YAML front-matter field at the top of `spec/{date}-{feature}.md`
+- Decomposition reads `delivery_mode` and shapes its output accordingly
 
 ### Decomposition output shape
 
-| Mode | DAG shape |
+| `delivery_mode` | DAG shape |
 |---|---|
 | `autonomous` | Today's component DAG: `[auth] · [posts] · [friends] · [notifications] → [assemble] → [eval]` |
 | `agile` | Sequence of usable slices, each itself a small DAG ending in a runnable + eval-passing app |
@@ -114,8 +115,8 @@ Critic + test critic + playwright_eval fire on every job, just as in autonomous 
 
 ## What's actually new (4 small additions)
 
-1. **Mode flag on the spec**: `autonomous | agile`. Picked after interview, stored on the spec.
-2. **Decomposition reads the mode** and produces a sliced DAG when agile, today's component DAG when autonomous.
+1. **`delivery_mode` field on the spec**: `autonomous | agile`. Picked after interview, stored on the spec front matter.
+2. **Decomposition reads `delivery_mode`** and produces a sliced DAG when agile, today's component DAG when autonomous.
 3. **Two checkpoint types** in the orchestration: initial plan-checkpoint (once, after upfront mockup) and use-checkpoint (after each slice's eval). Mid-run plan-checkpoint reopens only on design-change redirects.
 4. **Spec template gets a `## Slice plan` section** in agile mode. Bigger picture present from the start, evolves with feedback.
 
@@ -142,9 +143,9 @@ Critic + test critic + playwright_eval fire on every job, just as in autonomous 
 
 All 7 steps ship together. Order is smallest first — land in sequence, check in after each.
 
-1. **Spec template change** — add `mode` field + `## Slice plan` section template (agile only). Documentation-only change to the spec phase prompt.
+1. **Spec template change** — add `delivery_mode` field + `## Slice plan` section template (agile only). Documentation-only change to the spec phase prompt.
 2. **Mockup phase prompt extension** — instruct it to produce final-product view + architecture diagram + per-slice path on the upfront pass; produce targeted UI/architecture deltas mid-run.
-3. **Decomposition phase prompt** — when `mode=agile`, produce a slice sequence shape (each slice = small DAG ending in a runnable app) rather than component DAG.
+3. **Decomposition phase prompt** — when `delivery_mode=agile`, produce a slice sequence shape (each slice = small DAG ending in a runnable app) rather than component DAG.
 4. **Plan-checkpoint mechanism** — new orchestration pattern in `skills/tenet/SKILL.md`: pause after mockup phase (agile mode only) until user confirms via steer or interactive prompt.
 5. **Use-checkpoint mechanism** — pause after each slice's eval passes (agile mode only); wait for user input via steer or interactive prompt.
 6. **Redirect router** — orchestration block: take user feedback at use-checkpoint, apply spec amendment, run `tenet_validate_readiness`, route blockers to the right phase to re-enter, re-run readiness until passed, then re-enter build for the affected slice. Required for the use-checkpoint to be useful — without it, redirects either get ignored or force a manual workflow.
@@ -174,6 +175,7 @@ No new MCP tool. No new artifact directory. No new DB columns. The `feature` slu
 - **Auto-detection of oversized requests** → v2. Needs a corpus of failures-from-oversize before a heuristic can be picked honestly.
 - **Built-state awareness in readiness** (reading code in addition to docs) → revisit after v1 ships if redirects are slipping past the gate due to code-vs-spec drift. Cheapest first try: prompt-level hint passing already-completed slice list.
 - **Conditional plan-checkpoint skip for trivial design changes** → v1 always shows plan-checkpoint when design changes. A "this is a one-line tweak, skip the checkpoint" optimization is a polish item, not a v1 requirement.
+- **Reorganizing the `mode` vocabulary** → noted during step-1 implementation. The codebase currently overloads "mode" across at least three concepts: scale-adaptive (`full | standard | quick`), eval dispatch (`parallel | sequential` under the field name `execution_mode`), and now delivery cadence (`autonomous | agile` under `delivery_mode`). A future cleanup pass should rename the existing fields for parallel clarity (e.g. `scale_mode`, `eval_dispatch`) and update prompts/status output to match. Out of scope for the agile-mode work; tracked here so it isn't forgotten.
 
 ---
 
@@ -191,11 +193,11 @@ Cross-cutting invariants that hold across all steps:
 
 | # | Criterion | Test approach |
 |---|---|---|
-| AC1 | Spec template accepts `mode: agile \| autonomous`; missing field defaults to autonomous | Unit test on spec parser |
-| AC2 | Spec with `mode: agile` includes a populated `## Slice plan` section the planner can read | Spec template fixture + parser test |
-| AC3 | Decomposition prompt contains slicing instructions when `mode=agile`, component-DAG instructions when autonomous | Prompt-builder unit test |
+| AC1 | Spec template accepts `delivery_mode: agile \| autonomous`; missing field defaults to autonomous | Unit test on spec parser |
+| AC2 | Spec with `delivery_mode: agile` includes a populated `## Slice plan` section the planner can read | Spec template fixture + parser test |
+| AC3 | Decomposition prompt contains slicing instructions when `delivery_mode=agile`, component-DAG instructions when autonomous | Prompt-builder unit test |
 | AC4 | Decomposition output parser accepts both DAG shapes (sliced + component) | Schema/parser test on fixture responses |
-| AC5 | Mockup prompt requests final-product UI + architecture diagram + per-slice wireframes when `mode=agile` | Prompt-builder unit test |
+| AC5 | Mockup prompt requests final-product UI + architecture diagram + per-slice wireframes when `delivery_mode=agile` | Prompt-builder unit test |
 | AC6 | Autonomous mode flow is byte-identical to today's behavior | Snapshot test on prompts + DAG output |
 | AC7 | Initial plan-checkpoint blocks orchestration after upfront mockup; resumes on user confirm | Skill-flow integration test with MockAdapter |
 | AC8 | Use-checkpoint blocks after each slice's per-job eval passes; approve / done / redirect each route correctly | Skill-flow integration test |
@@ -216,9 +218,9 @@ Cross-cutting invariants that hold across all steps:
 
 | # | Criterion | Test approach |
 |---|---|---|
-| AC16 | When `mode=agile`, `status/status.md` includes a slice-level line ("Slice N of M in progress: <slice name>") above the existing job-level status | Snapshot test on status writer |
+| AC16 | When `delivery_mode=agile`, `status/status.md` includes a slice-level line ("Slice N of M in progress: <slice name>") above the existing job-level status | Snapshot test on status writer |
 | AC17 | Slice progress is derived from the spec's `## Slice plan` section (total + names) plus job state (which slice's jobs are running / complete) | Unit test on the status reader given fixture spec + job state |
-| AC18 | When `mode=autonomous` or absent, `status/status.md` output is unchanged from today | Snapshot test against today's output |
+| AC18 | When `delivery_mode=autonomous` or absent, `status/status.md` output is unchanged from today | Snapshot test against today's output |
 
 ---
 
