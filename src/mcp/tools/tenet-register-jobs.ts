@@ -23,8 +23,9 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
     'tenet_register_jobs',
     {
       description:
-        'Register all jobs from the decomposition DAG into the runtime queue. ' +
-        'Call this ONCE after writing decomposition.md and job-queue.md. ' +
+        'Register jobs from the decomposition DAG into the runtime queue. ' +
+        'Call once per decomposition fire — once per feature in autonomous mode (delivery_mode: autonomous), ' +
+        'once per slice in agile mode (delivery_mode: agile). ' +
         'Each job becomes a pending SQLite entry that tenet_continue() can return.',
       inputSchema: z.object({
         feature: z.string().min(1).describe('Feature slug (e.g. "oauth", "payments"). Used to resolve spec/decomposition docs.'),

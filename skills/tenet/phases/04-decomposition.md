@@ -6,6 +6,11 @@
 - Insert integration test checkpoints at natural DAG boundaries.
 - Initialize the status tracking system to manage the execution flow via MCP.
 
+**Before producing the DAG, read the spec's front-matter `delivery_mode` field** (see `phases/02-spec-and-harness.md` § 2.1).
+
+- `delivery_mode: autonomous` (or absent) → produce one full component DAG covering the whole feature, as described in Sections 4–6 below.
+- `delivery_mode: agile` → produce **only the next slice's DAG**, register it, and stop. Section 9 below overrides the single-pass behavior. Decomposition will fire again per slice as the user advances through use-checkpoints.
+
 ## 2. File Structure (STRICT)
 - **DECOMPOSITION**: `.tenet/decomposition/{date}-{feature}.md` (e.g. `.tenet/decomposition/2026-04-08-oauth.md`)
 - **ACCEPTANCE TESTS**: `tests/acceptance/` directory with test files generated from scenarios
@@ -172,3 +177,94 @@ tenet_register_jobs({
 - [ ] DAG includes at least one `integration_test` checkpoint
 - [ ] Final job in DAG is an `integration_test` that runs all acceptance tests
 - [ ] All jobs are registered via `tenet_register_jobs`
+- [ ] In agile mode: only the current slice's jobs are registered; the decomposition file has a `## Slice N: ...` heading for this fire
+
+## 9. Agile-mode decomposition (when `delivery_mode: agile`)
+
+This section overrides the single-pass behavior of Sections 4–7 when the spec's front matter declares `delivery_mode: agile`. Read the spec's `## Slice plan` first.
+
+### 9.1 Per-slice decomposition (one fire per slice)
+
+In agile mode, decomposition fires **once per slice**, not once per feature:
+
+- The first fire happens immediately after the initial plan-checkpoint passes. Output: slice 1's DAG.
+- Each subsequent fire is triggered by a use-checkpoint (`approve` advances to the next slice) or by the redirect router after readiness re-passes. Output: the next slice's DAG.
+- Decomposition reads the spec's `## Slice plan` to know which slice is next. Skip slices already marked complete.
+
+Each fire produces:
+
+- A small DAG for the **next un-built slice**
+- A trailing `integration_test` job that runs the slice's acceptance tests
+- One `tenet_register_jobs` call with the slice's jobs
+
+Do NOT register every slice's jobs upfront. The DB only sees the current slice; the upfront plan lives in the spec.
+
+### 9.2 Slice DAG shape
+
+Each slice's DAG follows the same patterns as the autonomous DAG (dev jobs with dependencies, ending in an integration_test). Differences:
+
+- The slice's DAG must end in **a runnable, eval-passing application state**, not just "this component compiles." The user has to actually use the app at the use-checkpoint.
+- The slice's `integration_test` job runs the **slice's relevant acceptance tests** (cumulative — slices 1..N), not the whole project's. Use the slice plan's `User can` field to scope test selection.
+- Slice N's first dev job depends on slice N-1's `integration_test` job. This serializes slice execution and creates the natural gate for use-checkpoints. (Slice 1 has no such dependency.)
+
+### 9.3 File accumulation (single doc, slice-headed sections)
+
+`.tenet/decomposition/{date}-{feature}.md` is **appended**, not rewritten, on each slice fire. Use slice-headed sections so the whole feature's decomposition lives in one file:
+
+```markdown
+# Decomposition for {feature}
+
+## Slice 1: {slice name}
+[ASCII DAG, job details, interface contracts for slice 1]
+
+## Slice 2: {slice name}
+[ASCII DAG, job details, interface contracts for slice 2]
+
+...
+```
+
+This mirrors the spec's slice-headed structure and keeps `tenet_compile_context`'s "latest by date prefix" globbing working unchanged.
+
+### 9.4 Acceptance test handling
+
+Acceptance tests are still generated upfront from the spec's scenarios (Section 3 unchanged). On top of that:
+
+- Tag each test by slice. Two acceptable conventions:
+  - **File-level**: `tests/acceptance/slice-1-login.spec.ts`
+  - **Test-level**: a `// slice: N` comment near each test, plus a Playwright/Vitest tag (e.g., `test('...', { tag: '@slice-1' }, ...)`)
+- Slice N's `integration_test` job runs the tests tagged for slices 1..N (additive, mirroring the slice plan).
+- When a redirect adds a new test, append under the relevant slice tag. Do NOT rewrite existing test files.
+
+### 9.5 Job ID convention
+
+Use slice-prefixed job IDs so logs and status output stay grouped:
+
+- Dev jobs: `slice-{N}-{descriptor}` (e.g., `slice-1-auth-api`, `slice-1-login-ui`)
+- Integration test: `slice-{N}-e2e`
+
+This is a naming convention only — no schema change to `tenet_register_jobs`.
+
+Example registration (slice 1 of an SNS app):
+
+```js
+tenet_register_jobs({
+  feature: "sns-app",
+  jobs: [
+    { id: "slice-1-auth-api", name: "Auth API", type: "dev", depends_on: [], prompt: "..." },
+    { id: "slice-1-signup-ui", name: "Signup UI", type: "dev", depends_on: ["slice-1-auth-api"], prompt: "..." },
+    { id: "slice-1-login-ui", name: "Login UI", type: "dev", depends_on: ["slice-1-auth-api"], prompt: "..." },
+    { id: "slice-1-e2e", name: "Integration: slice 1 (login + signup)", type: "integration_test",
+      depends_on: ["slice-1-signup-ui", "slice-1-login-ui"],
+      prompt: "Run acceptance tests tagged @slice-1. Start the server, run tests/acceptance/slice-1-*.spec.ts. Report pass/fail." }
+  ]
+})
+```
+
+When slice 2 fires later, the registration call would include only slice-2-* jobs, with `slice-2-*-first` depending on `slice-1-e2e`.
+
+### 9.6 What does NOT change
+
+- Section 3 (acceptance test generation from scenarios) — tests are still generated upfront, still mandatory. Tagging by slice is the only addition.
+- Section 5 (integration test checkpoints) — still required; agile mode just adds per-slice granularity on top.
+- Section 7 (execution protocol) — same MCP loop within a slice. The orchestrator's checkpoint pauses (steps 4 and 5 of the agile rollout) sit *outside* the MCP loop, between slice fires.
+- Per-job eval (critic + test critic + playwright_eval, defined in `phases/06-evaluation.md`) fires on every job, in both modes.
