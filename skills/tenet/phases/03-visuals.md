@@ -2,6 +2,8 @@
 
 Visual generation is mandatory in Full mode. These artifacts bridge the gap between interview and specification, ensuring alignment on system design and UI expectations.
 
+**Before producing any artifacts, read the spec's front-matter `delivery_mode` field** (see `phases/02-spec-and-harness.md` § 2.1). When `delivery_mode: agile`, Section 5 below overrides parts of Sections 1–4 — agile reshapes the output into a final-product view + per-slice wireframes rather than 3-5 variations, and adds a mid-run delta workflow. When `delivery_mode: autonomous` (or absent), follow Sections 1–4 as written and ignore Section 5.
+
 ## Output Requirements
 - **Directory**: `.tenet/visuals/`
 - **Naming**: `{date}-NN-description.html` (e.g., `2026-04-08-00-architecture.html`, `2026-04-08-01-mockup-minimal.html`). The date prefix tells future sessions when the visual was created so they can decide if it needs updating.
@@ -13,6 +15,7 @@ Required for all multi-component systems.
 - **Format**: SVG elements (`<svg>`, `<line>`, `<rect>`, `<path>`) for true vector connections.
 - **Requirement**: Must show explicit data flow and relationships via arrows/lines. Styled CSS boxes alone are unacceptable.
 - **Interactive**: Support hover effects for detail and responsive scaling.
+- **Agile-mode note**: The upfront pass always produces a final-product architecture diagram (entire system, all slices combined). Mid-run, architecture is re-fired only on structural redirects (new external service, schema shift, etc.) — see Section 5.
 
 ```html
 <svg width="800" height="400" viewBox="0 0 800 400">
@@ -29,9 +32,10 @@ Required for all multi-component systems.
 
 ## 2. UI Mockups
 Required for all UI-facing projects.
-- **Quantity**: Generate 3-5 materially different design variations.
+- **Quantity (autonomous mode)**: Generate 3-5 materially different design variations.
 - **Variations**: Differ in layout, color scheme, and information density.
 - **Approval**: Present all variations to the user. They must select or approve one before proceeding to the spec phase.
+- **Agile-mode override**: Replace the 3-5 variation pass with a single cohesive final-product mockup plus one wireframe per slice. See Section 5.1.
 
 ## 3. DESIGN.md (Frontend Projects Only)
 
@@ -114,5 +118,53 @@ Default agent: claude-code</pre>
 
 **User approval:** Present the prototype to the user. They must click through the flows and confirm the behavior matches their expectations before proceeding to spec.
 
+**Agile-mode note:** The prototype becomes a slice walkthrough — clicking "next slice" advances through the planned slice progression so the user can preview what each use-checkpoint will deliver. See Section 5.1.
+
+## 5. Agile-mode adaptations (when `delivery_mode: agile`)
+
+This section overrides parts of Sections 1–4 when the spec's front matter declares `delivery_mode: agile`. Read the spec's `## Slice plan` first — every adaptation below maps to that plan.
+
+### 5.1 Upfront pass (before the initial plan-checkpoint)
+
+Produce three artifacts that together preview the entire product:
+
+1. **Final-product architecture diagram** — same format as Section 1, scoped to the *complete* product (all slices combined). This is the system-level destination the user is signing off on at the plan-checkpoint.
+   - File: `.tenet/visuals/{date}-NN-architecture.html` (one canonical file)
+
+2. **Final-product UI mockup** — ONE cohesive mockup (not 3-5 variations). It shows the final state of the app after every slice ships. The user is approving the destination, not picking between styles.
+   - File: `.tenet/visuals/{date}-NN-final-product.html`
+   - If the user wants stylistic alternatives, run a tiny variation pass (2-3 alts) on top, but treat them as variants of the same destination, not entirely different products.
+
+3. **Per-slice wireframes** — one mockup per slice listed in the spec's `## Slice plan`. Each shows the app's UI state at the use-checkpoint for that slice — what the user will actually see and click when slice N's eval passes.
+   - File: `.tenet/visuals/{date}-NN-slice-M-{slice-name}.html` (M is the slice number, 1-indexed)
+   - Wireframes are **additive**, mirroring the slice plan: slice 2's wireframe contains everything from slice 1 plus slice 2's new capability.
+
+The interactive prototype (Section 4) becomes a slice walkthrough: clicking "next slice" advances through the planned progression so the user can preview each use-checkpoint. This walkthrough is what the user reviews at the initial plan-checkpoint.
+
+### 5.2 Mid-run pass (after a redirect at a use-checkpoint)
+
+The mockup phase re-fires only when a redirect changes design. Produce *targeted deltas*, not a re-do:
+
+| Redirect type | Mockup output |
+|---|---|
+| Pure visual tweak (color, layout, copy) | UI delta only — replace the affected slice's wireframe; architecture unchanged |
+| New external service / schema shift / structural change | UI delta + architecture delta — update both, scoped to the affected slice |
+| Pure reorder of slice plan (no design change) | No mockup work — skip this phase, go straight to readiness/build |
+| Adding a new slice | One new wireframe for the new slice + architecture delta if the slice introduces new structure |
+
+File the deltas alongside the originals using a `-revision-K` suffix (K is the revision count for that artifact, 1-indexed):
+- `.tenet/visuals/{date}-NN-slice-M-{slice-name}-revision-K.html`
+- `.tenet/visuals/{date}-NN-architecture-revision-K.html`
+
+Do NOT overwrite the original wireframes — the revision history is part of the audit trail the user uses at the next plan-checkpoint.
+
+The redirect router (step 6 of the agile-mode rollout, see `docs/planning/14_agile_mode.md`) decides whether mockup re-fires; this section just defines the output shape when it does.
+
+### 5.3 What does NOT change in agile mode
+
+- Section 3 (DESIGN.md) — same content, same trigger (after design lock-in on the final-product mockup).
+- "Output Requirements" rules (self-contained, realistic data, naming convention) still hold.
+- Anti-Skip Enforcement still applies — agile mode does not skip mockup; it reshapes it.
+
 ## Anti-Skip Enforcement
-Visual generation is not optional. Do not skip this step even if the requirements seem clear. If a project has a UI, mockups are mandatory. Architecture diagrams are mandatory for all systems. Interactive prototypes are mandatory after design lock-in.
+Visual generation is not optional. Do not skip this step even if the requirements seem clear. If a project has a UI, mockups are mandatory. Architecture diagrams are mandatory for all systems. Interactive prototypes are mandatory after design lock-in. The Section 5 agile-mode adaptations apply *in addition* to this rule, not as an exception to it.
