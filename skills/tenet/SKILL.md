@@ -330,6 +330,102 @@ After all jobs in slice N complete and pass per-job eval (Stage 1 + Stage 1.5 + 
 
 The use-checkpoint blocks orchestration. Do NOT advance to slice N+1 until the user has explicitly responded with one of the three options. The blocking property is what gives the user trust mid-run.
 
+### Redirect router
+
+Triggered when the user replies `redirect: <description>` at the initial plan-checkpoint or a use-checkpoint. The router resolves the redirect into a consistent state by applying a spec amendment, re-running the readiness gate, replaying targeted phases for any blockers, and re-entering the build for the affected slice. Pure `approve` or `done` responses do NOT enter the router (AC15).
+
+#### Step 0: classify the affected scope
+
+- At the **plan-checkpoint**: the redirect targets the upfront slice plan. `affected_slice = 1` (no slices have been built yet).
+- At a **use-checkpoint after slice N**: the redirect can target slice N (the just-built one), upcoming slices, or the slice plan structure (reorder/add/remove).
+- Set `affected_slice` to the lowest slice number touched by the redirect. If ambiguous, ask the user one targeted question before proceeding.
+
+#### Step 1: apply the spec amendment
+
+Append a section to `.tenet/spec/{date}-{feature}.md`:
+
+```markdown
+## Redirect at slice {N} ({ISO timestamp})
+
+User feedback: {redirect text}
+
+Affected slice(s): {N} onwards
+```
+
+Do NOT rewrite earlier parts of the spec. The amendment is the audit trail for what the user asked for. If the redirect implies a slice plan change (reorder, add, remove), update the `## Slice plan` section in place too — but keep the amendment as the trail.
+
+#### Step 2: classify the redirect's design impact
+
+Inspect the redirect text and decide whether it requires a mockup re-fire (per `phases/03-visuals.md` § 5.2):
+
+| Redirect content | Mockup re-fire? |
+|---|---|
+| Pure visual tweak (color, copy, layout) | Yes — UI delta only |
+| New external service / schema shift / structural change | Yes — UI + architecture delta |
+| Pure reorder of slice plan, no design change | No |
+| Adding a new slice | Yes — one new wireframe + architecture delta if structural |
+| Pure spec content change (success criteria, error policy, copy in API responses) | No |
+
+Cache this decision; it gates Step 5 below.
+
+#### Step 3: validate readiness on the amended state
+
+Call `tenet_validate_readiness(feature="{feature}")`. Wait for the result via `tenet_job_wait` + `tenet_job_result`.
+
+#### Step 4: route blockers to phases
+
+If readiness `passed: false`, route each blocker to the appropriate phase based on its readiness category. Multiple blockers may map to multiple phases — handle them in this order (cheapest first):
+
+| Readiness category (blocked) | Re-enter phase | Resolution |
+|---|---|---|
+| `spec_sufficiency` | spec amendment | Edit the spec inline to fill the gap (e.g., add error-handling policy, edge-case behavior). |
+| `research_prior_art` | pre-spec research → spec amendment | Research the missing technology / API / library, save findings via `tenet_update_knowledge`, then update the spec. |
+| `interface_contracts` | spec amendment (internal contract) or mockup architecture (external contract) | Pin internal API/event/DB shapes inline; update mockup architecture diagram if a third-party contract changes. |
+| `external_service_access` | harness amendment + inline user prompt | Edit `harness/current.md` and ask the user for any required values (API keys, URLs, sandbox accounts). Do NOT guess credentials. |
+| `env_runtime` | harness amendment | Update env vars / start command / port / health-check entries. |
+| `test_data_fixtures` | harness amendment + inline user prompt | Add fixture paths or ask the user for test data the agent cannot synthesize. |
+| `test_strategy` | spec amendment | Declare each test layer (unit / integration / e2e) as live/sandboxed/mocked/skipped with a reason. |
+| `deps_tooling` | harness amendment | Add lib/runtime versions, build/test commands. |
+
+Independent of readiness, if the redirect text introduces **missing user-facing info** (intent unclear, ambiguous behavior), run a **mini interview**: ask the user one targeted question via interactive prompt, append the answer to the interview transcript, then return to Step 3.
+
+After resolving each blocker, re-run `tenet_validate_readiness` (back to Step 3). Loop until either `passed: true` OR the bounded retry counter (Step 4.5) trips.
+
+#### Step 4.5: bounded retry (AC13)
+
+Cap the readiness loop at **5 iterations**. If readiness still blocks after 5 rounds:
+
+1. Halt the redirect router.
+2. Brief the user with the remaining blockers and what was tried.
+3. Ask the user to either (a) rephrase the redirect more concretely or (b) cancel the redirect.
+4. If cancelled: revert the spec amendment by removing the redirect section and the `## Slice plan` updates; resume at the use-checkpoint where the redirect originated.
+
+This prevents the agent from spinning indefinitely on an irreducible conflict.
+
+#### Step 5: fire mockup phase if the redirect changed design
+
+If Step 2 cached "Yes — re-fire mockup":
+
+1. Run the mockup phase per `phases/03-visuals.md` § 5.2 — produce targeted UI/architecture deltas only, scoped to the affected slice.
+2. After mockup writes the deltas, re-run `tenet_validate_readiness` once more (Step 3). The mockup may have introduced new gaps that need resolving.
+
+If Step 2 said "No": skip mockup and proceed.
+
+#### Step 6: re-enter build for the affected slice (AC14)
+
+Once readiness passes:
+
+1. Cancel any in-flight pending jobs for the affected slice and downstream slices via `tenet_cancel_job`. Already-completed jobs (e.g., earlier slices) are NOT cancelled — slice 1's already-built code stays.
+2. Re-fire decomposition for `affected_slice` per `phases/04-decomposition.md` § 9. The decomposition file appends a new `## Slice {N} (revision {K})` section.
+3. Register the new slice jobs via `tenet_register_jobs`.
+4. Hand control back to the slice loop. The slice runs, eval passes, and the use-checkpoint fires again — the user reviews the redirected slice.
+
+#### Notes
+
+- **Pure approve / done skip the router (AC15)**: only `redirect:` invokes Steps 1–6. Plain `approve` advances the slice loop; plain `done` terminates cleanly. Readiness is NOT re-validated when the spec hasn't changed.
+- **Spec amendment is timestamped + slice-tagged (AC11)**: the section header in Step 1 contains both the slice number and ISO timestamp; this is what makes the amendment a usable audit trail.
+- **Readiness blocker → phase mapping is deterministic (AC12)**: the table in Step 4 is the source of truth. If a blocker doesn't fit any row, treat it as `spec_sufficiency` and log a journal entry noting the unfit category for later refinement.
+
 ## Standard-mode prep
 
 1. Brief clarification to resolve top unknowns.
