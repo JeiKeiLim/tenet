@@ -1,0 +1,9 @@
+[
+  {
+    "id": "slice-1-impl",
+    "name": "implement key-count CLI (slice 1: basic)",
+    "type": "dev",
+    "depends_on": [],
+    "prompt": "Implement slice 1 of the key-count CLI per the feature spec at .tenet/spec/ and the harness at .tenet/harness/current.md. Slice 1 is the BASIC version — no --pretty flag yet. Build it, write tests for slice 1's acceptance criteria (the first 6 listed in the spec's Tests section), run the tests, and ensure they pass. Commit locally as 'tenet(key-count): slice 1 — basic key-count'. Deliverables: src/key-count.ts, tests/key-count.test.ts, tsconfig.json, package.json, dist/ after build. Do NOT implement --pretty in this slice — that is slice 2's work."
+  }
+]

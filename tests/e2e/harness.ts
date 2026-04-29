@@ -24,6 +24,15 @@ export type CanarySpec = {
   name: string;
   /** Absolute path to the canary directory containing spec.md, harness.md, jobs.json, verify.ts. */
   canaryDir: string;
+  /**
+   * If set, run as an agile-mode canary with this many slices. The harness
+   * loads `jobs/slice-{N}.json` for each N and registers them in sequence,
+   * waiting for each slice to complete before registering the next. The
+   * spec.md must declare `delivery_mode: agile` and contain a `## Slice plan`
+   * section. When unset, the canary runs as an autonomous-mode canary using
+   * the existing single `jobs.json` file.
+   */
+  slices?: number;
 };
 
 export type CanaryRunOptions = {
@@ -144,8 +153,13 @@ export async function runCanary(spec: CanarySpec, options: CanaryRunOptions = {}
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const specSrc = path.join(spec.canaryDir, 'spec.md');
     const harnessSrc = path.join(spec.canaryDir, 'harness.md');
-    const jobsSrc = path.join(spec.canaryDir, 'jobs.json');
-    for (const p of [specSrc, harnessSrc, jobsSrc]) {
+    const isAgile = typeof spec.slices === 'number' && spec.slices >= 1;
+    const requiredSliceFiles = isAgile
+      ? Array.from({ length: spec.slices as number }, (_, i) => path.join(spec.canaryDir, 'jobs', `slice-${i + 1}.json`))
+      : [];
+    const jobsSrc = isAgile ? requiredSliceFiles[0] : path.join(spec.canaryDir, 'jobs.json');
+    const requiredFiles = isAgile ? [specSrc, harnessSrc, ...requiredSliceFiles] : [specSrc, harnessSrc, jobsSrc];
+    for (const p of requiredFiles) {
       if (!fs.existsSync(p)) throw new Error(`Canary file missing: ${p}`);
     }
     fs.writeFileSync(
@@ -203,69 +217,115 @@ export async function runCanary(spec: CanarySpec, options: CanaryRunOptions = {}
       const verdict = store.getConfig(`eval_parallel_safe:${spec.feature}`);
       log(`[${spec.name}] readiness verdict: eval_parallel_safe=${verdict ?? '(not set — defaults sequential)'}`);
 
-      // 5. Register jobs DAG.
-      const jobs = JSON.parse(fs.readFileSync(jobsSrc, 'utf8')) as JobDefinition[];
-      log(`[${spec.name}] register_jobs: ${jobs.length} jobs`);
-      await registerJobs({ feature: spec.feature, jobs });
-
-      // 6. Drive the core loop: continue → start → wait → result → eval → wait.
+      // 5–6. Register jobs and drive the core loop.
+      // Autonomous canary: one register call, run inner loop to all_done.
+      // Agile canary: per slice, register that slice's jobs, run inner loop to all_done,
+      //               capture status.md (must show "Slice N of M in progress: ..."),
+      //               then advance to the next slice. Mid-slice eval failures abort.
       const maxCycles = options.maxCycles ?? 5;
-      while (cycles < maxCycles) {
-        const next = manager.continue();
-        if (next.all_done) {
-          log(`[${spec.name}] all jobs complete`);
-          break;
+      const totalSlices = isAgile ? (spec.slices as number) : 1;
+      const sliceProgressLines: string[] = [];
+
+      for (let sliceIndex = 1; sliceIndex <= totalSlices; sliceIndex++) {
+        const sliceJobsSrc = isAgile
+          ? path.join(spec.canaryDir, 'jobs', `slice-${sliceIndex}.json`)
+          : jobsSrc;
+        const jobs = JSON.parse(fs.readFileSync(sliceJobsSrc, 'utf8')) as JobDefinition[];
+        const sliceLabel = isAgile ? ` slice ${sliceIndex}/${totalSlices}` : '';
+        log(`[${spec.name}]${sliceLabel} register_jobs: ${jobs.length} jobs`);
+        await registerJobs({ feature: spec.feature, jobs });
+
+        // After registration, sync status files and capture the slice line for agile canaries.
+        if (isAgile) {
+          store.syncStatusFiles();
+          const statusPath = path.join(workdir, '.tenet', 'status', 'status.md');
+          if (fs.existsSync(statusPath)) {
+            const content = fs.readFileSync(statusPath, 'utf8');
+            const match = content.match(/^Slice \d+ of \d+ in progress:.+$/m);
+            if (match) sliceProgressLines.push(match[0]);
+          }
         }
-        if (!next.next_job) {
-          failures.push(`no runnable job but not all_done (blocked=${next.blocked_jobs?.length ?? 0})`);
-          break;
+
+        // Inner loop: drive jobs until this slice is complete.
+        let sliceAborted = false;
+        while (cycles < maxCycles) {
+          const next = manager.continue();
+          if (next.all_done) {
+            log(`[${spec.name}]${sliceLabel} all jobs complete`);
+            break;
+          }
+          if (!next.next_job) {
+            failures.push(
+              `${sliceLabel ? `slice ${sliceIndex}: ` : ''}no runnable job but not all_done (blocked=${next.blocked_jobs?.length ?? 0})`,
+            );
+            sliceAborted = true;
+            break;
+          }
+
+          cycles += 1;
+          const job = next.next_job;
+          log(`[${spec.name}]${sliceLabel} cycle ${cycles}: dispatching ${job.params.name ?? job.id}`);
+
+          // Compile context just to exercise the path — result isn't fed to the worker since
+          // the dev job's prompt already encodes the task.
+          await compileContext({ job_id: job.id });
+
+          await startJob({ job_id: job.id });
+          await manager.waitForJob(job.id, null, 25 * 60 * 1000);
+          const completed = store.getJob(job.id);
+          if (completed?.status !== 'completed') {
+            failures.push(
+              `dev job ${job.id} did not complete: ${completed?.status} (${completed?.error ?? 'no error'})`,
+            );
+            return finalize();
+          }
+
+          // Run evals.
+          const devOutput = (store.getJobOutput(job.id) ?? {}) as Record<string, unknown>;
+          const evalDispatch = await startEval({
+            job_id: job.id,
+            output: devOutput,
+            feature: spec.feature,
+          });
+          const evalJobs = parseResult(evalDispatch);
+          const codeJobId = evalJobs.code_critic_job_id as string;
+          const testJobId = evalJobs.test_critic_job_id as string;
+          const playJobId = evalJobs.playwright_eval_job_id as string;
+          log(`[${spec.name}]${sliceLabel} eval dispatched (${evalJobs.execution_mode})`);
+
+          await manager.waitForJob(codeJobId, null, 25 * 60 * 1000);
+          await manager.waitForJob(testJobId, null, 25 * 60 * 1000);
+          await manager.waitForJob(playJobId, null, 25 * 60 * 1000);
+
+          const criticsStatus = [codeJobId, testJobId, playJobId].map((id) => store.getJob(id)?.status);
+          const allCompleted = criticsStatus.every((s) => s === 'completed');
+          if (!allCompleted) {
+            failures.push(`not all critics completed: ${criticsStatus.join(', ')}`);
+            return finalize();
+          }
         }
 
-        cycles += 1;
-        const job = next.next_job;
-        log(`[${spec.name}] cycle ${cycles}: dispatching ${job.params.name ?? job.id}`);
+        if (sliceAborted) return finalize();
 
-        // Compile context just to exercise the path — result isn't fed to the worker since
-        // the dev job's prompt already encodes the task.
-        await compileContext({ job_id: job.id });
-
-        await startJob({ job_id: job.id });
-        await manager.waitForJob(job.id, null, 25 * 60 * 1000);
-        const completed = store.getJob(job.id);
-        if (completed?.status !== 'completed') {
-          failures.push(
-            `dev job ${job.id} did not complete: ${completed?.status} (${completed?.error ?? 'no error'})`,
-          );
+        if (cycles >= maxCycles) {
+          failures.push(`hit maxCycles=${maxCycles} without all_done${sliceLabel ? ` on slice ${sliceIndex}` : ''}`);
           return finalize();
         }
 
-        // Run evals.
-        const devOutput = (store.getJobOutput(job.id) ?? {}) as Record<string, unknown>;
-        const evalDispatch = await startEval({
-          job_id: job.id,
-          output: devOutput,
-          feature: spec.feature,
-        });
-        const evalJobs = parseResult(evalDispatch);
-        const codeJobId = evalJobs.code_critic_job_id as string;
-        const testJobId = evalJobs.test_critic_job_id as string;
-        const playJobId = evalJobs.playwright_eval_job_id as string;
-        log(`[${spec.name}] eval dispatched (${evalJobs.execution_mode})`);
-
-        await manager.waitForJob(codeJobId, null, 25 * 60 * 1000);
-        await manager.waitForJob(testJobId, null, 25 * 60 * 1000);
-        await manager.waitForJob(playJobId, null, 25 * 60 * 1000);
-
-        const criticsStatus = [codeJobId, testJobId, playJobId].map((id) => store.getJob(id)?.status);
-        const allCompleted = criticsStatus.every((s) => s === 'completed');
-        if (!allCompleted) {
-          failures.push(`not all critics completed: ${criticsStatus.join(', ')}`);
-          return finalize();
+        // Auto-approve at the use-checkpoint: just advance to the next slice.
+        // (Real Tenet pauses here for user approval; the canary acts as the
+        // approving user automatically.)
+        if (isAgile && sliceIndex < totalSlices) {
+          log(`[${spec.name}] use-checkpoint slice ${sliceIndex}: auto-approve`);
         }
       }
 
-      if (cycles >= (options.maxCycles ?? 5)) {
-        failures.push(`hit maxCycles=${options.maxCycles ?? 5} without all_done`);
+      if (isAgile && sliceProgressLines.length === 0) {
+        failures.push(
+          'agile canary: status.md never showed a "Slice N of M in progress" line — slice progress logic is silent',
+        );
+      } else if (isAgile) {
+        log(`[${spec.name}] captured slice progress lines: ${JSON.stringify(sliceProgressLines)}`);
       }
 
       // 7. Run the canary's verify script against the workdir.

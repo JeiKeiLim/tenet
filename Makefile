@@ -1,4 +1,4 @@
-.PHONY: help build clean test test-e2e lint typecheck check dev publish link unlink e2e-cli e2e-api e2e-web e2e-all
+.PHONY: help build clean test test-e2e lint typecheck check dev publish link unlink e2e-cli e2e-api e2e-web e2e-agile e2e-all
 
 .DEFAULT_GOAL := help
 
@@ -38,7 +38,10 @@ e2e-api: ## E2E: build an in-memory notes API canary (~10-15 min, ~$0.08-1.20)
 e2e-web: ## E2E: build a static click-counter page canary (~8-12 min, ~$0.07-1.00)
 	pnpm vitest run --config vitest.e2e.config.ts tests/e2e/canary-web.e2e.test.ts
 
-e2e-all: ## E2E: run all three canaries sequentially (~25-35 min, ~$0.20-2.50)
+e2e-agile: ## E2E: build a 2-slice agile-cli canary (~10-15 min, ~$0.10-1.50)
+	pnpm vitest run --config vitest.e2e.config.ts tests/e2e/canary-agile-cli.e2e.test.ts
+
+e2e-all: ## E2E: run all four canaries sequentially (~35-50 min, ~$0.30-4.00)
 	pnpm vitest run --config vitest.e2e.config.ts
 
 # Local development

@@ -1,0 +1,9 @@
+[
+  {
+    "id": "slice-2-pretty-flag",
+    "name": "add --pretty flag (slice 2: pretty output)",
+    "type": "dev",
+    "depends_on": [],
+    "prompt": "Implement slice 2 of the key-count CLI: add a --pretty flag per the feature spec at .tenet/spec/ Slice plan section. The flag, when present (in any position before the path), switches output format to '✓ <path>: N keys' instead of the default 'N keys in <path>'. Slice 1 (basic key-count) is already built — extend it; do NOT rewrite it. Slice 1's existing tests must keep passing. Add new tests for the --pretty cases (tests 7 and 8 listed in the spec's Tests section). Build it, run all tests, ensure they all pass. Commit locally as 'tenet(key-count): slice 2 — --pretty flag'."
+  }
+]
