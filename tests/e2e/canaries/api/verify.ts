@@ -41,10 +41,12 @@ export async function verify(workdir: string): Promise<{ passed: boolean; detail
       );
     }
   }
-  if (fs.existsSync(entryJs)) {
-    checks.push('dist/index.js exists');
+  // Some agents generate rootDir:"." in tsconfig, producing dist/src/index.js instead.
+  const altEntryJs = path.join(workdir, 'dist', 'src', 'index.js');
+  const resolvedEntry = fs.existsSync(entryJs) ? entryJs : fs.existsSync(altEntryJs) ? altEntryJs : null;
+  if (resolvedEntry) {
+    checks.push(fs.existsSync(entryJs) ? 'dist/index.js exists' : 'dist/src/index.js exists (rootDir workaround)');
   } else {
-    // Surface what the agent ACTUALLY produced so the root cause is visible.
     const distDir = path.join(workdir, 'dist');
     if (fs.existsSync(distDir)) {
       const contents = fs.readdirSync(distDir).join(', ');
@@ -59,7 +61,7 @@ export async function verify(workdir: string): Promise<{ passed: boolean; detail
 
   // Boot the server on an ephemeral port and hit it.
   const port = 4300 + Math.floor(Math.random() * 500);
-  const child = spawn('node', [entryJs], {
+  const child = spawn('node', [resolvedEntry!], {
     cwd: workdir,
     env: { ...process.env, PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],

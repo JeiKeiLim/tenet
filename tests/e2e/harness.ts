@@ -381,6 +381,436 @@ export async function runCanary(spec: CanarySpec, options: CanaryRunOptions = {}
   }
 }
 
+/**
+ * Full-pipeline agile canary: starts from a raw prompt and lets the agent
+ * produce spec + decomposition (with slicing) + job definitions, then drives
+ * the build loop. This validates that the skill prompts (spec phase, mockup,
+ * decomposition) produce correct slicing behavior.
+ *
+ * Budget: ~20-30 minutes, ~$0.50-2.50 on Sonnet, ~$0.15-0.50 on Haiku.
+ * Invoke via `make e2e-agile-full`.
+ *
+ * What this exercises that runCanary (agile) does not:
+ * - Agent follows spec phase prompt → produces delivery_mode + Slice plan
+ * - Agent follows decomposition prompt → produces per-slice job DAGs
+ * - Agent writes structured job JSON files usable by tenet_register_jobs
+ * - Each slice builds on the previous and is independently eval-passing
+ *
+ * What this does NOT exercise (still requires manual user-driven runs):
+ * - Interactive interview phase (the prompt replaces the interview)
+ * - Mockup phase (skipped for a CLI canary)
+ * - Plan-checkpoint / use-checkpoint pause behavior (auto-approves)
+ * - Redirect router (no redirects in the canary)
+ */
+export type FullPipelineSpec = {
+  /** Slug used for the feature (determines spec/decomposition file naming). */
+  feature: string;
+  /** Human-readable canary name for logs. */
+  name: string;
+  /** Absolute path to the canary directory containing prompt.md, harness.md, verify.ts. */
+  canaryDir: string;
+  /** Expected number of slices (for verification). */
+  expectedSlices: number;
+};
+
+export type FullPipelineResult = CanaryResult & {
+  /** Number of slices the agent actually produced (0 if planning failed). */
+  actualSlices: number;
+  /** Whether the agent produced a valid agile spec. */
+  specProduced: boolean;
+  /** Whether the agent produced a valid decomposition. */
+  decompositionProduced: boolean;
+};
+
+export async function runFullPipelineCanary(
+  spec: FullPipelineSpec,
+  options: CanaryRunOptions = {},
+): Promise<FullPipelineResult> {
+  const failures: string[] = [];
+  const startedAt = Date.now();
+  let cycles = 0;
+  let passed = false;
+  let verifyDetails = '';
+  let actualSlices = 0;
+  let specProduced = false;
+  let decompositionProduced = false;
+
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+  const agentName =
+    options.agentName ??
+    (process.env.TENET_E2E_AGENT && process.env.TENET_E2E_AGENT.trim().length > 0
+      ? process.env.TENET_E2E_AGENT.trim()
+      : undefined) ??
+    resolveDefaultAgent(repoRoot);
+
+  if (!agentName) {
+    throw new Error(
+      'No agent configured. Either set TENET_E2E_AGENT=<name>, pass options.agentName, or run `tenet config --agent <name>` in the repo first.',
+    );
+  }
+
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), `tenet-e2e-fp-${spec.feature}-`));
+  log(`[${spec.name}] workdir: ${workdir}`);
+  log(`[${spec.name}] agent: ${agentName}`);
+  log(`[${spec.name}] mode: full-pipeline agile (${spec.expectedSlices} slices expected)`);
+
+  try {
+    execSync('git init -q && git config user.email "tenet-e2e@local" && git config user.name "Tenet E2E" && git commit --allow-empty -m "init" -q', {
+      cwd: workdir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10_000,
+    });
+  } catch (error) {
+    throw new Error(
+      `failed to git init e2e workdir: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  try {
+    // 1. Init Tenet project.
+    initProject(workdir, { agent: agentName });
+    log(`[${spec.name}] initProject done`);
+
+    // 2. Seed ONLY harness.md (no spec, no jobs — the agent will produce those).
+    const harnessSrc = path.join(spec.canaryDir, 'harness.md');
+    if (!fs.existsSync(harnessSrc)) throw new Error(`Canary file missing: ${harnessSrc}`);
+    fs.writeFileSync(
+      path.join(workdir, '.tenet', 'harness', 'current.md'),
+      fs.readFileSync(harnessSrc, 'utf8'),
+    );
+
+    // 3. Read the raw prompt and harness content for the planning job.
+    const promptSrc = path.join(spec.canaryDir, 'prompt.md');
+    if (!fs.existsSync(promptSrc)) throw new Error(`Canary file missing: ${promptSrc}`);
+    const rawPrompt = fs.readFileSync(promptSrc, 'utf8');
+    const harnessContent = fs.readFileSync(harnessSrc, 'utf8');
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 4. Stand up infrastructure.
+    const store = new StateStore(workdir);
+    const extraArgs = parseAdapterExtraArgs(readStateConfig(path.join(workdir, '.tenet')));
+    const registry = new AdapterRegistry(extraArgs);
+    const manager = new JobManager(store, registry);
+
+    const registerJobs = captureHandler<
+      (a: { feature: string; jobs: JobDefinition[] }) => Promise<CallToolResult>
+    >((rt) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      registerTenetRegisterJobsTool(rt as any, store),
+    );
+    const startJob = captureHandler<
+      (a: { job_id?: string; job_type?: string; params?: Record<string, unknown> }) => Promise<CallToolResult>
+    >((rt) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      registerTenetStartJobTool(rt as any, manager),
+    );
+    const startEval = captureHandler<
+      (a: { job_id: string; output: Record<string, unknown>; feature?: string }) => Promise<CallToolResult>
+    >((rt) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      registerTenetStartEvalTool(rt as any, manager, store),
+    );
+    const compileContext = captureHandler<(a: { job_id: string }) => Promise<CallToolResult>>((rt) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      registerTenetCompileContextTool(rt as any, store),
+    );
+
+    try {
+      // =============================================
+      // PHASE 1: PLANNING — agent produces spec, decomposition, job files
+      // =============================================
+      const planningPrompt = [
+        '## Task: Tenet Crystallization (Automated Mode)',
+        '',
+        'You are performing the crystallization phase for a Tenet project in automated mode',
+        '(no interactive questions). Produce ALL required artifacts:',
+        '',
+        `1. **Spec** at \`.tenet/spec/${today}-${spec.feature}.md\`:`,
+        '   - Must begin with YAML front matter: `---`\\ndelivery_mode: agile\\n`---`',
+        `   - Must include a \`## Slice plan\` section with exactly ${spec.expectedSlices} slices`,
+        '   - Each slice: `### Slice N: <name>` with Adds/Bundled with/User can/Out of slice',
+        '   - Include acceptance criteria, tech stack, non-goals, tests',
+        '',
+        '2. **Decomposition** at `.tenet/decomposition/README.md` (placeholder):',
+        `   - Write the full decomposition at \`.tenet/decomposition/${today}-${spec.feature}.md\``,
+        '   - Must include `## Slice N: <name>` sections for each slice',
+        '   - Each section lists jobs with ID, name, type, dependencies, and prompt',
+        '',
+        '3. **Structured job definitions** (machine-readable JSON):',
+        '   - .tenet/jobs/slice-1.json — array of job objects for slice 1',
+        '   - .tenet/jobs/slice-2.json — array of job objects for slice 2',
+        '   Each job object: { "id", "name", "type", "depends_on", "prompt" }',
+        '   Job IDs MUST use slice-{N}-{descriptor} naming convention',
+        '',
+        '4. **Register slice 1 jobs** using the tenet_register_jobs MCP tool:',
+        `   - Read \`.tenet/jobs/slice-1.json\` and call tenet_register_jobs with feature="${spec.feature}"`,
+        '   - Pass the jobs array exactly as structured in the JSON file',
+        '',
+        '## User Request',
+        '',
+        rawPrompt.trim(),
+        '',
+        '## Harness Contract',
+        '',
+        harnessContent.trim(),
+      ].join('\n');
+
+      log(`[${spec.name}] Phase 1: starting planning job`);
+      const planningJobResult = await startJob({
+        job_type: 'dev',
+        params: {
+          name: `planning-${spec.feature}`,
+          prompt: planningPrompt,
+        },
+      });
+      const planningJobParsed = parseResult(planningJobResult);
+      const planningJobId = planningJobParsed.job_id as string;
+      log(`[${spec.name}] planning job: ${planningJobId}`);
+
+      await manager.waitForJob(planningJobId, null, 25 * 60 * 1000);
+      const planningJob = store.getJob(planningJobId);
+      if (planningJob?.status !== 'completed') {
+        failures.push(
+          `planning job did not complete: ${planningJob?.status} (${planningJob?.error ?? 'no error'})`,
+        );
+        return finalize();
+      }
+      cycles += 1;
+      log(`[${spec.name}] planning job completed`);
+
+      // Verify planning artifacts exist.
+      const specDir = path.join(workdir, '.tenet', 'spec');
+      const specFiles = fs.existsSync(specDir)
+        ? fs.readdirSync(specDir).filter((f) => f.endsWith('.md'))
+        : [];
+      const specFile = specFiles.sort().at(-1);
+      if (specFile) {
+        specProduced = true;
+        const specContent = fs.readFileSync(path.join(specDir, specFile), 'utf8');
+        if (/delivery_mode:\s*agile/i.test(specContent)) {
+          log(`[${spec.name}] spec has delivery_mode: agile`);
+        } else {
+          failures.push('spec missing delivery_mode: agile front matter');
+        }
+        const sliceMatches = specContent.match(/### Slice \d+:/g) || [];
+        actualSlices = sliceMatches.length;
+        log(`[${spec.name}] spec has ${actualSlices} slice(s) defined`);
+      } else {
+        failures.push('planning job produced no spec file');
+      }
+
+      const decompFiles = fs.existsSync(path.join(workdir, '.tenet', 'decomposition'))
+        ? fs.readdirSync(path.join(workdir, '.tenet', 'decomposition')).filter((f) => f.endsWith('.md'))
+        : [];
+      if (decompFiles.length > 0) {
+        decompositionProduced = true;
+        log(`[${spec.name}] decomposition file(s): ${decompFiles.join(', ')}`);
+      } else {
+        failures.push('planning job produced no decomposition file');
+      }
+
+      // Read slice 2 jobs (slice 1 already registered by the planning job).
+      const slice2JobsPath = path.join(workdir, '.tenet', 'jobs', 'slice-2.json');
+      let slice2Jobs: JobDefinition[] = [];
+      if (fs.existsSync(slice2JobsPath)) {
+        try {
+          slice2Jobs = JSON.parse(fs.readFileSync(slice2JobsPath, 'utf8'));
+          log(`[${spec.name}] slice-2.json: ${slice2Jobs.length} job(s)`);
+        } catch {
+          failures.push('slice-2.json: invalid JSON');
+        }
+      } else {
+        failures.push('planning job did not produce .tenet/jobs/slice-2.json');
+      }
+
+      // Fail fast if planning artifacts are incomplete.
+      if (failures.length > 0) {
+        log(`[${spec.name}] Phase 1 failures, aborting: ${failures.join('; ')}`);
+        return finalize();
+      }
+
+      // =============================================
+      // PHASE 2: BUILD — drive per-slice build loop
+      // =============================================
+      const maxCycles = options.maxCycles ?? 5;
+
+      // Slice 1 jobs were registered by the planning job. Drive them.
+      log(`[${spec.name}] Phase 2: driving slice 1 build`);
+      let sliceAborted = false;
+      while (cycles < maxCycles) {
+        const next = manager.continue();
+        if (next.all_done) {
+          log(`[${spec.name}] slice 1: all jobs complete`);
+          break;
+        }
+        if (!next.next_job) {
+          failures.push(`slice 1: no runnable job but not all_done`);
+          sliceAborted = true;
+          break;
+        }
+
+        cycles += 1;
+        const job = next.next_job;
+        log(`[${spec.name}] slice 1 cycle ${cycles}: dispatching ${job.params.name ?? job.id}`);
+
+        await compileContext({ job_id: job.id });
+        await startJob({ job_id: job.id });
+        await manager.waitForJob(job.id, null, 25 * 60 * 1000);
+        const completed = store.getJob(job.id);
+        if (completed?.status !== 'completed') {
+          failures.push(`dev job ${job.id} did not complete: ${completed?.status} (${completed?.error ?? 'no error'})`);
+          return finalize();
+        }
+
+        const devOutput = (store.getJobOutput(job.id) ?? {}) as Record<string, unknown>;
+        const evalDispatch = await startEval({
+          job_id: job.id,
+          output: devOutput,
+          feature: spec.feature,
+        });
+        const evalJobs = parseResult(evalDispatch);
+        const codeJobId = evalJobs.code_critic_job_id as string;
+        const testJobId = evalJobs.test_critic_job_id as string;
+        const playJobId = evalJobs.playwright_eval_job_id as string;
+        log(`[${spec.name}] slice 1 eval dispatched (${evalJobs.execution_mode})`);
+
+        await manager.waitForJob(codeJobId, null, 25 * 60 * 1000);
+        await manager.waitForJob(testJobId, null, 25 * 60 * 1000);
+        await manager.waitForJob(playJobId, null, 25 * 60 * 1000);
+
+        const criticsStatus = [codeJobId, testJobId, playJobId].map((id) => store.getJob(id)?.status);
+        if (!criticsStatus.every((s) => s === 'completed')) {
+          failures.push(`slice 1 eval: not all critics completed: ${criticsStatus.join(', ')}`);
+          return finalize();
+        }
+      }
+
+      if (sliceAborted) return finalize();
+      if (cycles >= maxCycles) {
+        failures.push(`hit maxCycles=${maxCycles} during slice 1`);
+        return finalize();
+      }
+
+      // Auto-approve use-checkpoint between slices.
+      log(`[${spec.name}] use-checkpoint slice 1: auto-approve, advancing to slice 2`);
+
+      // Register slice 2 jobs.
+      log(`[${spec.name}] slice 2 register_jobs: ${slice2Jobs.length} jobs`);
+      await registerJobs({ feature: spec.feature, jobs: slice2Jobs });
+      store.syncStatusFiles();
+
+      // Drive slice 2.
+      log(`[${spec.name}] driving slice 2 build`);
+      sliceAborted = false;
+      while (cycles < maxCycles) {
+        const next = manager.continue();
+        if (next.all_done) {
+          log(`[${spec.name}] slice 2: all jobs complete`);
+          break;
+        }
+        if (!next.next_job) {
+          failures.push(`slice 2: no runnable job but not all_done`);
+          sliceAborted = true;
+          break;
+        }
+
+        cycles += 1;
+        const job = next.next_job;
+        log(`[${spec.name}] slice 2 cycle ${cycles}: dispatching ${job.params.name ?? job.id}`);
+
+        await compileContext({ job_id: job.id });
+        await startJob({ job_id: job.id });
+        await manager.waitForJob(job.id, null, 25 * 60 * 1000);
+        const completed = store.getJob(job.id);
+        if (completed?.status !== 'completed') {
+          failures.push(`dev job ${job.id} did not complete: ${completed?.status} (${completed?.error ?? 'no error'})`);
+          return finalize();
+        }
+
+        const devOutput = (store.getJobOutput(job.id) ?? {}) as Record<string, unknown>;
+        const evalDispatch = await startEval({
+          job_id: job.id,
+          output: devOutput,
+          feature: spec.feature,
+        });
+        const evalJobs = parseResult(evalDispatch);
+        const codeJobId = evalJobs.code_critic_job_id as string;
+        const testJobId = evalJobs.test_critic_job_id as string;
+        const playJobId = evalJobs.playwright_eval_job_id as string;
+        log(`[${spec.name}] slice 2 eval dispatched (${evalJobs.execution_mode})`);
+
+        await manager.waitForJob(codeJobId, null, 25 * 60 * 1000);
+        await manager.waitForJob(testJobId, null, 25 * 60 * 1000);
+        await manager.waitForJob(playJobId, null, 25 * 60 * 1000);
+
+        const criticsStatus = [codeJobId, testJobId, playJobId].map((id) => store.getJob(id)?.status);
+        if (!criticsStatus.every((s) => s === 'completed')) {
+          failures.push(`slice 2 eval: not all critics completed: ${criticsStatus.join(', ')}`);
+          return finalize();
+        }
+      }
+
+      if (sliceAborted) return finalize();
+      if (cycles >= maxCycles) {
+        failures.push(`hit maxCycles=${maxCycles} during slice 2`);
+        return finalize();
+      }
+
+      // =============================================
+      // PHASE 3: VERIFY
+      // =============================================
+      const verifyPath = path.join(spec.canaryDir, 'verify.ts');
+      if (fs.existsSync(verifyPath)) {
+        log(`[${spec.name}] running verify...`);
+        const { verify } = (await import(verifyPath)) as {
+          verify: (workdir: string) => Promise<{ passed: boolean; details: string }>;
+        };
+        const v = await verify(workdir);
+        verifyDetails = v.details;
+        if (!v.passed) {
+          failures.push(`verify failed: ${v.details}`);
+        } else {
+          log(`[${spec.name}] verify passed: ${v.details}`);
+        }
+      }
+    } finally {
+      store.close();
+    }
+  } catch (error) {
+    failures.push(`harness error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  passed = failures.length === 0;
+  return finalize();
+
+  function finalize(): FullPipelineResult {
+    const durationMs = Date.now() - startedAt;
+    const runPassed = passed && failures.length === 0;
+    const shouldCleanup = options.keepWorkdir === false || (options.keepWorkdir === undefined && runPassed);
+    if (shouldCleanup) {
+      try {
+        fs.rmSync(workdir, { recursive: true, force: true });
+      } catch {
+        /* noop */
+      }
+    } else {
+      log(`[${spec.name}] keeping workdir for inspection: ${workdir}`);
+    }
+    return {
+      canary: spec.name,
+      passed: runPassed,
+      workdir,
+      durationMs,
+      cycles,
+      failures,
+      verifyDetails,
+      actualSlices,
+      specProduced,
+      decompositionProduced,
+    };
+  }
+}
+
 const log = (msg: string): void => {
   // Timestamped so you can eyeball progress during a 15-min run.
   const ts = new Date().toISOString().slice(11, 19);
