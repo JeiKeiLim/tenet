@@ -81,6 +81,22 @@ Dev-type jobs get a "Deliverable Requirements" preamble prepended to their promp
 - Tool handlers return `jsonResult({...})` on success or `asToolError(error)` on failure
 - The `.tenet/` directory is a per-project artifact created by `tenet init`, not part of this repo's own state
 
+## MCP Tool Pre-Approval (agent configs)
+
+When adding or removing an MCP tool, three pre-approval configs must stay in sync:
+
+1. **Tool name list** — `src/mcp/tools/tool-names.ts` (`TENET_MCP_TOOL_NAMES`). This is the single source of truth. A test in `src/mcp/tools/index.ts` asserts this list matches actual registrations.
+
+2. **Claude Code** — `src/cli/init.ts` → `mergeClaudeLocalSettings()`. Reads `TENET_MCP_TOOL_NAMES` and writes `mcp__tenet__<name>` entries to `.claude/settings.local.json`. No manual update needed — it reads from the tool-names list.
+
+3. **Codex** — `src/cli/init.ts` → `writeCodexConfig()`. Reads `TENET_MCP_TOOL_NAMES` and writes per-tool `[mcp_servers.tenet.tools.<name>] approval_mode = "approve"` sections to `.codex/config.toml`. No manual update needed — it reads from the tool-names list.
+
+4. **OpenCode** — `src/cli/init.ts` → `mergeOpenCodePermission()`. Writes a single `permission.mcp.tenet: "allow"` to `opencode.json`. No per-tool config needed — OpenCode approves at server level.
+
+**When adding a new MCP tool:** Add the name to `TENET_MCP_TOOL_NAMES` in `tool-names.ts`. The init functions read this list automatically — no other config changes needed.
+
+**When removing an MCP tool:** Remove from `TENET_MCP_TOOL_NAMES` in `tool-names.ts`. Existing `.codex/config.toml` files in user projects will still have the stale entry but it's harmless. The `tenet init --upgrade` path will add missing tools but does not prune stale ones.
+
 ## Versioning
 
 Uses **CalVer** (`YY.MM.PATCH`): e.g., `26.4.0` is the first release in April 2026, `26.4.1` is the second. New month resets patch to 0. This communicates freshness in a fast-moving AI tooling space while staying npm-compatible.

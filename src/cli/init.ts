@@ -408,27 +408,47 @@ const writeMcpJson = (projectPath: string): void => {
 };
 
 /**
- * Write project-local .codex/config.toml for Codex CLI MCP server discovery.
- * Format: [mcp_servers.tenet] with command and args.
+ * Write project-local .codex/config.toml for Codex CLI MCP server discovery
+ * and pre-approve all Tenet MCP tools so Codex doesn't prompt per-tool.
+ *
+ * Format: [mcp_servers.tenet] with command and args, plus per-tool sections:
+ *   [mcp_servers.tenet.tools.tenet_continue]
+ *   approval_mode = "approve"
+ *
  * Note: mcp_servers (with underscore) is required — mcp-servers is silently ignored.
  */
 const writeCodexConfig = (projectPath: string): void => {
   const codexDir = path.join(projectPath, '.codex');
   const configPath = path.join(codexDir, 'config.toml');
 
+  const toolApprovalEntries = TENET_MCP_TOOL_NAMES.map(
+    (name) => `[mcp_servers.tenet.tools.${name}]\napproval_mode = "approve"\n`,
+  ).join('\n');
+
   if (fs.existsSync(configPath)) {
     const existing = fs.readFileSync(configPath, 'utf8');
     if (existing.includes('[mcp_servers.tenet]')) {
+      // Merge in any tool approvals that are missing.
+      const missingTools = TENET_MCP_TOOL_NAMES.filter(
+        (name) => !existing.includes(`[mcp_servers.tenet.tools.${name}]`),
+      );
+      if (missingTools.length === 0) return;
+      const toAppend =
+        '\n' +
+        missingTools
+          .map((name) => `[mcp_servers.tenet.tools.${name}]\napproval_mode = "approve"\n`)
+          .join('\n');
+      fs.appendFileSync(configPath, toAppend, 'utf8');
       return;
     }
-    // Append tenet MCP server config
-    const toAppend = '\n[mcp_servers.tenet]\ncommand = "tenet"\nargs = ["serve"]\n';
+    // Append tenet MCP server config + all tool approvals
+    const toAppend = `\n[mcp_servers.tenet]\ncommand = "tenet"\nargs = ["serve"]\n\n${toolApprovalEntries}\n`;
     fs.appendFileSync(configPath, toAppend, 'utf8');
     return;
   }
 
   fs.mkdirSync(codexDir, { recursive: true });
-  const content = '[mcp_servers.tenet]\ncommand = "tenet"\nargs = ["serve"]\n';
+  const content = `[mcp_servers.tenet]\ncommand = "tenet"\nargs = ["serve"]\n\n${toolApprovalEntries}\n`;
   fs.writeFileSync(configPath, content, 'utf8');
 };
 
