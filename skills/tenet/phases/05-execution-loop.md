@@ -6,6 +6,8 @@ The core of Tenet is the tracked execution loop. You must use the `tenet_*` MCP 
 
 Before entering the execution loop, you MUST have called `tenet_register_jobs` during the decomposition phase. This loads the DAG into the runtime queue. Without registration, `tenet_continue()` will return no jobs.
 
+The pre-execution confirmation gate in `phases/04-decomposition.md` MUST also be satisfied before this phase starts. If the user has not confirmed after seeing the registered job summary, return to that gate before calling `tenet_continue()` or `tenet_start_job`.
+
 ## Non-Blocking Execution (CRITICAL)
 
 `tenet_job_wait` returns **instantly** with the current job state — it does NOT block or poll. The orchestrator is responsible for scheduling periodic checks via background tasks with exponential backoff: 30s -> 45s -> 67s -> 100s -> 120s cap.
