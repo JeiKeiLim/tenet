@@ -8,7 +8,7 @@ Before entering the execution loop, you MUST have called `tenet_register_jobs` d
 
 ## Non-Blocking Execution (CRITICAL)
 
-`tenet_job_wait` returns **instantly** with the current job state — it does NOT block or poll. The orchestrator is responsible for scheduling periodic checks via background tasks with a delay between calls (10-15 seconds).
+`tenet_job_wait` returns **instantly** with the current job state — it does NOT block or poll. The orchestrator is responsible for scheduling periodic checks via background tasks with exponential backoff: 30s -> 45s -> 67s -> 100s -> 120s cap.
 
 **Never** call `tenet_job_wait` in a tight foreground loop. Each call should be a separate background task. Between checks, the orchestrator remains responsive to user interaction.
 
@@ -32,15 +32,15 @@ Execute this sequence for every job cycle:
     - If `is_terminal` is true: proceed to step 7.
 7.  **Get Result**: `tenet_job_result(job_id="...")`
     Retrieve the final output and execution metadata.
-8.  **Start Evaluation**: `tenet_start_eval(job_id="<original_job_id>", output={...})`
-    Dispatches the output to the evaluation pipeline.
-9.  **Background Wait for Eval**: Same pattern as step 6 — background task with periodic instant checks.
-10. **Get Eval Result**: `tenet_job_result(job_id="<eval_job_id>")`
-    Check if the job passed requirements.
-11. **Update Knowledge**: `tenet_update_knowledge(job_id="...", findings={...})`
+8.  **Start Evaluation**: `tenet_start_eval(job_id="<original_job_id>", output={...}, feature="<feature>")`
+    Dispatches the output to the evaluation pipeline and returns eval job IDs plus `execution_mode`.
+9.  **Background Wait for Eval**: Same pattern as step 6. If `execution_mode` is sequential, later eval jobs may remain pending until parents complete; keep waiting on the returned IDs until all are terminal.
+10. **Get Eval Results**: `tenet_job_result(job_id="<eval_job_id>")`
+    Retrieve every returned eval result. ALL must pass.
+11. **Update Knowledge or Retry**: `tenet_update_knowledge(...)` on success; `tenet_retry_job(...)` or `tenet_request_remediation(...)` on failure, as described below.
     Persist any architectural discoveries or critical findings.
-12. **Sync Status Files**:
-    Update `.tenet/status/job-queue.md` (mark completed) and `.tenet/status/status.md` (increment counts).
+12. **Trust Status Sync**:
+    `.tenet/status/job-queue.md` and `.tenet/status/status.md` are generated from MCP state transitions. Do not edit them manually to advance runtime.
 13. **Loop**: Return to Step 1.
 
 ## Operational Rules
@@ -68,8 +68,7 @@ If `tenet_*` tools are missing, do not fall back to manual execution. Tell the u
 
 ### State Synchronization
 After every job:
-- Update `.tenet/status/job-queue.md` to reflect the new state.
-- Update `.tenet/status/status.md` with current progress and active job ID.
+- Let MCP update `.tenet/status/job-queue.md` and `.tenet/status/status.md` from SQLite state.
 - Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion.
 - If the job produced reusable technical insight, also write a knowledge entry via `tenet_update_knowledge(type="knowledge")` with appropriate confidence tag.
 
@@ -116,26 +115,27 @@ When `tenet_start_eval` returns failing critics, read each finding's `category` 
 ```
 for finding in code_output.findings + test_output.findings:
     if finding.category == "product_bug":
-        tenet_retry_job(job_id=source_job.id)    # fix the source job
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt=finding.detail)
     elif finding.category == "test_bug":
-        create_test_fix_job(source_job, finding.detail)
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Strengthen or correct tests: " + finding.detail)
     elif finding.category == "harness_bug":
-        create_harness_fix_job(finding.detail)   # dev job scoped to build/CI/scripts
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Fix harness/build/test issue: " + finding.detail)
     elif finding.category == "evidence_mismatch":
-        create_evidence_refresh_job(source_job)  # re-run verification, update report
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Refresh evidence from current commands: " + finding.detail)
     elif finding.category == "contention":
         # If we're in parallel mode for this feature, switch to sequential:
         tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="directive")
         tenet_retry_job(job_id=source_job.id)
     elif finding.category == "scope_conflict":
-        # Likely a report-only job edited files. The remediation escape hatch
-        # handles this — see the report-only section above. If the source wasn't
-        # marked report_only, the finding is accurate: mark it report_only going forward
-        # and retry with the preamble.
-        ...
+        # If this is a report-only job that discovered a real bug, use the
+        # remediation escape hatch. Otherwise retry with corrected scope.
+        if source_job.report_only:
+            tenet_request_remediation(job_id=source_job.id, reason=finding.detail, suggested_fix="Fix the scoped issue without report-only edits", target_files=[])
+        else:
+            tenet_retry_job(job_id=source_job.id, enhanced_prompt="Respect declared scope: " + finding.detail)
 ```
 
-Plain "just retry" wastes cycles on test/harness/evidence bugs — route by category.
+Plain "just retry" wastes cycles on test/harness/evidence bugs — route by category and include the category-specific context in the enhanced prompt. Use `tenet_request_remediation` only for report-only jobs that must not edit files directly.
 
 ## Eval-mode decision (reminder)
 

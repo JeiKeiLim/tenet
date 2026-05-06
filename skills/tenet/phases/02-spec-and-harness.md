@@ -68,7 +68,7 @@ The spec must include:
 - **Tech Stack**: Confirmed choices with specific versions.
 - **API Endpoints**: Table with Method, Path, Auth, and Description.
 - **Database Schema**: Table per entity with Column, Type, and Constraints.
-- **Design Direction**: Explicit reference to the chosen mockup in `.tenet/visuals/`.
+- **Design Direction**: Explicit reference to the chosen mockup in `.tenet/visuals/`. In agile mode, the first spec draft may mark this as pending until `phases/03-visuals.md` produces final-product and slice artifacts; update this section before readiness validation.
 - **Auth Flow**: Step by step numbered list.
 - **Success Criteria**: Numbered, measurable, and testable outcomes.
 - **Out of Scope**: List of features or behaviors the project will NOT implement.

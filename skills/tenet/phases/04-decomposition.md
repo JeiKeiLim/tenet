@@ -141,11 +141,12 @@ job-4: Dashboard ─────────────┤
   "name": "Integration: API + Auth",
   "type": "integration_test",
   "depends_on": ["job-1", "job-2"],
+  "report_only": true,
   "prompt": "Run acceptance tests for API and auth features. Start the server, run tests/acceptance/auth.spec.ts and tests/acceptance/shorten.spec.ts. Report which tests pass and fail."
 }
 ```
 
-**Integration test jobs do NOT fix code.** They only report results. If they fail, the orchestrator creates fix jobs.
+**Integration test jobs do NOT fix code.** They only report results. Register report-only verification jobs with `report_only: true` so they can use `tenet_request_remediation` when they discover real bugs.
 
 ## 6. Job Registration
 
@@ -156,10 +157,10 @@ tenet_register_jobs({
   jobs: [
     { id: "job-1", name: "Core API", type: "dev", depends_on: [], prompt: "..." },
     { id: "job-2", name: "Auth Service", type: "dev", depends_on: ["job-1"], prompt: "..." },
-    { id: "e2e-1", name: "Integration: API + Auth", type: "integration_test", depends_on: ["job-1", "job-2"], prompt: "Run acceptance tests for..." },
+    { id: "e2e-1", name: "Integration: API + Auth", type: "integration_test", depends_on: ["job-1", "job-2"], report_only: true, prompt: "Run acceptance tests for..." },
     { id: "job-3", name: "Frontend", type: "dev", depends_on: ["e2e-1"], prompt: "..." },
     { id: "job-4", name: "Dashboard", type: "dev", depends_on: ["e2e-1"], prompt: "..." },
-    { id: "e2e-2", name: "Final E2E", type: "integration_test", depends_on: ["job-3", "job-4"], prompt: "Run ALL acceptance tests..." }
+    { id: "e2e-2", name: "Final E2E", type: "integration_test", depends_on: ["job-3", "job-4"], report_only: true, prompt: "Run ALL acceptance tests..." }
   ]
 })
 ```
@@ -255,6 +256,7 @@ tenet_register_jobs({
     { id: "slice-1-login-ui", name: "Login UI", type: "dev", depends_on: ["slice-1-auth-api"], prompt: "..." },
     { id: "slice-1-e2e", name: "Integration: slice 1 (login + signup)", type: "integration_test",
       depends_on: ["slice-1-signup-ui", "slice-1-login-ui"],
+      report_only: true,
       prompt: "Run acceptance tests tagged @slice-1. Start the server, run tests/acceptance/slice-1-*.spec.ts. Report pass/fail." }
   ]
 })
