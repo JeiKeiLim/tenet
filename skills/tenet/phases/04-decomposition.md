@@ -11,6 +11,8 @@
 - `delivery_mode: autonomous` (or absent) → produce one full component DAG covering the whole feature, as described in Sections 4–6 below.
 - `delivery_mode: agile` → produce **only the next slice's DAG**, register it, and stop. Section 9 below overrides the single-pass behavior. Decomposition will fire again per slice as the user advances through use-checkpoints.
 
+Before decomposition, verify required visual artifacts exist when the feature has a user-facing or interactive surface (UI, game/canvas, visual app, TUI, CLI workflow, API workflow, or similar). If required visuals are missing, stop and run `phases/03-visuals.md` before writing the DAG.
+
 ## 2. File Structure (STRICT)
 - **DECOMPOSITION**: `.tenet/decomposition/{date}-{feature}.md` (e.g. `.tenet/decomposition/2026-04-08-oauth.md`)
 - **ACCEPTANCE TESTS**: `tests/acceptance/` directory with test files generated from scenarios
@@ -141,11 +143,12 @@ job-4: Dashboard ─────────────┤
   "name": "Integration: API + Auth",
   "type": "integration_test",
   "depends_on": ["job-1", "job-2"],
+  "report_only": true,
   "prompt": "Run acceptance tests for API and auth features. Start the server, run tests/acceptance/auth.spec.ts and tests/acceptance/shorten.spec.ts. Report which tests pass and fail."
 }
 ```
 
-**Integration test jobs do NOT fix code.** They only report results. If they fail, the orchestrator creates fix jobs.
+**Integration test jobs do NOT fix code.** They only report results. Register report-only verification jobs with `report_only: true` so they can use `tenet_request_remediation` when they discover real bugs.
 
 ## 6. Job Registration
 
@@ -156,10 +159,10 @@ tenet_register_jobs({
   jobs: [
     { id: "job-1", name: "Core API", type: "dev", depends_on: [], prompt: "..." },
     { id: "job-2", name: "Auth Service", type: "dev", depends_on: ["job-1"], prompt: "..." },
-    { id: "e2e-1", name: "Integration: API + Auth", type: "integration_test", depends_on: ["job-1", "job-2"], prompt: "Run acceptance tests for..." },
+    { id: "e2e-1", name: "Integration: API + Auth", type: "integration_test", depends_on: ["job-1", "job-2"], report_only: true, prompt: "Run acceptance tests for..." },
     { id: "job-3", name: "Frontend", type: "dev", depends_on: ["e2e-1"], prompt: "..." },
     { id: "job-4", name: "Dashboard", type: "dev", depends_on: ["e2e-1"], prompt: "..." },
-    { id: "e2e-2", name: "Final E2E", type: "integration_test", depends_on: ["job-3", "job-4"], prompt: "Run ALL acceptance tests..." }
+    { id: "e2e-2", name: "Final E2E", type: "integration_test", depends_on: ["job-3", "job-4"], report_only: true, prompt: "Run ALL acceptance tests..." }
   ]
 })
 ```
@@ -168,15 +171,25 @@ tenet_register_jobs({
 1. **Write Acceptance Tests First**: Generate test stubs from scenarios before writing the DAG.
 2. **Write Decomposition**: Create the DAG with integration checkpoints.
 3. **Register Jobs**: Call `tenet_register_jobs` with all jobs. Jobs after integration checkpoints depend on the checkpoint.
-4. **MCP Loop**: After registration, use `tenet_continue()` to get the next ready job, then `tenet_start_job` to dispatch it.
-5. **No Bypassing**: Do NOT start executing until acceptance tests are written, decomposition is complete, AND jobs are registered.
-6. **Small Batches**: Every dev job must be completable in one agent session with clear verification.
+4. **Pre-execution confirmation**: After registration, stop and present the execution summary:
+   - delivery mode
+   - feature slug
+   - total jobs registered
+   - job list with dependencies
+   - integration checkpoints
+   - key spec decisions
+   - harness constraints
+5. **Wait for explicit confirmation** before calling `tenet_continue()` or `tenet_start_job`. Valid confirmation means the user responds after seeing the execution summary with approval such as `confirm`, `start`, `go`, `approved`, or equivalent. The original project request does not count as pre-execution confirmation; confirmation must happen after decomposition/job registration.
+6. **Enter MCP Loop**: If confirmed, read `phases/05-execution-loop.md`, then use `tenet_continue()` to get the next ready job and `tenet_start_job` to dispatch it.
+7. **No Bypassing**: Do NOT start executing until acceptance tests are written, decomposition is complete, jobs are registered, and pre-execution confirmation is satisfied.
+8. **Small Batches**: Every dev job must be completable in one agent session with clear verification.
 
 ## 8. Verification
 - [ ] Acceptance test files exist in `tests/acceptance/` (or equivalent)
 - [ ] DAG includes at least one `integration_test` checkpoint
 - [ ] Final job in DAG is an `integration_test` that runs all acceptance tests
 - [ ] All jobs are registered via `tenet_register_jobs`
+- [ ] Pre-execution summary was presented and the user explicitly confirmed after seeing it
 - [ ] In agile mode: only the current slice's jobs are registered; the decomposition file has a `## Slice N: ...` heading for this fire
 
 ## 9. Agile-mode decomposition (when `delivery_mode: agile`)
@@ -255,6 +268,7 @@ tenet_register_jobs({
     { id: "slice-1-login-ui", name: "Login UI", type: "dev", depends_on: ["slice-1-auth-api"], prompt: "..." },
     { id: "slice-1-e2e", name: "Integration: slice 1 (login + signup)", type: "integration_test",
       depends_on: ["slice-1-signup-ui", "slice-1-login-ui"],
+      report_only: true,
       prompt: "Run acceptance tests tagged @slice-1. Start the server, run tests/acceptance/slice-1-*.spec.ts. Report pass/fail." }
   ]
 })

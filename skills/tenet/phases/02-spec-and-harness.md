@@ -68,7 +68,7 @@ The spec must include:
 - **Tech Stack**: Confirmed choices with specific versions.
 - **API Endpoints**: Table with Method, Path, Auth, and Description.
 - **Database Schema**: Table per entity with Column, Type, and Constraints.
-- **Design Direction**: Explicit reference to the chosen mockup in `.tenet/visuals/`.
+- **Design Direction**: Explicit reference to the chosen mockup in `.tenet/visuals/`. In agile mode, the first spec draft may mark this as pending until `phases/03-visuals.md` produces final-product and slice artifacts; update this section before readiness validation.
 - **Auth Flow**: Step by step numbered list.
 - **Success Criteria**: Numbered, measurable, and testable outcomes.
 - **Out of Scope**: List of features or behaviors the project will NOT implement.
@@ -131,7 +131,7 @@ Verify these before proceeding:
 - [ ] If `delivery_mode: autonomous` (or missing), the `## Slice plan` section is absent.
 - [ ] `.tenet/harness/current.md` is updated, not the original template.
 - [ ] `.tenet/spec/scenarios-{date}-{feature}.md` has 3+ scenarios and 3+ anti-scenarios.
-- [ ] Spec references a mockup from `.tenet/visuals/`.
+- [ ] If the project is UI-facing, game/canvas-based, visual, TUI, CLI workflow-oriented, API workflow-oriented, or otherwise user-interactive, required artifacts from `phases/03-visuals.md` exist in `.tenet/visuals/` and the spec references them.
 - [ ] Harness danger zones are populated.
 
 **Do NOT proceed to decomposition until all three files are written and this checklist passes.**
