@@ -11,6 +11,8 @@
 - `delivery_mode: autonomous` (or absent) → produce one full component DAG covering the whole feature, as described in Sections 4–6 below.
 - `delivery_mode: agile` → produce **only the next slice's DAG**, register it, and stop. Section 9 below overrides the single-pass behavior. Decomposition will fire again per slice as the user advances through use-checkpoints.
 
+For Full mode runs with an interview transcript, verify the spec front-matter `delivery_mode` matches `## Delivery Mode Decision` in the transcript. If the transcript decision is missing or mismatched, stop before acceptance tests, decomposition, or job registration; return to the relevant crystallization phase. Pre-execution confirmation cannot retroactively satisfy delivery-mode selection.
+
 Before decomposition, verify required visual artifacts exist when the feature has a user-facing or interactive surface (UI, game/canvas, visual app, TUI, CLI workflow, API workflow, or similar). If required visuals are missing, stop and run `phases/03-visuals.md` before writing the DAG.
 
 ## 2. File Structure (STRICT)

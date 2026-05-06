@@ -24,7 +24,29 @@ Ask at least one question from each category in the first round.
 | **Integration** | List external APIs, services, and third-party dependencies. |
 | **Edge Cases** | Address failure modes, rate limits, and concurrent user behavior. |
 
-## 3. Clarity Gate Mechanics
+## 3. Delivery Mode Gate
+
+In Full mode, before calling `tenet_validate_clarity()`, ask one standalone delivery-mode question.
+
+Required prompt content:
+- Explain `autonomous`: one end-to-end run after pre-execution confirmation.
+- Explain `agile`: sliced delivery with an initial plan-checkpoint and use-checkpoints after each slice.
+- Ask the user to choose `autonomous` or `agile`.
+
+The delivery-mode question MUST NOT be combined with stack, scope, UX, or other defaults.
+
+Valid outcomes:
+- User chooses `autonomous` or `agile`; record `Selection basis: explicit_user_choice`.
+- User responds with uncertainty or no preference after seeing both options; select `autonomous` and record `Selection basis: defaulted_after_explicit_choice_prompt`.
+- YOLO mode was explicitly confirmed; choose deliberately and record `Selection basis: yolo_agent_decision`.
+
+Invalid outcomes:
+- No standalone delivery-mode question was asked.
+- Delivery mode was buried in a multi-part defaults bundle.
+- User said "okay", "sounds good", or equivalent to unrelated defaults.
+- Pre-execution confirmation was used as retroactive delivery-mode approval.
+
+## 4. Clarity Gate Mechanics
 After writing the interview transcript, call `tenet_validate_clarity()` to dispatch an independent agent that scores the transcript. Do NOT compute the score yourself.
 
 The validation agent uses these scoring dimensions:
@@ -48,7 +70,7 @@ The validation agent uses these scoring dimensions:
 - **GATE: Clarity >= 0.8 to proceed.**
 - If Score < 0.8: The validation result includes specific gaps. Ask follow-up questions targeting those gaps, update the transcript, and call `tenet_validate_clarity()` again.
 
-## 4. Interview Transcript Format
+## 5. Interview Transcript Format
 The saved file MUST use this structure:
 
 ```markdown
@@ -80,17 +102,23 @@ Rounds: [N]
 ### Remaining Ambiguities
 - [Ambiguity 1]
 
+## Delivery Mode Decision
+- Prompt shown: [exact text or concise summary]
+- User response: [exact response, or YOLO confirmation]
+- Selected delivery_mode: autonomous|agile
+- Selection basis: explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision
+
 ## Summary
 [Concise summary of project agreement]
 ```
 
-## 5. User Interaction Method
+## 6. User Interaction Method
 - **ALWAYS prefer interactive prompts** (question dialog / modal) over inline text when asking interview questions.
 - Use the host agent's question/dialog tool (e.g. `AskUserQuestion`) to present each question individually and wait for the user's response.
 - Do NOT dump all questions as a text block and expect the user to answer inline — this creates a poor experience and makes it easy to miss questions.
 - If the host agent does not support interactive prompts, fall back to asking one question at a time in regular text and waiting for a response before proceeding to the next question.
 
-## 6. YOLO Mode
+## 7. YOLO Mode
 
 **NEVER assume yolo mode.** The default is ALWAYS interactive. Yolo mode ONLY activates when the user explicitly says one of: "yolo", "skip questions", "decide everything", "don't ask me questions."
 
@@ -101,11 +129,12 @@ When the user triggers YOLO mode, **confirm before activating**: "Entering yolo 
 Once confirmed, the agent:
 - Skips interactive interview questions — makes all decisions autonomously based on codebase analysis and brownfield scan
 - Still writes the interview transcript with decisions made and assumptions
+- Still records `## Delivery Mode Decision` with `Selection basis: yolo_agent_decision`
 - Still runs `tenet_validate_clarity()` — if clarity is low, the agent fills gaps by reading the codebase rather than asking the user
 - Still generates spec, scenarios, and decomposition — but without user confirmation at each step
 - YOLO mode ends at the pre-execution confirmation gate — the user always confirms before autonomous execution begins
 
-## 7. Research During Interview
+## 8. Research During Interview
 
 When the user's requirements involve unfamiliar technologies, complex integrations, or feasibility questions, conduct **targeted research** before continuing the interview.
 
@@ -137,11 +166,12 @@ Files are auto-dated by `tenet_update_knowledge` (e.g., `2026-04-09_research-str
 
 **Do NOT skip research to keep the interview fast.** A 5-minute research pause prevents a multi-hour implementation mistake.
 
-## 8. Anti-Skip Enforcement
+## 9. Anti-Skip Enforcement
 - Do NOT proceed to spec or harness generation until the transcript file is written and the clarity gate passes.
 - If the user says "just build it" (without triggering YOLO mode), you MUST still ask the minimum required questions and record the answers.
+- In Full mode, do NOT proceed to spec unless `## Delivery Mode Decision` exists and records a valid selection basis.
 
-## 9. Adaptive Interview Length
+## 10. Adaptive Interview Length
 - **Greenfield project:** 2-3 rounds, 8-15 questions total.
 - **Brownfield/known scope:** 1-2 rounds, 5-8 questions total.
 - **Standard mode (quick clarification):** 1 round, 3-5 questions total.

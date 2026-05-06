@@ -9,6 +9,14 @@ const READINESS_RUBRIC = `Score this feature's IMPLEMENTATION READINESS. You are
 
 This is NOT a clarity check on user requirements — that already happened upstream. You are checking whether the *implementation prerequisites* are known. Missing prerequisites here cause late-stage failures at execution or eval time.
 
+## Hard gates before scoring
+
+- If the optional interview declares "Mode: Full", the spec's front-matter "delivery_mode" must match the interview's "## Delivery Mode Decision".
+- A Full-mode interview without "## Delivery Mode Decision", "Prompt shown", "User response", a valid "Selected delivery_mode", or a valid "Selection basis" is blocked.
+- A bundled defaults question, unrelated "okay", or pre-execution confirmation does not satisfy Full-mode delivery-mode selection.
+- If the spec declares "delivery_mode: agile", it must include "## Slice plan".
+- If any hard gate fails, set "spec_sufficiency" to "blocked", set "passed" to false, and list the issue in "blockers".
+
 ## Scope — score each of the 8 categories independently
 
 For each category, assign one of: "ready", "partial", "blocked".
@@ -128,6 +136,124 @@ const readIfExists = (filePath: string): string | undefined => {
   return fs.readFileSync(filePath, 'utf8');
 };
 
+type DeliveryMode = 'autonomous' | 'agile';
+
+const SPEC_DELIVERY_MODE_RE = /^delivery_mode:\s*(autonomous|agile)\b/im;
+const SLICE_PLAN_RE = /^## Slice plan\b/im;
+const FULL_MODE_RE = /^Mode:\s*Full\b/im;
+const DELIVERY_MODE_DECISION_RE = /^## Delivery Mode Decision\b/im;
+const PROMPT_SHOWN_RE = /^\s*-\s*Prompt shown:\s*\S/im;
+const USER_RESPONSE_RE = /^\s*-\s*User response:\s*\S/im;
+const SELECTED_DELIVERY_MODE_RE = /^\s*-\s*Selected delivery_mode:\s*(autonomous|agile)\b/im;
+const SELECTION_BASIS_RE =
+  /^\s*-\s*Selection basis:\s*(explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision)\b/im;
+
+const parseSpecDeliveryMode = (specMd: string): DeliveryMode | null => {
+  const match = specMd.match(SPEC_DELIVERY_MODE_RE);
+  return match ? (match[1].toLowerCase() as DeliveryMode) : null;
+};
+
+const parseInterviewDeliveryMode = (interviewMd: string): DeliveryMode | null => {
+  const match = interviewMd.match(SELECTED_DELIVERY_MODE_RE);
+  return match ? (match[1].toLowerCase() as DeliveryMode) : null;
+};
+
+const getReadinessPreflightFailures = (specMd: string, interviewMd?: string): string[] => {
+  const failures: string[] = [];
+  const specMode = parseSpecDeliveryMode(specMd);
+
+  if (specMode === 'agile' && !SLICE_PLAN_RE.test(specMd)) {
+    failures.push('Spec declares delivery_mode: agile but is missing ## Slice plan.');
+  }
+
+  if (!interviewMd || !FULL_MODE_RE.test(interviewMd)) {
+    return failures;
+  }
+
+  if (!DELIVERY_MODE_DECISION_RE.test(interviewMd)) {
+    failures.push('Full-mode interview is missing ## Delivery Mode Decision.');
+    return failures;
+  }
+
+  if (!PROMPT_SHOWN_RE.test(interviewMd)) {
+    failures.push('Full-mode interview has ## Delivery Mode Decision but no Prompt shown.');
+  }
+
+  if (!USER_RESPONSE_RE.test(interviewMd)) {
+    failures.push('Full-mode interview has ## Delivery Mode Decision but no User response.');
+  }
+
+  const interviewMode = parseInterviewDeliveryMode(interviewMd);
+  if (!interviewMode) {
+    failures.push('Full-mode interview has ## Delivery Mode Decision but no valid Selected delivery_mode.');
+  }
+
+  if (!SELECTION_BASIS_RE.test(interviewMd)) {
+    failures.push('Full-mode interview has ## Delivery Mode Decision but no valid Selection basis.');
+  }
+
+  if (!specMode) {
+    failures.push('Full-mode spec is missing delivery_mode front matter.');
+  } else if (interviewMode && specMode !== interviewMode) {
+    failures.push(
+      `Spec delivery_mode (${specMode}) does not match interview Delivery Mode Decision (${interviewMode}).`,
+    );
+  }
+
+  return failures;
+};
+
+const createReadinessFailureOutput = (failures: string[]) => ({
+  passed: false,
+  categories: {
+    spec_sufficiency: 'blocked',
+    research_prior_art: 'ready',
+    interface_contracts: 'ready',
+    external_service_access: 'not_applicable',
+    env_runtime: 'ready',
+    test_data_fixtures: 'not_applicable',
+    test_strategy: 'ready',
+    deps_tooling: 'ready',
+  },
+  blockers: failures,
+  missing_info: [],
+  testable_surfaces: {
+    unit: 'blocked',
+    integration: 'blocked',
+    e2e: 'blocked',
+  },
+  eval_parallel_safe: false,
+  eval_parallel_rationale:
+    'Readiness did not proceed because a hard planning gate failed; default to sequential eval after remediation.',
+  rationale: `Resolve the hard gate before decomposition: ${failures.join(' ')}`,
+});
+
+const createCompletedReadinessFailureJob = (
+  jobManager: JobManager,
+  stateStore: StateStore,
+  feature: string,
+  failures: string[],
+) => {
+  const now = Date.now();
+  const job = jobManager.createPendingJob('eval', {
+    name: `readiness-delivery-mode-gate-${feature}`,
+    prompt: `Deterministic readiness gate failure:\n${failures.map((failure) => `- ${failure}`).join('\n')}`,
+    eval_type: 'readiness_validation',
+    feature,
+  });
+
+  stateStore.setJobOutput(job.id, createReadinessFailureOutput(failures));
+  stateStore.updateJob(job.id, {
+    status: 'completed',
+    startedAt: now,
+    completedAt: now,
+    lastHeartbeat: now,
+  });
+  stateStore.appendEvent(job.id, 'job_completed', { deterministic: true });
+
+  return job;
+};
+
 export const registerTenetValidateReadinessTool = (
   registerTool: RegisterTool,
   jobManager: JobManager,
@@ -171,6 +297,22 @@ export const registerTenetValidateReadinessTool = (
 
       const scenariosPath = resolveLatest(path.join(tenetPath, 'spec'), `scenarios-${feature}`);
       const scenariosMd = scenariosPath ? fs.readFileSync(scenariosPath, 'utf8') : undefined;
+
+      const preflightFailures = getReadinessPreflightFailures(specMd, interviewMd);
+      if (preflightFailures.length > 0) {
+        const job = createCompletedReadinessFailureJob(
+          jobManager,
+          stateStore,
+          feature,
+          preflightFailures,
+        );
+
+        return jsonResult({
+          job_id: job.id,
+          message:
+            'Readiness validation failed before dispatch. Use tenet_job_result to read the gate failure.',
+        });
+      }
 
       const sections = [
         READINESS_RUBRIC,

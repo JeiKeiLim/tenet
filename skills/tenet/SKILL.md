@@ -111,12 +111,14 @@ Choose one scale-adaptive mode at start and re-evaluate only at major scope chan
 
 Full mode runs crystallization before execution. Standard mode keeps clarification/spec/decomposition compact. Quick mode may register a single-job DAG, but still uses the MCP execution and eval gates.
 
-At the end of the interview, also choose a delivery mode:
+In Full mode, delivery mode selection is a standalone required checkpoint at the end of the interview:
 
 - `autonomous`: one end-to-end run with no mid-run user checkpoints.
 - `agile`: sliced delivery with an initial plan-checkpoint and use-checkpoints after each slice.
 
-Ask the delivery-mode question explicitly in Full mode. Default to `autonomous` if the user is unsure. Record the result in spec front matter as `delivery_mode`.
+Ask a dedicated question that presents both options. Do not bury delivery mode inside a bundled defaults question, and do not infer it from approval of unrelated defaults.
+
+Default to `autonomous` only after the user has seen both options and responds with uncertainty or no preference. Record the prompt, response, selected mode, and selection basis in the interview transcript; copy the selected mode to spec front matter as `delivery_mode`.
 
 ## Phase Map
 

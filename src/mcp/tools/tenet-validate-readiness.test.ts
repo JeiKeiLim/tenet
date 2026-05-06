@@ -165,8 +165,107 @@ describe('tenet_validate_readiness', () => {
     expect(prompt).toContain('eval_parallel_safe');
     expect(prompt).toContain('eval_parallel_rationale');
     expect(prompt).toContain('share mutable state');
+    expect(prompt).toContain('Hard gates before scoring');
+    expect(prompt).toContain('Delivery Mode Decision');
 
     await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
+  it('blocks agile specs missing the Slice plan section before dispatch', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/spec/2026-04-16-oauth.md',
+      ['---', 'delivery_mode: agile', '---', '', '# Spec'].join('\n'),
+    );
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const output = manager.getJobResult(parsed.job_id as string).output as {
+      passed: boolean;
+      blockers: string[];
+    };
+
+    expect(job?.status).toBe('completed');
+    expect(output.passed).toBe(false);
+    expect(output.blockers.join('\n')).toContain('missing ## Slice plan');
+  });
+
+  it('blocks Full-mode readiness when the interview lacks a delivery mode decision', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/spec/2026-04-16-oauth.md',
+      ['---', 'delivery_mode: autonomous', '---', '', '# Spec'].join('\n'),
+    );
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+    writeFile(
+      projectPath,
+      '.tenet/interview/2026-04-16-oauth.md',
+      ['# Interview: OAuth', '', 'Date: 2026-04-16', 'Mode: Full'].join('\n'),
+    );
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const output = manager.getJobResult(parsed.job_id as string).output as {
+      passed: boolean;
+      blockers: string[];
+    };
+
+    expect(job?.status).toBe('completed');
+    expect(output.passed).toBe(false);
+    expect(output.blockers.join('\n')).toContain('Delivery Mode Decision');
+  });
+
+  it('blocks Full-mode readiness when spec delivery mode mismatches the interview decision', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/spec/2026-04-16-oauth.md',
+      [
+        '---',
+        'delivery_mode: agile',
+        '---',
+        '',
+        '# Spec',
+        '',
+        '## Slice plan',
+        '',
+        '### Slice 1: Base',
+      ].join('\n'),
+    );
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+    writeFile(
+      projectPath,
+      '.tenet/interview/2026-04-16-oauth.md',
+      [
+        '# Interview: OAuth',
+        '',
+        'Date: 2026-04-16',
+        'Mode: Full',
+        '',
+        '## Delivery Mode Decision',
+        '- Prompt shown: Choose autonomous or agile.',
+        '- User response: autonomous',
+        '- Selected delivery_mode: autonomous',
+        '- Selection basis: explicit_user_choice',
+      ].join('\n'),
+    );
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const output = manager.getJobResult(parsed.job_id as string).output as {
+      passed: boolean;
+      blockers: string[];
+    };
+
+    expect(job?.status).toBe('completed');
+    expect(output.passed).toBe(false);
+    expect(output.blockers.join('\n')).toContain('does not match interview');
   });
 
   it('includes optional scenarios and interview when present', async () => {

@@ -59,6 +59,8 @@ delivery_mode: autonomous   # or: agile
 
 If the field is missing, treat as `autonomous` for backward compatibility.
 
+For Full mode runs with an interview transcript, copy `delivery_mode` from the transcript's `## Delivery Mode Decision`. If that section is missing, malformed, or does not match the intended front matter, stop spec generation and return to `phases/01-interview.md`. Do not silently default in Full mode.
+
 The field is named `delivery_mode` (not `mode`, not `execution_mode`) because both names are already taken: `mode` is the scale-adaptive crystallization mode (`full | standard | quick | unset`) and `execution_mode` is the eval critic dispatch order (`parallel | sequential`). See `docs/planning/14_agile_mode.md` for the full agile-mode design.
 
 ### 2.2 Required sections

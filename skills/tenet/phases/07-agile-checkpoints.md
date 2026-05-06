@@ -6,7 +6,7 @@ Agile mode wraps the normal autonomous loop with user review checkpoints. Per-jo
 
 ## 1. Agile Flow
 
-1. Interview ends with a delivery-mode choice: `autonomous` or `agile`.
+1. Interview ends with a recorded `## Delivery Mode Decision` selecting `agile`.
 2. Pre-spec research runs normally.
 3. Spec + harness are written before visuals. The spec must include `delivery_mode: agile` front matter and a `## Slice plan`.
 4. Visuals produce final-product artifacts and per-slice wireframes, per `phases/03-visuals.md`.

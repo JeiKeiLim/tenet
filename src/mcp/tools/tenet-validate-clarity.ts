@@ -40,12 +40,89 @@ const CLARITY_RUBRIC = `Score this interview transcript on three dimensions. Be 
 - A score of 1.0 means "I cannot identify a single additional question that would improve clarity." Almost never give this.
 - ALWAYS include at least one gap, even for high scores. There is always something that could be clarified further.
 
+## Full-mode Delivery Mode Gate
+
+If the transcript declares "Mode: Full", it MUST include "## Delivery Mode Decision" with:
+- "Prompt shown"
+- "User response"
+- "Selected delivery_mode: autonomous|agile"
+- "Selection basis: explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision"
+
+For non-YOLO Full mode, the decision must come from a standalone delivery-mode question that presented both "autonomous" and "agile". A bundled defaults question, unrelated "okay", or pre-execution confirmation does NOT satisfy this gate. If this gate fails, set "passed" to false regardless of the numeric clarity score and include the gate failure in "gaps".
+
 ## Output Format
 Respond with ONLY this JSON (no markdown, no explanation):
 {"goal": <number>, "constraints": <number>, "success_criteria": <number>, "clarity": <number>, "passed": <boolean>, "gaps": ["<missing item 1>", "<missing item 2>"]}
 
-Where clarity = (goal * 0.4) + (constraints * 0.3) + (success_criteria * 0.3), and passed = clarity >= 0.8.
+Where clarity = (goal * 0.4) + (constraints * 0.3) + (success_criteria * 0.3), and passed = clarity >= 0.8 AND no hard gate fails.
 List specific gaps that would need additional interview questions — at minimum 1 gap even for high-scoring transcripts.`;
+
+const FULL_MODE_RE = /^Mode:\s*Full\b/im;
+const DELIVERY_MODE_DECISION_RE = /^## Delivery Mode Decision\b/im;
+const PROMPT_SHOWN_RE = /^\s*-\s*Prompt shown:\s*\S/im;
+const USER_RESPONSE_RE = /^\s*-\s*User response:\s*\S/im;
+const SELECTED_DELIVERY_MODE_RE = /^\s*-\s*Selected delivery_mode:\s*(autonomous|agile)\b/im;
+const SELECTION_BASIS_RE =
+  /^\s*-\s*Selection basis:\s*(explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision)\b/im;
+
+const getFullModeDeliveryGateFailure = (transcript: string): string | null => {
+  if (!FULL_MODE_RE.test(transcript)) {
+    return null;
+  }
+
+  if (!DELIVERY_MODE_DECISION_RE.test(transcript)) {
+    return 'Full-mode transcript is missing ## Delivery Mode Decision.';
+  }
+
+  if (!PROMPT_SHOWN_RE.test(transcript)) {
+    return 'Full-mode transcript has ## Delivery Mode Decision but no Prompt shown.';
+  }
+
+  if (!USER_RESPONSE_RE.test(transcript)) {
+    return 'Full-mode transcript has ## Delivery Mode Decision but no User response.';
+  }
+
+  if (!SELECTED_DELIVERY_MODE_RE.test(transcript)) {
+    return 'Full-mode transcript has ## Delivery Mode Decision but no valid Selected delivery_mode.';
+  }
+
+  if (!SELECTION_BASIS_RE.test(transcript)) {
+    return 'Full-mode transcript has ## Delivery Mode Decision but no valid Selection basis.';
+  }
+
+  return null;
+};
+
+const createCompletedClarityFailureJob = (
+  jobManager: JobManager,
+  stateStore: StateStore,
+  gap: string,
+) => {
+  const now = Date.now();
+  const job = jobManager.createPendingJob('eval', {
+    name: 'clarity-delivery-mode-gate',
+    prompt: `Deterministic clarity gate failure: ${gap}`,
+    eval_type: 'clarity_validation',
+  });
+
+  stateStore.setJobOutput(job.id, {
+    goal: 0,
+    constraints: 0,
+    success_criteria: 0,
+    clarity: 0,
+    passed: false,
+    gaps: [gap],
+  });
+  stateStore.updateJob(job.id, {
+    status: 'completed',
+    startedAt: now,
+    completedAt: now,
+    lastHeartbeat: now,
+  });
+  stateStore.appendEvent(job.id, 'job_completed', { deterministic: true });
+
+  return job;
+};
 
 export const registerTenetValidateClarityTool = (
   registerTool: RegisterTool,
@@ -94,6 +171,17 @@ export const registerTenetValidateClarityTool = (
       }
 
       const transcript = fs.readFileSync(transcriptPath, 'utf8');
+      const deliveryGateFailure = getFullModeDeliveryGateFailure(transcript);
+
+      if (deliveryGateFailure) {
+        const job = createCompletedClarityFailureJob(jobManager, stateStore, deliveryGateFailure);
+
+        return jsonResult({
+          job_id: job.id,
+          message:
+            'Clarity validation failed before dispatch. Use tenet_job_result to read the gate failure.',
+        });
+      }
 
       const prompt = `${CLARITY_RUBRIC}\n\n---\n\n# Interview Transcript\n\n${transcript}`;
 

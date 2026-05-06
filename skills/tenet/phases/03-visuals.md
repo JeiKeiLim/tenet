@@ -2,7 +2,7 @@
 
 Visual generation is mandatory in Full mode. These artifacts bridge the gap between interview and specification, ensuring alignment on system design and UI expectations.
 
-**Before producing any artifacts, determine `delivery_mode`**. Prefer the spec's front-matter field when the spec already exists (see `phases/02-spec-and-harness.md` § 2.1). If visuals run before spec generation, use the delivery-mode decision from the interview; if no decision exists, default to `autonomous`. When `delivery_mode: agile`, Section 5 below overrides parts of Sections 1–4 — agile reshapes the output into a final-product view + per-slice wireframes rather than 3-5 variations, and adds a mid-run delta workflow. When `delivery_mode: autonomous` (or absent), follow Sections 1–4 as written and ignore Section 5.
+**Before producing any artifacts, determine `delivery_mode`**. Prefer the spec's front-matter field when the spec already exists (see `phases/02-spec-and-harness.md` § 2.1). If visuals run before spec generation in Full mode, use `## Delivery Mode Decision` from the interview transcript; if it is missing, stop and return to `phases/01-interview.md`. Do not silently default in Full mode. When `delivery_mode: agile`, Section 5 below overrides parts of Sections 1–4 — agile reshapes the output into a final-product view + per-slice wireframes rather than 3-5 variations, and adds a mid-run delta workflow. When `delivery_mode: autonomous` (or absent in non-Full/legacy flows), follow Sections 1–4 as written and ignore Section 5.
 
 ## Output Requirements
 - **Directory**: `.tenet/visuals/`
