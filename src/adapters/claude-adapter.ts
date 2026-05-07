@@ -50,8 +50,9 @@ export class ClaudeAdapter implements AgentAdapter {
     return new Promise((resolve) => {
       const tools = invocation.allowedTools ?? DEFAULT_ALLOWED_TOOLS;
       // Pass prompt via stdin because --allowedTools is variadic and swallows positional args.
+      const jobExtraArgs = invocation.extraArgs ?? [];
       // Extra args come first so they can influence mode/model before flags that consume tokens.
-      const args = [...this.extraArgs, '--print', '--output-format', 'json', '--allowedTools', ...tools];
+      const args = [...this.extraArgs, ...jobExtraArgs, '--print', '--output-format', 'json', '--allowedTools', ...tools];
 
       const child = spawn(
         'claude',

@@ -437,7 +437,7 @@ export class JobManager {
         return;
       }
 
-      const invocation = this.toInvocation(job);
+      const invocation = this.toInvocation(job, adapter.name);
       const response = await adapter.invoke(invocation);
       const finishedAt = Date.now();
 
@@ -618,7 +618,7 @@ export class JobManager {
     return true;
   }
 
-  private toInvocation(job: Job): AgentInvocation {
+  private toInvocation(job: Job, adapterName: string): AgentInvocation {
     const rawPrompt = typeof job.params.prompt === 'string' ? job.params.prompt : `Execute ${job.type} job ${job.id}`;
     const prompt = job.type === 'dev'
       ? this.withDevPreamble(rawPrompt, job)
@@ -638,7 +638,8 @@ export class JobManager {
     const configuredTimeout = parseTimeoutMinutes(this.stateStore.getConfig('timeout_minutes'));
     const timeoutMs = configuredTimeout ? configuredTimeout * 60 * 1000 : undefined;
 
-    // Playwright eval jobs need access to Playwright MCP tools for exploratory testing
+    // Browser/visual e2e jobs need access to Playwright MCP tools for exploratory testing.
+    // CLI/API/library jobs with this legacy job type simply won't use them.
     const allowedTools = job.type === 'playwright_eval'
       ? [
           'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
@@ -673,6 +674,7 @@ export class JobManager {
       workdir,
       timeoutMs,
       allowedTools,
+      extraArgs: this.adapterRegistry.getJobExtraArgs(adapterName, job.type),
     };
   }
 

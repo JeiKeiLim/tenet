@@ -4,6 +4,7 @@ export interface AgentInvocation {
   maxTurns?: number;
   workdir?: string;
   allowedTools?: string[];
+  extraArgs?: string[];
   timeoutMs?: number;
 }
 

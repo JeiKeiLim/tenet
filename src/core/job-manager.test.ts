@@ -13,6 +13,7 @@ class MockAdapter implements AgentAdapter {
   private readonly outputOverride?: string;
   private readonly available: boolean;
   public calls = 0;
+  public lastInvocation?: AgentInvocation;
 
   constructor(name: string, delayMs = 0, outputOverride?: string, available = true) {
     this.name = name;
@@ -23,6 +24,7 @@ class MockAdapter implements AgentAdapter {
 
   async invoke(invocation: AgentInvocation): Promise<AgentResponse> {
     this.calls += 1;
+    this.lastInvocation = invocation;
     if (this.delayMs > 0) {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, this.delayMs);
@@ -152,6 +154,36 @@ describe('JobManager', () => {
     const output = store.getJobOutput(job.id) as { tried_agent: string; hint: string };
     expect(output.tried_agent).toBe('codex');
     expect(output.hint).toContain('will not switch agents automatically');
+  });
+
+  it('passes adapter job-scoped args to matching job type only', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
+    tempDirs.push(tempDir);
+    const store = new StateStore(tempDir);
+    stores.push(store);
+    store.setConfig('default_agent', 'codex');
+
+    const codex = new MockAdapter('codex');
+    const registry = new AdapterRegistry({
+      byJobType: {
+        codex: {
+          playwright_eval: ['--dangerously-bypass-approvals-and-sandbox'],
+        },
+      },
+    });
+    const holder = registry as unknown as { adapters: Map<string, AgentAdapter> };
+    holder.adapters.clear();
+    registry.register(codex);
+
+    const manager = new JobManager(store, registry, {
+      heartbeatTimeoutMs: 100,
+      defaultJobTimeoutMs: 2_000,
+    });
+
+    const job = manager.startJob('playwright_eval', { prompt: 'verify browser' });
+    await manager.waitForJob(job.id, null, 5_000);
+
+    expect(codex.lastInvocation?.extraArgs).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
   });
 
   it('does not pick an installed adapter when no agent is configured', async () => {

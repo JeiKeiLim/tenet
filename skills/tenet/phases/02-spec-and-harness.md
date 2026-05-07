@@ -151,7 +151,7 @@ A fresh agent reads spec + harness (+ scenarios + interview) and scores 8 catego
 4. **External service access** — credentials for services the agent CALLS (LLM keys, payment sandboxes, webhook secrets). NOT for services the feature itself implements.
 5. **Environment & runtime** — app start command, env vars, services, ports, health-check.
 6. **Test data & fixtures** — seed data the agent cannot synthesize (real PDFs, sandbox users).
-7. **Test strategy** — per layer (unit/integration/e2e) declared as live/sandboxed/mocked/skipped with reason; non-UI verification (logs/metrics/DB assertions) for async/background surfaces.
+7. **Test strategy** — per layer (unit/integration/e2e) declared as live/sandboxed/mocked/skipped with reason; e2e surface declared as browser UI, visual/canvas/game, CLI, API, library, or not applicable; Playwright Layer 2 declared as required/optional/skipped with reason; non-UI verification (logs/metrics/DB assertions) for async/background surfaces.
 8. **Dependencies & tooling** — libs/runtimes installable; build/test commands runnable.
 
 ### How to resolve a failing readiness check

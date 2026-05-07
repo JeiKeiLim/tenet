@@ -169,8 +169,10 @@ fuser .tenet/.state/tenet.db 2>/dev/null || lsof .tenet/.state/tenet.db
 npm list -g @playwright/mcp
 npx --no-install @playwright/mcp --help
 
-# Check .mcp.json for playwright entry
+# Check every agent config for playwright entry
 cat .mcp.json | grep -A3 playwright
+cat .codex/config.toml | grep -A6 playwright
+cat opencode.json | grep -A6 playwright
 
 # Check if browsers are installed
 npx playwright install --dry-run
@@ -196,7 +198,8 @@ claude --help | head -30
 **Fix** by pinning the flag Tenet should inject on every subprocess call:
 ```bash
 tenet config --opencode-args "--model github-copilot/claude-opus-4-5"
-tenet config --codex-args "--approval-mode never"
+tenet config --codex-args '--config approval_policy="never"'
+tenet config --codex-args-playwright-eval "--dangerously-bypass-approvals-and-sandbox"
 tenet config --claude-args "--allowedTools Bash,Read,Write,Edit"
 ```
 
@@ -205,8 +208,8 @@ Pass an empty string to clear a setting: `tenet config --opencode-args ""`.
 **Restart the Tenet MCP server after changing adapter args** — they're read at server startup.
 
 Notes on the mechanism:
-- Extra args are stored in `.tenet/.state/config.json` under `claude_args` / `opencode_args` / `codex_args`.
-- They're injected per-CLI at the known-safe position (before `run`/`exec`, after `--full-auto` for Codex).
+- Extra args are stored in `.tenet/.state/config.json` under `claude_args` / `opencode_args` / `codex_args`, with optional job-scoped keys such as `codex_args_playwright_eval`.
+- They're injected per-CLI at the known-safe position. Codex defaults to `--sandbox workspace-write`; global or job-scoped sandbox flags override that default.
 - Argument splitting is whitespace-based — values cannot contain embedded spaces in v1. If you need quoted values, file an issue.
 
 ## Reporting

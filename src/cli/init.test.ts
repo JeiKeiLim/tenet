@@ -3,10 +3,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  addPlaywrightAgentConfigs,
+  addPlaywrightToCodexConfig,
+  addPlaywrightToOpenCodeConfig,
   initProject,
+  mergeClaudePlaywrightSettings,
   mergeClaudeLocalSettings,
   mergeCodexProjectTrust,
   mergeOpenCodePermission,
+  mergeOpenCodePlaywrightPermission,
 } from './init.js';
 import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 
@@ -204,6 +209,53 @@ describe('initProject', () => {
     expect(content).toContain('args = ["serve"]');
   });
 
+  it('adds Playwright MCP to Codex config with tool approvals', () => {
+    const projectPath = createTempDir();
+    initProject(projectPath);
+
+    addPlaywrightToCodexConfig(projectPath);
+
+    const content = fs.readFileSync(path.join(projectPath, '.codex', 'config.toml'), 'utf8');
+    expect(content).toContain('[mcp_servers.tenet]');
+    expect(content).toContain('[mcp_servers.playwright]');
+    expect(content).toContain('command = "npx"');
+    expect(content).toContain('args = ["@playwright/mcp@latest"]');
+    expect(content).toContain('[mcp_servers.playwright.tools.browser_navigate]');
+    expect(content).toContain('approval_mode = "approve"');
+  });
+
+  it('adds Playwright MCP to OpenCode config without overwriting Tenet', () => {
+    const projectPath = createTempDir();
+    initProject(projectPath);
+
+    addPlaywrightToOpenCodeConfig(projectPath);
+
+    const content = JSON.parse(fs.readFileSync(path.join(projectPath, 'opencode.json'), 'utf8'));
+    expect(content.mcp.tenet).toBeDefined();
+    expect(content.mcp.playwright.type).toBe('local');
+    expect(content.mcp.playwright.command).toEqual(['npx', '@playwright/mcp@latest']);
+    expect(content.mcp.playwright.enabled).toBe(true);
+  });
+
+  it('adds Playwright MCP to all agent configs', () => {
+    const projectPath = createTempDir();
+    initProject(projectPath);
+
+    addPlaywrightAgentConfigs(projectPath);
+
+    const mcpJson = JSON.parse(fs.readFileSync(path.join(projectPath, '.mcp.json'), 'utf8'));
+    const codexConfig = fs.readFileSync(path.join(projectPath, '.codex', 'config.toml'), 'utf8');
+    const opencode = JSON.parse(fs.readFileSync(path.join(projectPath, 'opencode.json'), 'utf8'));
+    const claudeSettings = JSON.parse(fs.readFileSync(path.join(projectPath, '.claude', 'settings.local.json'), 'utf8'));
+
+    expect(mcpJson.mcpServers.playwright).toBeDefined();
+    expect(codexConfig).toContain('[mcp_servers.playwright]');
+    expect(opencode.mcp.playwright).toBeDefined();
+    expect(opencode.permission.mcp.playwright).toBe('allow');
+    expect(claudeSettings.enabledMcpjsonServers).toContain('playwright');
+    expect(claudeSettings.permissions.allow).toContain('mcp__playwright__browser_navigate');
+  });
+
   it('appends to existing .codex/config.toml without overwriting', () => {
     const projectPath = createTempDir();
     const codexDir = path.join(projectPath, '.codex');
@@ -289,6 +341,21 @@ describe('mergeClaudeLocalSettings', () => {
     expect(status).toBe('unchanged');
   });
 
+  it('adds Playwright allowlist without removing Tenet entries', () => {
+    const projectPath = createTempDir();
+    mergeClaudeLocalSettings(projectPath);
+
+    const status = mergeClaudePlaywrightSettings(projectPath);
+    expect(status).toBe('merged');
+
+    const settingsPath = path.join(projectPath, '.claude', 'settings.local.json');
+    const content = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    expect(content.enabledMcpjsonServers).toContain('tenet');
+    expect(content.enabledMcpjsonServers).toContain('playwright');
+    expect(content.permissions.allow).toContain('mcp__tenet__tenet_init');
+    expect(content.permissions.allow).toContain('mcp__playwright__browser_navigate');
+  });
+
   it('skips with invalid JSON status when settings.local.json is malformed', () => {
     const projectPath = createTempDir();
     const settingsPath = path.join(projectPath, '.claude', 'settings.local.json');
@@ -346,6 +413,23 @@ describe('mergeOpenCodePermission', () => {
 
     const status = mergeOpenCodePermission(projectPath);
     expect(status).toBe('skipped_invalid_json');
+  });
+
+  it('adds permission.mcp.playwright="allow" without overwriting Tenet', () => {
+    const projectPath = createTempDir();
+    const configPath = path.join(projectPath, 'opencode.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ permission: { mcp: { tenet: 'allow' } } }),
+      'utf8',
+    );
+
+    const status = mergeOpenCodePlaywrightPermission(projectPath);
+    expect(status).toBe('merged');
+
+    const content = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(content.permission.mcp.tenet).toBe('allow');
+    expect(content.permission.mcp.playwright).toBe('allow');
   });
 });
 

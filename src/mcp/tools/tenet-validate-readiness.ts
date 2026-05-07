@@ -55,6 +55,8 @@ For each category, assign one of: "ready", "partial", "blocked".
 
 ### 7. Test strategy (incl. non-UI verification)
 - Per layer (unit / integration / e2e): declared as live, sandboxed, mocked, or skipped — WITH reason.
+- E2E surface is declared: browser UI, visual/canvas/game, CLI, API, library, or not applicable.
+- Browser/visual Playwright Layer 2 is declared as required, optional, or skipped with reason.
 - For async/background/third-party surfaces that Playwright cannot see: is there a non-UI verification method (logs, metrics, DB assertions, event-store queries, explicit test hooks)?
 - "How will we know this worked?" must have an answer for every success criterion.
 

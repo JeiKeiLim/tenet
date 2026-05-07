@@ -98,7 +98,7 @@ Run this before mode selection or execution:
 6. If either call returns `update_available`, tell the user the current version, latest version, and `update_command`. Do not auto-update during an active run; instruct the user to close the agent, install the update, run `tenet init --upgrade`, then restart.
 7. If `.tenet/` was just created and the project has existing source code, read and execute `phases/00-brownfield-scan.md` before mode selection.
 8. Detect whether `.git/` exists. Git behavior is defined in `phases/05-execution-loop.md`.
-9. Probe Playwright MCP availability if possible. If unavailable, warn once that exploratory Stage 5 testing will be skipped; this is not a blocker.
+9. Probe Playwright MCP availability if possible. If unavailable, warn once. This is only non-blocking when the harness/spec marks browser exploration optional, skipped with reason, or not applicable; required browser/visual Layer 2 cannot pass without it.
 
 Do not enter execution while health is bad.
 

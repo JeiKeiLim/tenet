@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { getPackageVersion } from './version.js';
 import {
-  addPlaywrightToMcpJson,
+  addPlaywrightAgentConfigs,
   initProject,
   installPlaywrightMcp,
   isPlaywrightMcpInstalled,
@@ -126,8 +126,8 @@ const runPlaywrightCheckFlow = async (projectPath: string): Promise<void> => {
   }
 
   if (isPlaywrightMcpInstalled()) {
-    addPlaywrightToMcpJson(projectPath);
-    console.log('Playwright MCP detected and added to .mcp.json.');
+    addPlaywrightAgentConfigs(projectPath);
+    console.log('Playwright MCP detected and added to agent configs.');
     return;
   }
 
@@ -142,16 +142,16 @@ const runPlaywrightCheckFlow = async (projectPath: string): Promise<void> => {
 
   const installed = installPlaywrightMcp();
   if (installed) {
-    addPlaywrightToMcpJson(projectPath);
-    console.log('Playwright MCP installed and added to .mcp.json.');
+    addPlaywrightAgentConfigs(projectPath);
+    console.log('Playwright MCP installed and added to agent configs.');
   } else {
     console.log('Install failed. You can install manually with:');
     console.log('  npm install -g @playwright/mcp@latest');
     console.log('  npx playwright install');
-    const addAnyway = await promptYesNo('Add Playwright MCP to .mcp.json anyway?', false);
+    const addAnyway = await promptYesNo('Add Playwright MCP to agent configs anyway?', false);
     if (addAnyway) {
-      addPlaywrightToMcpJson(projectPath);
-      console.log('Added Playwright MCP to .mcp.json. Install the package before running tenet.');
+      addPlaywrightAgentConfigs(projectPath);
+      console.log('Added Playwright MCP to agent configs. Install the package before running tenet.');
     }
   }
 };
@@ -301,7 +301,19 @@ const run = async (): Promise<void> => {
     )
     .option(
       '--codex-args <args>',
-      'Extra CLI args to pass to every codex subprocess (e.g. "--approval-mode never"). Use "" to clear.',
+      'Extra CLI args to pass to every codex subprocess (e.g. "--sandbox danger-full-access"). Use "" to clear.',
+    )
+    .option(
+      '--claude-args-playwright-eval <args>',
+      'Extra CLI args to pass only to claude-code playwright_eval subprocesses. Use "" to clear.',
+    )
+    .option(
+      '--opencode-args-playwright-eval <args>',
+      'Extra CLI args to pass only to opencode playwright_eval subprocesses. Use "" to clear.',
+    )
+    .option(
+      '--codex-args-playwright-eval <args>',
+      'Extra CLI args to pass only to codex playwright_eval subprocesses (e.g. "--dangerously-bypass-approvals-and-sandbox"). Use "" to clear.',
     )
     .action(async (options: {
       project: string;
@@ -311,6 +323,9 @@ const run = async (): Promise<void> => {
       claudeArgs?: string;
       opencodeArgs?: string;
       codexArgs?: string;
+      claudeArgsPlaywrightEval?: string;
+      opencodeArgsPlaywrightEval?: string;
+      codexArgsPlaywrightEval?: string;
     }) => {
       const projectPath = resolveProjectPath(options.project);
       const tenetRoot = path.join(projectPath, '.tenet');
@@ -389,9 +404,39 @@ const run = async (): Promise<void> => {
         changed = true;
       }
 
+      const setScopedArgs = (
+        optionValue: string | undefined,
+        key: 'claude_args_playwright_eval' | 'opencode_args_playwright_eval' | 'codex_args_playwright_eval',
+      ): void => {
+        if (optionValue === undefined) {
+          return;
+        }
+
+        const trimmed = optionValue.trim();
+        if (trimmed.length === 0) {
+          delete config[key];
+          console.log(`Cleared ${key}.`);
+        } else {
+          config[key] = trimmed;
+          console.log(`${key} set to: ${trimmed}`);
+        }
+        changed = true;
+      };
+
+      setScopedArgs(options.claudeArgsPlaywrightEval, 'claude_args_playwright_eval');
+      setScopedArgs(options.opencodeArgsPlaywrightEval, 'opencode_args_playwright_eval');
+      setScopedArgs(options.codexArgsPlaywrightEval, 'codex_args_playwright_eval');
+
       if (changed) {
         writeStateConfig(tenetRoot, config);
-        if (options.claudeArgs !== undefined || options.opencodeArgs !== undefined || options.codexArgs !== undefined) {
+        if (
+          options.claudeArgs !== undefined ||
+          options.opencodeArgs !== undefined ||
+          options.codexArgs !== undefined ||
+          options.claudeArgsPlaywrightEval !== undefined ||
+          options.opencodeArgsPlaywrightEval !== undefined ||
+          options.codexArgsPlaywrightEval !== undefined
+        ) {
           console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
         }
         return;
@@ -409,11 +454,17 @@ const run = async (): Promise<void> => {
       console.log(`  claude_args: ${config.claude_args ?? '(none)'}`);
       console.log(`  opencode_args: ${config.opencode_args ?? '(none)'}`);
       console.log(`  codex_args: ${config.codex_args ?? '(none)'}`);
+      console.log(`  claude_args_playwright_eval: ${config.claude_args_playwright_eval ?? '(none)'}`);
+      console.log(`  opencode_args_playwright_eval: ${config.opencode_args_playwright_eval ?? '(none)'}`);
+      console.log(`  codex_args_playwright_eval: ${config.codex_args_playwright_eval ?? '(none)'}`);
       console.log(
         '\nTo change: tenet config --agent <name> --max-retries <n|unlimited> --timeout <minutes> \\',
       );
       console.log(
-        '                         --claude-args "..." --opencode-args "..." --codex-args "..."',
+        '                         --claude-args "..." --opencode-args "..." --codex-args "..." \\',
+      );
+      console.log(
+        '                         --codex-args-playwright-eval "..."',
       );
     });
 

@@ -16,8 +16,9 @@ export class OpenCodeAdapter implements AgentAdapter {
     const startedAt = Date.now();
     const prompt = invocation.context ? `${invocation.context}\n\n${invocation.prompt}` : invocation.prompt;
 
+    const jobExtraArgs = invocation.extraArgs ?? [];
     // Opencode's global flags (e.g. --model) must come BEFORE the `run` subcommand.
-    const args = [...this.extraArgs, 'run', prompt, '--format', 'json'];
+    const args = [...this.extraArgs, ...jobExtraArgs, 'run', prompt, '--format', 'json'];
     if (invocation.workdir) {
       args.push('--dir', invocation.workdir);
     }

@@ -83,6 +83,9 @@ type StateConfig = {
   opencode_args?: string;
   codex_args?: string;
   claude_args?: string;
+  opencode_args_playwright_eval?: string;
+  codex_args_playwright_eval?: string;
+  claude_args_playwright_eval?: string;
 };
 
 export const writeStateConfig = (tenetRoot: string, config: StateConfig): void => {
@@ -364,6 +367,34 @@ const PLAYWRIGHT_MCP_ENTRY = {
   args: ['@playwright/mcp@latest'],
 };
 
+const PLAYWRIGHT_MCP_TOOL_NAMES = [
+  'browser_navigate',
+  'browser_navigate_back',
+  'browser_click',
+  'browser_type',
+  'browser_fill_form',
+  'browser_snapshot',
+  'browser_take_screenshot',
+  'browser_wait_for',
+  'browser_press_key',
+  'browser_select_option',
+  'browser_hover',
+  'browser_drag',
+  'browser_resize',
+  'browser_tabs',
+  'browser_close',
+  'browser_console_messages',
+  'browser_network_requests',
+  'browser_evaluate',
+  'browser_run_code',
+  'browser_file_upload',
+  'browser_handle_dialog',
+];
+
+const PLAYWRIGHT_CODEX_TOOL_APPROVAL_ENTRIES = PLAYWRIGHT_MCP_TOOL_NAMES.map(
+  (name) => `[mcp_servers.playwright.tools.${name}]\napproval_mode = "approve"\n`,
+).join('\n');
+
 /**
  * Check if Playwright MCP is installed globally (or runnable via npx).
  */
@@ -432,6 +463,37 @@ export const addPlaywrightToMcpJson = (projectPath: string): void => {
   fs.writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
 };
 
+export const addPlaywrightToCodexConfig = (projectPath: string): void => {
+  const codexDir = path.join(projectPath, '.codex');
+  const configPath = path.join(codexDir, 'config.toml');
+  const serverEntry =
+    `[mcp_servers.playwright]\ncommand = "npx"\nargs = ["@playwright/mcp@latest"]\n\n${PLAYWRIGHT_CODEX_TOOL_APPROVAL_ENTRIES}\n`;
+
+  if (fs.existsSync(configPath)) {
+    const existing = fs.readFileSync(configPath, 'utf8');
+    if (existing.includes('[mcp_servers.playwright]')) {
+      const missingTools = PLAYWRIGHT_MCP_TOOL_NAMES.filter(
+        (name) => !existing.includes(`[mcp_servers.playwright.tools.${name}]`),
+      );
+      if (missingTools.length === 0) return;
+      const toAppend =
+        '\n' +
+        missingTools
+          .map((name) => `[mcp_servers.playwright.tools.${name}]\napproval_mode = "approve"\n`)
+          .join('\n');
+      fs.appendFileSync(configPath, toAppend, 'utf8');
+      return;
+    }
+
+    const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+    fs.appendFileSync(configPath, separator + serverEntry, 'utf8');
+    return;
+  }
+
+  fs.mkdirSync(codexDir, { recursive: true });
+  fs.writeFileSync(configPath, serverEntry, 'utf8');
+};
+
 const writeMcpJson = (projectPath: string): void => {
   const mcpJsonPath = path.join(projectPath, '.mcp.json');
   if (fs.existsSync(mcpJsonPath)) {
@@ -498,21 +560,47 @@ const OPENCODE_MCP_ENTRY = {
   command: ['tenet', 'serve'],
 };
 
-const mergeOpenCodeConfig = (projectPath: string): void => {
+const OPENCODE_PLAYWRIGHT_MCP_ENTRY = {
+  type: 'local' as const,
+  command: ['npx', '@playwright/mcp@latest'],
+  enabled: true,
+};
+
+const mergeOpenCodeMcpEntry = (
+  projectPath: string,
+  name: string,
+  entry: Record<string, unknown>,
+): void => {
   const configPath = path.join(projectPath, 'opencode.json');
   if (fs.existsSync(configPath)) {
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
     const mcp = (existing.mcp ?? {}) as Record<string, unknown>;
-    if (mcp.tenet) {
+    if (mcp[name]) {
       return;
     }
-    mcp.tenet = OPENCODE_MCP_ENTRY;
+    mcp[name] = entry;
     existing.mcp = mcp;
     fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
     return;
   }
-  const config = { mcp: { tenet: OPENCODE_MCP_ENTRY } };
+  const config = { mcp: { [name]: entry } };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+};
+
+const mergeOpenCodeConfig = (projectPath: string): void => {
+  mergeOpenCodeMcpEntry(projectPath, 'tenet', OPENCODE_MCP_ENTRY);
+};
+
+export const addPlaywrightToOpenCodeConfig = (projectPath: string): void => {
+  mergeOpenCodeMcpEntry(projectPath, 'playwright', OPENCODE_PLAYWRIGHT_MCP_ENTRY);
+};
+
+export const addPlaywrightAgentConfigs = (projectPath: string): void => {
+  addPlaywrightToMcpJson(projectPath);
+  addPlaywrightToCodexConfig(projectPath);
+  addPlaywrightToOpenCodeConfig(projectPath);
+  mergeClaudePlaywrightSettings(projectPath);
+  mergeOpenCodePlaywrightPermission(projectPath);
 };
 
 // --- MCP tool pre-approval helpers (Part 5) -----------------------------
@@ -524,27 +612,19 @@ export type PreApprovalStatus =
   | 'skipped_invalid_json'
   | 'skipped_user_untrusted';
 
-/**
- * Merge Tenet MCP tool names into .claude/settings.local.json (gitignored, user-local).
- * Never touches settings.json (which may be checked into team repos).
- *
- * Behavior:
- * - File missing → create with Tenet tool names allowed and "tenet" in enabledMcpjsonServers.
- * - File present → additively merge. Never remove existing entries.
- * - Invalid JSON → skip, return 'skipped_invalid_json'.
- */
-export const mergeClaudeLocalSettings = (projectPath: string): PreApprovalStatus => {
+const mergeClaudeMcpSettings = (
+  projectPath: string,
+  serverName: string,
+  allowList: string[],
+): PreApprovalStatus => {
   const claudeDir = path.join(projectPath, '.claude');
   const settingsPath = path.join(claudeDir, 'settings.local.json');
-
-  const allowList = TENET_MCP_TOOL_NAMES.map((name) => `mcp__tenet__${name}`);
-  const enabledServer = 'tenet';
 
   if (!fs.existsSync(settingsPath)) {
     fs.mkdirSync(claudeDir, { recursive: true });
     const content = {
       permissions: { allow: allowList },
-      enabledMcpjsonServers: [enabledServer],
+      enabledMcpjsonServers: [serverName],
     };
     fs.writeFileSync(settingsPath, JSON.stringify(content, null, 2) + '\n', 'utf8');
     return 'created';
@@ -574,8 +654,8 @@ export const mergeClaudeLocalSettings = (projectPath: string): PreApprovalStatus
   const existingServers = Array.isArray(parsed.enabledMcpjsonServers)
     ? (parsed.enabledMcpjsonServers as string[])
     : [];
-  if (!existingServers.includes(enabledServer)) {
-    existingServers.push(enabledServer);
+  if (!existingServers.includes(serverName)) {
+    existingServers.push(serverName);
     parsed.enabledMcpjsonServers = existingServers;
     changed = true;
   } else {
@@ -591,16 +671,35 @@ export const mergeClaudeLocalSettings = (projectPath: string): PreApprovalStatus
 };
 
 /**
+ * Merge Tenet MCP tool names into .claude/settings.local.json (gitignored, user-local).
+ * Never touches settings.json (which may be checked into team repos).
+ *
+ * Behavior:
+ * - File missing → create with Tenet tool names allowed and "tenet" in enabledMcpjsonServers.
+ * - File present → additively merge. Never remove existing entries.
+ * - Invalid JSON → skip, return 'skipped_invalid_json'.
+ */
+export const mergeClaudeLocalSettings = (projectPath: string): PreApprovalStatus => {
+  const allowList = TENET_MCP_TOOL_NAMES.map((name) => `mcp__tenet__${name}`);
+  return mergeClaudeMcpSettings(projectPath, 'tenet', allowList);
+};
+
+export const mergeClaudePlaywrightSettings = (projectPath: string): PreApprovalStatus => {
+  const allowList = PLAYWRIGHT_MCP_TOOL_NAMES.map((name) => `mcp__playwright__${name}`);
+  return mergeClaudeMcpSettings(projectPath, 'playwright', allowList);
+};
+
+/**
  * Add `permission.mcp.tenet: "allow"` to opencode.json so OpenCode auto-approves
  * all tools from the Tenet MCP server. Merge is additive — never overwrites
  * existing permission keys.
  */
-export const mergeOpenCodePermission = (projectPath: string): PreApprovalStatus => {
+const mergeOpenCodeMcpPermission = (projectPath: string, serverName: string): PreApprovalStatus => {
   const configPath = path.join(projectPath, 'opencode.json');
   if (!fs.existsSync(configPath)) {
     // opencode.json should have been created by initProject's MCP discovery step.
     // Create a minimal one with just the permission block if it's missing.
-    const content = { permission: { mcp: { tenet: 'allow' } } };
+    const content = { permission: { mcp: { [serverName]: 'allow' } } };
     fs.writeFileSync(configPath, JSON.stringify(content, null, 2) + '\n', 'utf8');
     return 'created';
   }
@@ -614,16 +713,22 @@ export const mergeOpenCodePermission = (projectPath: string): PreApprovalStatus 
 
   const permission = (parsed.permission ?? {}) as Record<string, unknown>;
   const mcp = (permission.mcp ?? {}) as Record<string, unknown>;
-  if (mcp.tenet === 'allow') {
+  if (mcp[serverName] === 'allow') {
     return 'unchanged';
   }
 
-  mcp.tenet = 'allow';
+  mcp[serverName] = 'allow';
   permission.mcp = mcp;
   parsed.permission = permission;
   fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
   return 'merged';
 };
+
+export const mergeOpenCodePermission = (projectPath: string): PreApprovalStatus =>
+  mergeOpenCodeMcpPermission(projectPath, 'tenet');
+
+export const mergeOpenCodePlaywrightPermission = (projectPath: string): PreApprovalStatus =>
+  mergeOpenCodeMcpPermission(projectPath, 'playwright');
 
 /**
  * Add project-scoped trust to .codex/config.toml so Codex auto-approves this

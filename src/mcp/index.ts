@@ -18,11 +18,7 @@ const loadAdapterExtraArgs = (projectPath: string): ReturnType<typeof parseAdapt
     return parseAdapterExtraArgs({});
   }
   try {
-    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
-      claude_args?: string;
-      opencode_args?: string;
-      codex_args?: string;
-    };
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
     return parseAdapterExtraArgs(raw);
   } catch {
     return parseAdapterExtraArgs({});

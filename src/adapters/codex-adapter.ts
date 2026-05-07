@@ -17,9 +17,19 @@ export class CodexAdapter implements AgentAdapter {
     const prompt = invocation.context ? `${invocation.context}\n\n${invocation.prompt}` : invocation.prompt;
 
     return new Promise((resolve) => {
-      // --full-auto disables sandbox mode that Codex enables by default in non-TTY (subprocess) mode.
-      // User-supplied extra args come AFTER exec subcommand and the safety flag, but BEFORE the prompt.
-      const child = spawn('codex', ['exec', '--full-auto', ...this.extraArgs, prompt], {
+      const jobExtraArgs = invocation.extraArgs ?? [];
+      const extraArgs = [...this.extraArgs, ...jobExtraArgs];
+      const hasSandboxOverride = extraArgs.some((arg) =>
+        arg === '--sandbox' ||
+        arg === '-s' ||
+        arg === '--full-auto' ||
+        arg === '--dangerously-bypass-approvals-and-sandbox'
+      );
+      const sandboxArgs = hasSandboxOverride ? [] : ['--sandbox', 'workspace-write'];
+
+      // Codex currently deprecates --full-auto in favor of explicit sandbox selection.
+      // User/job extra args can still override the sandbox for trusted e2e jobs.
+      const child = spawn('codex', ['exec', ...sandboxArgs, ...extraArgs, prompt], {
         cwd: invocation.workdir,
         stdio: ['ignore', 'pipe', 'pipe'],
       });

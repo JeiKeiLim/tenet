@@ -52,7 +52,7 @@ TENET_E2E_AGENT=opencode    make e2e-cli
 TENET_E2E_AGENT=codex       make e2e-cli
 ```
 
-Useful for exercising each adapter's CLI contract separately — `claude-code` hits the `claude` adapter's argv, `opencode` hits `opencode run` (the one that motivated plan 10 part 4), and `codex` hits `codex exec --full-auto`. A finding on one but not another usually points at adapter-specific wiring.
+Useful for exercising each adapter's CLI contract separately — `claude-code` hits the `claude` adapter's argv, `opencode` hits `opencode run` (the one that motivated plan 10 part 4), and `codex` hits `codex exec --sandbox workspace-write` unless configured args override sandboxing. A finding on one but not another usually points at adapter-specific wiring.
 
 The harness prints timestamped progress. Each job shows up as "cycle N: dispatching <job-name>" followed by "eval dispatched (sequential|parallel)". Agents take minutes per call; console looks idle for long stretches. That's normal.
 
@@ -104,7 +104,7 @@ To answer those, read:
 ## Known limitations
 
 - **Only one agent is exercised per run.** Cross-adapter bugs (e.g., a fix that works for Claude Code breaks OpenCode) won't show up. Switch the repo's default agent and rerun if you need multi-adapter coverage.
-- **No Playwright MCP required.** The web canary's Layer 2 exploratory testing needs Playwright MCP installed; without it, Layer 2 reports `skipped_no_mcp` and the harness still passes. That's the intended behavior — we're testing our tooling, not Playwright itself.
+- **No Playwright MCP required unless the harness says so.** The web canary's Layer 2 exploratory testing needs Playwright MCP installed only when browser exploration is declared required. Otherwise Layer 2 can report `skipped_no_mcp`; non-browser projects should report `not_applicable` and run their declared CLI/API/library e2e checks.
 - **maxCycles caps at 5.** If a canary spec is large enough to need more dev jobs (it shouldn't be — they're canaries), raise `maxCycles` in the test file.
 
 ## Updating a canary

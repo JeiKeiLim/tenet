@@ -67,12 +67,21 @@ const CODE_CRITIC_PREAMBLE = [
 ].join('\n');
 
 const PLAYWRIGHT_EVAL_PREAMBLE = [
-  '## Playwright E2E — Live Application Verification',
+  '## Interaction E2E — Live Application Verification',
   '',
-  'You are the PLAYWRIGHT EVAL worker. You do NOT review code or test files.',
-  'You verify the application ACTUALLY WORKS by interacting with it like a real user.',
+  'You are the INTERACTION E2E worker. You do NOT review code.',
+  'You verify the project ACTUALLY WORKS through the public user-facing surface declared in the spec/harness.',
   '',
-  '### Two-Layer Testing (you MUST do BOTH)',
+  '### First: classify the project surface',
+  'Read `.tenet/harness/current.md`, the latest feature spec, and the scenarios file.',
+  'Determine whether this job needs web/browser UI, game/canvas/visual, CLI, API, library, or no e2e surface.',
+  'Do NOT force Playwright for CLI/API/library work unless the harness explicitly requires browser verification.',
+  '',
+  'If the harness/spec declares e2e or visual exploration as skipped, optional, mocked, or not applicable, honor that policy and state the reason.',
+  '',
+  '### Browser/UI path — Two-Layer Testing',
+  '',
+  'If the feature is browser UI, game/canvas, visual, or otherwise requires browser interaction, do BOTH layers unless the harness explicitly says Layer 2 is optional or skipped:',
   '',
   '#### Layer 1: Scripted Playwright Tests (regression)',
   '1. Locate existing Playwright test files (tests/e2e/, e2e/, tests/playwright/, or similar)',
@@ -98,15 +107,25 @@ const PLAYWRIGHT_EVAL_PREAMBLE = [
   '   - Test navigation between pages',
   '   - Verify all features mentioned in spec are reachable from the UI',
   '',
+  '### CLI/API/library path',
+  '',
+  'If this is not a browser UI feature:',
+  '- CLI: run the public CLI commands from scenarios and verify exit code, stdout/stderr, files, and side effects',
+  '- API: run the project acceptance/integration tests or direct HTTP workflow checks declared in the harness',
+  '- Library: run integration tests through the public API; do not invent browser checks',
+  '- Set layer2_status to "not_applicable" when browser exploration is not part of the declared e2e surface',
+  '',
   '### What to Report',
+  '- Surface classification and harness policy used',
   '- Layer 1 results: scripted test pass/fail counts',
   '- Layer 2 findings: bugs found via exploration that scripted tests missed',
   '- Visual issues observed in screenshots (broken layouts, missing elements)',
   '- Features in spec that have NO accessible UI path',
   '',
   '### If Playwright MCP is not available',
-  'Report "Playwright MCP not installed — exploratory testing skipped" and pass with',
-  'Layer 1 results only. Do NOT fail the eval just because Playwright MCP is missing.',
+  'If browser/visual Layer 2 is REQUIRED by the harness/spec: FAIL the eval.',
+  'If browser/visual Layer 2 is optional or skipped with reason: report "Playwright MCP not installed — exploratory testing skipped" and pass with Layer 1 results only.',
+  'If browser/visual Layer 2 is not applicable to this project surface: do the non-browser e2e path and report not_applicable.',
   '',
   '### If the application won\'t start',
   'FAIL the eval. The application must start to be tested.',
@@ -114,12 +133,13 @@ const PLAYWRIGHT_EVAL_PREAMBLE = [
   '### Required output fields',
   'You MUST set layer2_status to one of:',
   '- "completed" — you exercised the app interactively via Playwright MCP and the findings below reflect that exploration',
-  '- "skipped_no_mcp" — Playwright MCP was not available; only Layer 1 (scripted) results are reported',
+  '- "skipped_no_mcp" — Playwright MCP was not available and the harness/spec allowed skipping browser exploration',
+  '- "not_applicable" — browser exploration is not part of this feature\'s declared e2e surface',
   '- "failed" — Layer 2 was attempted but failed to run (app would not start, MCP tool errors, etc.)',
   '',
   'The final status summary will show layer2_status directly — do not treat "passed" as equivalent to "fully verified". If Layer 2 was skipped, that must be visible downstream.',
   '',
-  'End with: {"passed": true/false, "stage": "playwright_eval", "layer2_status": "completed|skipped_no_mcp|failed", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
+  'End with: {"passed": true/false, "stage": "playwright_eval", "surface": "web_ui|visual|cli|api|library|none", "layer2_status": "completed|skipped_no_mcp|not_applicable|failed", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
   '',
 ].join('\n');
 
@@ -199,7 +219,8 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         'Start evaluation pipeline for a completed job. Dispatches THREE eval jobs: ' +
         '(1) Code critic — independent purpose alignment check (spec + diff only, no author reasoning), ' +
         '(2) Test critic — reviews whether tests are sufficient to prove features work (spec + tests only), ' +
-        '(3) Playwright eval — runs scripted Playwright tests AND exploratory agent-driven testing via Playwright MCP. ' +
+        '(3) Interaction e2e eval — runs the public-surface e2e checks declared by the harness; ' +
+        'uses scripted Playwright plus Playwright MCP only when browser/visual verification applies. ' +
         'All three evaluate ONLY against the specific job\'s scope, not the full spec. ' +
         'Execution mode (parallel vs sequential) is decided by the readiness verdict stored at ' +
         'eval_parallel_safe:{feature}. When the verdict is missing or false, critics run sequentially ' +

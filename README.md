@@ -113,7 +113,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
      +------------+  +-------------+  +-------------+
                                        claude --print
                                        opencode run
-                                       codex exec --full-auto
+                                       codex exec --sandbox workspace-write
 ```
 
 **Four layers:**
@@ -187,7 +187,9 @@ your-project/
     .state/
       tenet.db      # Versioned SQLite state (jobs, events, steer, config)
       config.json   # Project configuration
-  .mcp.json         # MCP server configuration (auto-generated)
+  .mcp.json         # Claude Code MCP server configuration (auto-generated)
+  .codex/config.toml # Codex MCP server configuration and project trust
+  opencode.json     # OpenCode MCP server configuration and permissions
   .claude/skills/tenet/  # Generated skill files for Claude Code, with Tenet version metadata
   .agents/skills/tenet/  # Generated skill files for Codex, with Tenet version metadata
 ```
@@ -228,14 +230,14 @@ The diagnose skill provides 10 diagnostic sections with ready-to-run queries for
 | Agent | Status | Notes |
 |-------|--------|-------|
 | Claude Code | Fully supported | Primary development target |
-| OpenCode | Supported | Skill discovery via opencode.json |
-| Codex | Supported | `--full-auto` for sandbox bypass, `.codex/config.toml` for MCP |
+| OpenCode | Supported | Skill and MCP discovery via opencode.json |
+| Codex | Supported | `--sandbox workspace-write` by default, `.codex/config.toml` for MCP |
 
 ## Requirements
 
 - Node.js >= 20
 - At least one AI coding agent CLI installed (`claude`, `opencode`, or `codex`)
-- Optional: Playwright MCP for agent-driven e2e testing (`tenet init` offers to install it)
+- Optional: Playwright MCP for browser/visual e2e testing (`tenet init` offers to install it and writes each supported agent config)
 
 ## Development
 

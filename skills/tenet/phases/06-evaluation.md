@@ -17,15 +17,18 @@ Every critic finding (code critic, test critic) MUST include a `category` so the
 
 The critic emits findings as objects: `{"category": "...", "detail": "..."}`. Orchestrators MUST read the category to pick the right response — plain retry loops waste cycles on bugs that aren't product bugs.
 
-## Playwright Layer 2 Honesty
+## E2E Surface And Playwright Layer 2 Honesty
 
-The Playwright eval returns a `layer2_status` field so downstream readers can distinguish "fully verified" from "Layer 1 only":
+The e2e eval job returns a `surface` field and a `layer2_status` field so downstream readers can distinguish browser-verified work from scripted-only or non-browser verification:
 
 - `completed` — Layer 2 exploratory testing ran via Playwright MCP. Findings reflect real interactive use.
-- `skipped_no_mcp` — Playwright MCP was not installed. Only scripted (Layer 1) results are reported.
+- `skipped_no_mcp` — Playwright MCP was not installed and the harness/spec allowed browser exploration to be skipped. Only scripted (Layer 1) results are reported.
+- `not_applicable` — browser exploration is not part of this feature's declared e2e surface (for example CLI, API, library, or no e2e surface).
 - `failed` — Layer 2 was attempted but could not complete (app wouldn't start, MCP errors).
 
 `tenet_get_status` surfaces the latest completed playwright_eval's `layer2_status` as `latest_playwright_layer2_status` so final reports can state honestly whether visual verification happened. A "passed" verdict with `layer2_status: skipped_no_mcp` is NOT the same as fully verified — say so in the final report.
+
+If the harness/spec says browser or visual exploration is required, missing Playwright MCP is a failure. If the harness/spec says it is optional or skipped with reason, `skipped_no_mcp` is acceptable. For CLI/API/library projects, do the declared public-surface e2e checks instead of forcing Playwright.
 
 ## Parallel vs Sequential Critics
 
@@ -154,11 +157,11 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 - **Integration test Fail**: If the job is `report_only`, call `tenet_report_blocking_finding` with the observed finding, why it blocks the report, recommended follow-up, and likely target files. Otherwise retry the integration job with an enhanced prompt.
 - **Retry policy**: Use `tenet_retry_job` while there is a concrete unresolved finding and the next attempt will use new evidence or a changed approach. Tenet defaults to unlimited retries; projects may configure a finite retry budget. If MCP reports a finite budget is exhausted, mark the job blocked. If failures stagnate, stop and report even when retries remain.
 
-### Stage 5: Playwright E2E (Two Layers, Independent Job)
+### Stage 5: Interaction E2E (Independent Job)
 
-Dispatched as a separate `playwright_eval` job by `tenet_start_eval` alongside code critic and test critic. The worker has independent context — does NOT see implementation code or author reasoning. Receives only the spec and the running application.
+Dispatched as a separate `playwright_eval` job by `tenet_start_eval` alongside code critic and test critic. The job type remains `playwright_eval` for compatibility, but the worker first reads the spec/harness and classifies the declared e2e surface: browser UI, visual/canvas/game, CLI, API, library, or not applicable. The worker has independent context — does NOT see implementation code or author reasoning. Receives only the spec, harness, scenarios, and the running public surface.
 
-**The worker MUST do BOTH layers:**
+For browser UI, game/canvas, visual, or other browser-interactive features, the worker MUST do BOTH layers unless the harness/spec explicitly marks Layer 2 optional or skipped with reason:
 
 #### Layer 1: Scripted Playwright Tests (regression)
 1. Locate existing Playwright test files (`tests/e2e/`, `e2e/`, `tests/playwright/`)
@@ -188,6 +191,13 @@ The worker uses Playwright MCP tools to interact with the app like a real user:
    - Test navigation between pages
    - Verify all features in spec are reachable from the UI
 
+#### Non-browser e2e
+For CLI/API/library projects, do not force Playwright:
+- CLI: run the public commands from scenarios and verify exit code, stdout/stderr, files, and side effects.
+- API: run acceptance/integration tests or direct HTTP workflow checks declared in the harness.
+- Library: run integration tests through the public API.
+- No e2e surface: set `layer2_status: "not_applicable"` and report the reason from the harness/spec.
+
 **What this catches that scripted tests miss:**
 - Stats page implemented but not wired to navigation
 - Buttons with wrong sizes or misaligned layouts
@@ -195,7 +205,7 @@ The worker uses Playwright MCP tools to interact with the app like a real user:
 - Copy button that doesn't actually copy to clipboard
 - Broken CSS/styling that doesn't affect test assertions
 
-**When Playwright MCP is not available:** Layer 2 is skipped. The worker reports "Playwright MCP not installed — exploratory testing skipped" and passes with Layer 1 results only. Do NOT fail the eval just because Playwright MCP is missing.
+**When Playwright MCP is not available:** If browser/visual Layer 2 is required, fail the eval. If the harness/spec says it is optional or skipped with reason, report "Playwright MCP not installed — exploratory testing skipped" and pass with Layer 1 results only. If browser exploration is not applicable, use the non-browser e2e path and report `layer2_status: "not_applicable"`.
 
 **When the application won't start:** FAIL the eval. The application must start to be tested.
 

@@ -80,6 +80,22 @@ describe('AdapterRegistry', () => {
     expect(selected).toBe(second);
   });
 
+  it('returns job-scoped extra args by adapter and job type', () => {
+    const registry = new AdapterRegistry({
+      byJobType: {
+        codex: {
+          playwright_eval: ['--dangerously-bypass-approvals-and-sandbox'],
+        },
+      },
+    });
+
+    expect(registry.getJobExtraArgs('codex', 'playwright_eval')).toEqual([
+      '--dangerously-bypass-approvals-and-sandbox',
+    ]);
+    expect(registry.getJobExtraArgs('codex', 'dev')).toEqual([]);
+    expect(registry.getJobExtraArgs('mock-adapter', 'playwright_eval')).toEqual([]);
+  });
+
   it('throws when no adapters are available for default selection', async () => {
     const registry = createEmptyRegistry();
     registry.register(new MockAdapter('none-1', false));
@@ -94,11 +110,13 @@ describe('parseAdapterExtraArgs', () => {
     const parsed = parseAdapterExtraArgs({
       claude_args: '--allowedTools Bash,Read,Write',
       opencode_args: '--model github-copilot/claude-opus-4-5',
-      codex_args: '--approval-mode never',
+      codex_args: '--sandbox danger-full-access',
+      codex_args_playwright_eval: '--dangerously-bypass-approvals-and-sandbox',
     });
     expect(parsed.claude).toEqual(['--allowedTools', 'Bash,Read,Write']);
     expect(parsed.opencode).toEqual(['--model', 'github-copilot/claude-opus-4-5']);
-    expect(parsed.codex).toEqual(['--approval-mode', 'never']);
+    expect(parsed.codex).toEqual(['--sandbox', 'danger-full-access']);
+    expect(parsed.byJobType?.codex?.playwright_eval).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
   });
 
   it('returns empty arrays for missing or empty values', () => {
@@ -167,18 +185,29 @@ describe('adapter extraArgs passthrough', () => {
     expect(argv[3]).toBe('hi');
   });
 
-  it('CodexAdapter inserts extraArgs after --full-auto and before the prompt', async () => {
+  it('CodexAdapter inserts global and job extraArgs after the default workspace sandbox', async () => {
     spawnMock.mockImplementation(() => makeFakeChild(0, 'codex output'));
 
-    const adapter = new CodexAdapter(undefined, ['--approval-mode', 'never']);
-    await adapter.invoke({ prompt: 'hi' });
+    const adapter = new CodexAdapter(undefined, ['--config', 'approval_policy="never"']);
+    await adapter.invoke({ prompt: 'hi', extraArgs: ['--model', 'gpt-5-codex'] });
 
     expect(spawnMock).toHaveBeenCalled();
     const argv = spawnMock.mock.calls[0][1] as string[];
     expect(argv[0]).toBe('exec');
-    expect(argv[1]).toBe('--full-auto');
-    expect(argv[2]).toBe('--approval-mode');
-    expect(argv[3]).toBe('never');
-    expect(argv[4]).toBe('hi');
+    expect(argv.slice(1, 3)).toEqual(['--sandbox', 'workspace-write']);
+    expect(argv.slice(3, 5)).toEqual(['--config', 'approval_policy="never"']);
+    expect(argv.slice(5, 7)).toEqual(['--model', 'gpt-5-codex']);
+    expect(argv[7]).toBe('hi');
+  });
+
+  it('CodexAdapter does not add workspace sandbox when args override sandboxing', async () => {
+    spawnMock.mockImplementation(() => makeFakeChild(0, 'codex output'));
+
+    const adapter = new CodexAdapter(undefined, []);
+    await adapter.invoke({ prompt: 'hi', extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] });
+
+    const argv = spawnMock.mock.calls[0][1] as string[];
+    expect(argv).not.toContain('--sandbox');
+    expect(argv[1]).toBe('--dangerously-bypass-approvals-and-sandbox');
   });
 });
