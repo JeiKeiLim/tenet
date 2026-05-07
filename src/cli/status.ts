@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { StateStore } from '../core/state-store.js';
 import type { Job } from '../types/index.js';
 
@@ -160,7 +161,12 @@ export function showStatus(projectPath: string, options?: StatusOptions): void {
     } finally {
       stateStore.close();
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof UpgradeRequiredError || error instanceof UnsupportedDbVersionError) {
+      console.log(error.message);
+      return;
+    }
+
     if (!storeOpened) {
       // Fall back to markdown status file
       const statusFile = path.join(tenetDir, 'status', 'status.md');

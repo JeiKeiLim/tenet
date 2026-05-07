@@ -1,6 +1,7 @@
 import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server';
 import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
 import { JobManager } from '../core/job-manager.js';
+import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { StateStore } from '../core/state-store.js';
 import { registerAllTools } from '../mcp/tools/index.js';
 import { readStateConfig } from './init.js';
@@ -22,7 +23,15 @@ export async function startServer(projectPath: string): Promise<void> {
     },
   );
 
-  const stateStore = new StateStore(projectPath);
+  let stateStore: StateStore;
+  try {
+    stateStore = new StateStore(projectPath);
+  } catch (error) {
+    if (error instanceof UpgradeRequiredError || error instanceof UnsupportedDbVersionError) {
+      console.error(error.message);
+    }
+    throw error;
+  }
   const stateConfig = readStateConfig(path.join(projectPath, '.tenet'));
   const adapterRegistry = new AdapterRegistry(parseAdapterExtraArgs(stateConfig));
   const jobManager = new JobManager(stateStore, adapterRegistry);

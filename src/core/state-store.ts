@@ -3,6 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import type { Job, JobStatus, SteerMessage, SteerMessageStatus } from '../types/index.js';
+import {
+  CURRENT_DB_SCHEMA_VERSION,
+  DB_SCHEMA_VERSION_KEY,
+  MIGRATIONS,
+  UnsupportedDbVersionError,
+  UpgradeRequiredError,
+} from './migrations.js';
 import { writeStatusFiles } from './status-writer.js';
 
 type JobRow = {
@@ -60,15 +67,23 @@ export class StateStore {
   public readonly projectPath: string;
   private readonly db: Database.Database;
 
-  constructor(projectPath: string) {
+  constructor(projectPath: string, options?: { migrate?: boolean }) {
     this.projectPath = projectPath;
     const stateDir = path.join(projectPath, '.tenet', '.state');
     fs.mkdirSync(stateDir, { recursive: true });
 
     const dbPath = path.join(stateDir, 'tenet.db');
+    const dbExisted = fs.existsSync(dbPath);
     this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-    this.initSchema();
+
+    try {
+      this.openSchema(dbExisted, options?.migrate === true);
+      this.db.pragma('journal_mode = WAL');
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+
     this.loadFileConfig(stateDir);
   }
 
@@ -445,11 +460,86 @@ export class StateStore {
       CREATE INDEX IF NOT EXISTS idx_events_id ON events(id);
       CREATE INDEX IF NOT EXISTS idx_steer_status ON steer_messages(status);
     `);
+  }
 
-    // Migration: add server_id column if missing (existing databases)
-    const columns = this.db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
-    if (!columns.some((c) => c.name === 'server_id')) {
-      this.db.exec('ALTER TABLE jobs ADD COLUMN server_id TEXT');
+  private openSchema(dbExisted: boolean, migrate: boolean): void {
+    if (!dbExisted) {
+      this.initSchema();
+      this.setSchemaVersion(CURRENT_DB_SCHEMA_VERSION);
+      return;
+    }
+
+    const schemaVersion = this.readSchemaVersion();
+    if (migrate) {
+      if (schemaVersion !== null && schemaVersion > CURRENT_DB_SCHEMA_VERSION) {
+        throw new UnsupportedDbVersionError(this.projectPath, schemaVersion, CURRENT_DB_SCHEMA_VERSION);
+      }
+
+      this.initSchema();
+      this.migrateSchema(schemaVersion ?? 0);
+      return;
+    }
+
+    if (schemaVersion === null || schemaVersion < CURRENT_DB_SCHEMA_VERSION) {
+      throw new UpgradeRequiredError(this.projectPath, schemaVersion, CURRENT_DB_SCHEMA_VERSION);
+    }
+
+    if (schemaVersion > CURRENT_DB_SCHEMA_VERSION) {
+      throw new UnsupportedDbVersionError(this.projectPath, schemaVersion, CURRENT_DB_SCHEMA_VERSION);
+    }
+
+    this.initSchema();
+  }
+
+  private readSchemaVersion(): number | null {
+    const configTable = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'config'")
+      .get() as { name: string } | undefined;
+    if (!configTable) {
+      return null;
+    }
+
+    const row = this.db
+      .prepare('SELECT value FROM config WHERE key = ?')
+      .get(DB_SCHEMA_VERSION_KEY) as { value: string } | undefined;
+    if (!row) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(row.value, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private setSchemaVersion(version: number): void {
+    this.db
+      .prepare('INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run(DB_SCHEMA_VERSION_KEY, String(version));
+  }
+
+  private migrateSchema(fromVersion: number): void {
+    if (fromVersion > CURRENT_DB_SCHEMA_VERSION) {
+      throw new UnsupportedDbVersionError(this.projectPath, fromVersion, CURRENT_DB_SCHEMA_VERSION);
+    }
+
+    for (const migration of MIGRATIONS) {
+      if (migration.version <= fromVersion) {
+        continue;
+      }
+
+      const run = this.db.transaction(() => {
+        migration.up(this.db);
+        this.setSchemaVersion(migration.version);
+        this.appendEvent('system', 'db_migration_applied', {
+          version: migration.version,
+          name: migration.name,
+        });
+      });
+      run();
+    }
+
+    const after = this.readSchemaVersion();
+    if (after !== CURRENT_DB_SCHEMA_VERSION) {
+      throw new Error(`failed to migrate Tenet DB to schema ${CURRENT_DB_SCHEMA_VERSION}`);
     }
   }
 

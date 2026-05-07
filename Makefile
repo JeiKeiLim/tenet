@@ -1,4 +1,4 @@
-.PHONY: help build clean test test-e2e lint typecheck check dev publish link unlink e2e-cli e2e-api e2e-web e2e-agile e2e-agile-full e2e-all
+.PHONY: help build clean test test-migrations test-e2e lint typecheck check dev publish link unlink e2e-cli e2e-api e2e-web e2e-agile e2e-agile-full e2e-all
 
 .DEFAULT_GOAL := help
 
@@ -18,6 +18,9 @@ dev: ## Watch mode (rebuild on change)
 # Quality checks
 test: ## Run tests
 	pnpm run test
+
+test-migrations: ## Run DB migration tests
+	pnpm run test:migrations
 
 lint: ## Run ESLint
 	pnpm run lint

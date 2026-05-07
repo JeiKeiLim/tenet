@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { StateStore } from '../core/state-store.js';
 import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 
 const REQUIRED_DIRS = [
@@ -248,6 +249,10 @@ function upgradeProject(projectPath: string): void {
   }
   fs.mkdirSync(path.join(tenetRoot, '.state'), { recursive: true });
 
+  backupStateDb(tenetRoot);
+  const stateStore = new StateStore(projectPath, { migrate: true });
+  stateStore.close();
+
   // Overwrite skill files (these are tenet-owned, not user-edited)
   copySkillDirs(projectPath);
   copyCodexSkill(projectPath);
@@ -258,8 +263,21 @@ function upgradeProject(projectPath: string): void {
   writeCodexConfig(projectPath);
 
   // Do NOT overwrite: harness, spec, interview, knowledge, journal, status, steer, bootstrap
-  // Do NOT touch: .state/tenet.db, .state/config.json
+  // Do NOT overwrite: .state/config.json
 }
+
+const backupStateDb = (tenetRoot: string): string | null => {
+  const stateDir = path.join(tenetRoot, '.state');
+  const dbPath = path.join(stateDir, 'tenet.db');
+  if (!fs.existsSync(dbPath)) {
+    return null;
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = path.join(stateDir, `tenet.db.bak-${stamp}`);
+  fs.copyFileSync(dbPath, backupPath);
+  return backupPath;
+};
 
 /**
  * Copy tenet skill to Codex-compatible location (.agents/skills/tenet/).

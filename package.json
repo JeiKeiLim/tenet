@@ -37,6 +37,7 @@
     "build": "tsc",
     "build:watch": "tsc --watch",
     "test": "vitest run",
+    "test:migrations": "vitest run src/core/migrations.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",

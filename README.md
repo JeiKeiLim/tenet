@@ -25,7 +25,7 @@ AI coding agents are powerful but short-lived. They lose context, drift off-spec
 - **3-critic evaluation pipeline** — Code critic, Test critic, and Playwright e2e eval. All independent, all with fresh context (no author bias). All findings are blocking.
 - **Crash recovery** — Server-ID-based orphan detection. If the MCP server dies, jobs auto-retry on restart.
 - **Agent-agnostic** — Works with Claude Code, OpenCode, and Codex. Switch agents mid-project without losing state.
-- **Persistent state** — SQLite + WAL mode. Jobs, events, steer messages, and config survive crashes.
+- **Persistent state** — Versioned SQLite + WAL mode. Jobs, events, steer messages, and config survive crashes.
 
 ## Quick Start
 
@@ -121,7 +121,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 1. **Core** — Job orchestration with DAG execution, heartbeat stall detection, configurable retry logic, and server-ID crash recovery
 2. **Adapters** — Pluggable agent adapters that spawn CLI subprocesses. 30-minute default timeout, configurable.
 3. **MCP Server** — 18 tools via `@modelcontextprotocol/server`. Zod-validated inputs.
-4. **CLI** — `init`, `serve`, `status`, `config` commands. Scaffolds `.tenet/` and copies skills to agent-specific locations.
+4. **CLI** — `init`, `serve`, `status`, `config` commands. Scaffolds `.tenet/`, copies skills to agent-specific locations, and runs explicit DB upgrades.
 
 ## CLI Reference
 
@@ -129,7 +129,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 # Initialize project (interactive agent selection + optional Playwright MCP install)
 tenet init [path]
 tenet init --agent claude-code --skip-playwright-check
-tenet init --upgrade  # Update skills/configs, preserve your docs
+tenet init --upgrade  # Update DB, skills/configs, preserve your docs
 
 # Start MCP server
 tenet serve
@@ -184,7 +184,7 @@ your-project/
     visuals/        # Architecture diagrams, UI mockups
     bootstrap/      # Compiler/build configuration
     .state/
-      tenet.db      # SQLite state (jobs, events, steer, config)
+      tenet.db      # Versioned SQLite state (jobs, events, steer, config)
       config.json   # Project configuration
   .mcp.json         # MCP server configuration (auto-generated)
   .claude/skills/tenet/  # Skill files for Claude Code
@@ -207,6 +207,7 @@ Tenet is designed for long autonomous runs where crashes are expected:
 - **Adapter timeout**: 30-minute default (configurable), prevents zombie subprocesses
 - **Heartbeat monitoring**: Detects truly stuck jobs within a session
 - **MCP disconnect**: Skill instructs agents to attempt server restart, halt if unrecoverable
+- **DB upgrades**: Normal startup refuses old/newer DB schemas with guidance. Close the agent, run `tenet init --upgrade`, then restart; upgrade backs up `.tenet/.state/tenet.db` first.
 
 ## Diagnostics
 

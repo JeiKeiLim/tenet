@@ -5,6 +5,7 @@ import path from 'node:path';
 import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server';
 import { registerAllTools } from './tools/index.js';
 import { JobManager } from '../core/job-manager.js';
+import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { StateStore } from '../core/state-store.js';
 import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
 
@@ -39,7 +40,15 @@ const server = new McpServer(
   },
 );
 
-const stateStore = new StateStore(PROJECT_PATH);
+let stateStore: StateStore;
+try {
+  stateStore = new StateStore(PROJECT_PATH);
+} catch (error) {
+  if (error instanceof UpgradeRequiredError || error instanceof UnsupportedDbVersionError) {
+    console.error(error.message);
+  }
+  throw error;
+}
 const adapterRegistry = new AdapterRegistry(loadAdapterExtraArgs(PROJECT_PATH));
 const jobManager = new JobManager(stateStore, adapterRegistry);
 

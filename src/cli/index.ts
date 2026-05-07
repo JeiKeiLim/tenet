@@ -180,7 +180,7 @@ const run = async (): Promise<void> => {
     .command('init')
     .argument('[path]', 'Project path', '.')
     .option('--agent <name>', 'Default agent adapter (claude-code, opencode, codex)')
-    .option('--upgrade', 'Upgrade existing project: overwrite skills and MCP configs, preserve user docs')
+    .option('--upgrade', 'Upgrade existing project: migrate DB, overwrite skills and MCP configs, preserve user docs')
     .option('--skip-playwright-check', 'Skip the Playwright MCP availability check (useful for one-line installs)')
     .option('--skip-pre-approval', 'Skip the MCP tool pre-approval flow (do not touch .claude/settings.local.json, opencode.json permissions, .codex/config.toml trust)')
     .option('-y, --yes', 'Assume yes for all interactive prompts (non-interactive init, useful for CI)')
@@ -197,7 +197,7 @@ const run = async (): Promise<void> => {
       if (options.upgrade) {
         try {
           initProject(projectPath, { upgrade: true });
-          console.log('Upgraded tenet skills and MCP configs.');
+          console.log('Upgraded tenet DB, skills, and MCP configs.');
           console.log('User documents (spec, harness, interview, etc.) preserved.');
         } catch (error) {
           if (error instanceof Error) {

@@ -16,6 +16,7 @@ make dev          # Watch mode (build:watch)
 make typecheck    # Type-check without emitting
 make lint         # ESLint on src/
 make test         # Run all tests (vitest)
+make test-migrations  # Run DB migration tests
 make check        # clean + build + typecheck + lint + test (pre-publish gate)
 make link / unlink  # Global pnpm link for local dev
 make bump-patch   # YY.MM.PATCH → YY.MM.PATCH+1
@@ -39,13 +40,13 @@ npx vitest run -t "job lifecycle"
 
 The system has four layers:
 
-1. **Core** (`src/core/`) — Job orchestration (`job-manager.ts`), SQLite persistence (`state-store.ts`), and status file sync (`status-writer.ts`). JobManager handles DAG-based job execution with heartbeat stall detection (30-min default timeout), retry logic (`retryJob()`), and configurable concurrency. Each JobManager instance generates a UUID (`serverId`) on startup; stale running jobs from a different server instance are reset to "pending" only after their heartbeat exceeds the timeout (orphan detection via `resetOrphanedJobs()`). StateStore manages the `jobs`, `events`, `steer_messages`, and `config` tables in `.tenet/.state/tenet.db` (WAL mode). The `jobs` table includes a `server_id` column for crash recovery tracking. Status files (`.tenet/status/status.md`, `job-queue.md`) auto-update on every job state transition.
+1. **Core** (`src/core/`) — Job orchestration (`job-manager.ts`), SQLite persistence (`state-store.ts`), DB migrations (`migrations.ts`), and status file sync (`status-writer.ts`). JobManager handles DAG-based job execution with heartbeat stall detection (30-min default timeout), retry logic (`retryJob()`), and configurable concurrency. Each JobManager instance generates a UUID (`serverId`) on startup; stale running jobs from a different server instance are reset to "pending" only after their heartbeat exceeds the timeout (orphan detection via `resetOrphanedJobs()`). StateStore manages the `jobs`, `events`, `steer_messages`, and `config` tables in `.tenet/.state/tenet.db` (WAL mode). The `config.db_schema_version` key tracks the DB schema. Normal StateStore startup refuses legacy or newer DB schemas with a clear `tenet init --upgrade` instruction; real migrations only run through `new StateStore(projectPath, { migrate: true })`, which is wired to `tenet init --upgrade`. The `jobs` table includes a `server_id` column for crash recovery tracking. Status files (`.tenet/status/status.md`, `job-queue.md`) auto-update on every job state transition.
 
 2. **Adapters** (`src/adapters/`) — Pluggable agent adapters that spawn CLI subprocesses. Each adapter implements `AgentAdapter` from `base.ts`: `isAvailable()`, `invoke(invocation)`. Three built-in: `ClaudeAdapter` (`claude --print`), `OpenCodeAdapter` (`opencode run`), `CodexAdapter` (`codex exec`). JobManager resolves the configured adapter strictly by name and fails closed if that adapter is unavailable.
 
 3. **MCP Server** (`src/mcp/`) — Exposes 18 tools via `@modelcontextprotocol/server`. Entry point at `src/mcp/index.ts`. Each tool in `src/mcp/tools/` registers itself with a Zod input schema and handler. Key tools: `tenet_start_job`, `tenet_continue` (server-side continuation), `tenet_compile_context`, `tenet_register_jobs` (loads job DAG, requires `feature` slug), `tenet_retry_job` (resets completed/failed jobs to pending), `tenet_report_blocking_finding` (report-only escalation), `tenet_validate_clarity`, `tenet_add_steer` (creates steer messages in SQLite), `tenet_start_eval` (dispatches code critic + test critic + playwright eval), `tenet_init` (initialize project from MCP). Agent selection is CLI-only via `tenet config --agent <name>`.
 
-4. **CLI** (`src/cli/`) — Commander.js program with `init`, `serve`, `status`, `config` commands. `tenet init` scaffolds a `.tenet/` directory structure and copies skill files to `.claude/skills/tenet/`.
+4. **CLI** (`src/cli/`) — Commander.js program with `init`, `serve`, `status`, `config` commands. `tenet init` scaffolds a `.tenet/` directory structure and copies skill files to `.claude/skills/tenet/`. `tenet init --upgrade` backs up `.tenet/.state/tenet.db`, runs pending DB migrations, and refreshes generated skills/MCP configs while preserving user docs.
 
 ## Key Types (`src/types/index.ts`)
 
@@ -80,6 +81,7 @@ Dev-type jobs get a "Deliverable Requirements" preamble prepended to their promp
 - Tests use `MockAdapter` to avoid spawning real agent CLIs
 - Tool handlers return `jsonResult({...})` on success or `asToolError(error)` on failure
 - The `.tenet/` directory is a per-project artifact created by `tenet init`, not part of this repo's own state
+- DB schema changes belong in `src/core/migrations.ts`. Do not hide semantic migrations inside normal `StateStore` startup; normal startup should detect incompatibility and tell the user to close the agent, run `tenet init --upgrade`, and restart.
 
 ## MCP Tool Pre-Approval (agent configs)
 
