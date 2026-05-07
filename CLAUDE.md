@@ -106,9 +106,9 @@ Uses **CalVer** (`YY.MM.PATCH`): e.g., `26.4.0` is the first release in April 20
 1. Bump via `make bump-patch` (same month) or `make bump-month` (new month).
 2. Commit the `package.json` change with message `chore: bump to YY.MM.PATCH`.
 3. Push the commit: `git push origin main`.
-4. Tag the commit: `git tag -a vYY.MM.PATCH -m "..."` then `git push origin vYY.MM.PATCH`.
+4. Write user-facing release notes first, then use them as the **annotated tag message**. Do not create placeholder tag messages like `"Release vYY.MM.PATCH"`. The tag body should include the same sections intended for the draft GitHub Release: Highlights, Changes, Breaking changes, and Full changelog. Create the tag with those notes, e.g. `git tag -a vYY.MM.PATCH -F /tmp/tenet-release-vYY.MM.PATCH.md`, then `git push origin vYY.MM.PATCH`.
 5. Wait for `.github/workflows/release.yml` to create a **draft** release on GitHub (automatic, ~30s).
-6. **Write the release notes yourself** and overwrite the auto-generated draft. The workflow seeds the draft with `gh --generate-notes` (a raw commit list); that's not a release note. Replace it:
+6. **Overwrite the auto-generated draft with the same release notes used in the annotated tag.** The workflow seeds the draft with `gh --generate-notes` (a raw commit list); that's not a release note. Replace it:
    ```bash
    gh release edit vYY.MM.PATCH --notes "$(cat <<'EOF'
    ## Highlights

@@ -8,15 +8,19 @@ Automated via two GitHub Actions workflows. This doc explains the flow, the one-
 make bump-patch          # 26.4.X → 26.4.X+1 in package.json
 git commit -am "chore: bump to 26.4.X+1"
 git push origin main
-git tag -a vYY.MM.PATCH -m "release notes..."
+git tag -a vYY.MM.PATCH -F /tmp/tenet-release-vYY.MM.PATCH.md
 git push origin vYY.MM.PATCH       ← here automation kicks in
 ```
+
+The annotated tag message must be the human-quality release note itself, not
+a placeholder like `Release vYY.MM.PATCH`. Use the same notes later when
+overwriting the draft GitHub Release.
 
 Once the tag is pushed, `.github/workflows/release.yml` fires automatically:
 1. Creates a **draft** GitHub Release with auto-generated notes (raw commit list).
 2. Stops. Nothing else happens.
 
-The auto-generated notes are a seed, not a release note. Overwrite them with human-quality notes before publishing:
+The auto-generated notes are a seed, not a release note. Overwrite them with the same human-quality notes from the annotated tag before publishing:
 
 ```bash
 gh release edit vYY.MM.PATCH --notes "$(cat <<'EOF'
