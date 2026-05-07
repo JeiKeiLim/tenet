@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseMaxRetries } from '../../core/runtime-config.js';
 import { StateStore } from '../../core/state-store.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
@@ -35,8 +36,7 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
     async ({ feature, jobs }) => {
       const dagIdToDbId = new Map<string, string>();
 
-      const configuredRetries = stateStore.getConfig('max_retries');
-      const maxRetries = configuredRetries ? Math.max(0, Number.parseInt(configuredRetries, 10) || 3) : 3;
+      const maxRetries = parseMaxRetries(stateStore.getConfig('max_retries'));
 
       for (const entry of jobs) {
         const job = stateStore.createJob({

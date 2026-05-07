@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
+import { formatMaxRetries } from '../../core/runtime-config.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 export const registerTenetRetryJobTool = (registerTool: RegisterTool, jobManager: JobManager): void => {
@@ -9,6 +10,7 @@ export const registerTenetRetryJobTool = (registerTool: RegisterTool, jobManager
       description:
         'Reset a completed or failed job back to pending for re-dispatch. ' +
         'Preserves DAG linkage and increments retry count. ' +
+        'The retry budget may be finite or unlimited, depending on Tenet config. ' +
         'Optionally provide an enhanced prompt to replace the original (e.g. add failure context).',
       inputSchema: z.object({
         job_id: z.string().uuid(),
@@ -25,6 +27,7 @@ export const registerTenetRetryJobTool = (registerTool: RegisterTool, jobManager
         status: job.status,
         retry_count: job.retryCount,
         max_retries: job.maxRetries,
+        retry_limit: formatMaxRetries(job.maxRetries),
       });
     },
   );

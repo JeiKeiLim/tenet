@@ -150,6 +150,24 @@ describe('StateStore', () => {
     expect(store.getConfig('agent_override_dev')).toBe('mock-adapter');
   });
 
+  it('syncs JSON config values into SQLite config', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
+    tempDirs.push(tempDir);
+    const stateDir = path.join(tempDir, '.tenet', '.state');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, 'config.json'),
+      JSON.stringify({ max_retries: 'unlimited', timeout_minutes: 120 }),
+      'utf8',
+    );
+
+    const store = new StateStore(tempDir);
+    stores.push(store);
+
+    expect(store.getConfig('max_retries')).toBe('-1');
+    expect(store.getConfig('timeout_minutes')).toBe('120');
+  });
+
   it('round-trips job output', () => {
     const { store } = createStore();
 

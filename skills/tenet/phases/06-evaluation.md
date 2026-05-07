@@ -152,7 +152,7 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 - **Stage 3 Fail (Code Critic)**: Run reflection to find the root cause, then retry via `tenet_retry_job` with the critic findings.
 - **Stage 4 Fail (Test Critic)**: Retry via `tenet_retry_job` with explicit test-strengthening requirements from the critic.
 - **Integration test Fail**: If the job is `report_only`, call `tenet_report_blocking_finding` with the observed finding, why it blocks the report, recommended follow-up, and likely target files. Otherwise retry the integration job with an enhanced prompt.
-- **Limits**: Max 3 retries per job before marking it as blocked.
+- **Retry policy**: Use `tenet_retry_job` while there is a concrete unresolved finding and the next attempt will use new evidence or a changed approach. Tenet defaults to unlimited retries; projects may configure a finite retry budget. If MCP reports a finite budget is exhausted, mark the job blocked. If failures stagnate, stop and report even when retries remain.
 
 ### Stage 5: Playwright E2E (Two Layers, Independent Job)
 

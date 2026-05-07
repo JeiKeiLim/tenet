@@ -3,6 +3,12 @@ import { execSync } from 'node:child_process';
 import type { ContinuationState, Job, JobResult, JobType, JobWaitResponse, PendingReason } from '../types/index.js';
 import { AdapterRegistry } from '../adapters/index.js';
 import type { AgentAdapter, AgentInvocation } from '../adapters/base.js';
+import {
+  formatMaxRetries,
+  hasRetryBudgetRemaining,
+  parseMaxRetries,
+  parseTimeoutMinutes,
+} from './runtime-config.js';
 import { StateStore } from './state-store.js';
 
 type JobManagerConfig = {
@@ -124,14 +130,7 @@ export class JobManager {
   }
 
   private getMaxRetries(): number {
-    const configured = this.stateStore.getConfig('max_retries');
-    if (configured) {
-      const parsed = Number.parseInt(configured, 10);
-      if (Number.isFinite(parsed) && parsed >= 0) {
-        return parsed;
-      }
-    }
-    return 3;
+    return parseMaxRetries(this.stateStore.getConfig('max_retries'));
   }
 
   createPendingJob(type: JobType, params: Record<string, unknown>, parentJobId?: string): Job {
@@ -286,8 +285,10 @@ export class JobManager {
       throw new Error(`job ${jobId} is ${job.status}, can only retry completed or failed jobs`);
     }
 
-    if (job.retryCount >= job.maxRetries) {
-      throw new Error(`job ${jobId} has exhausted retries (${job.retryCount}/${job.maxRetries})`);
+    if (!hasRetryBudgetRemaining(job.retryCount, job.maxRetries)) {
+      throw new Error(
+        `job ${jobId} has exhausted retries (${job.retryCount}/${formatMaxRetries(job.maxRetries)})`,
+      );
     }
 
     const params = { ...job.params };
@@ -634,10 +635,8 @@ export class JobManager {
 
     const workdir = typeof job.params.workdir === 'string' ? job.params.workdir : this.stateStore.projectPath;
 
-    const configuredTimeout = this.stateStore.getConfig('timeout_minutes');
-    const timeoutMs = configuredTimeout
-      ? Number.parseInt(configuredTimeout, 10) * 60 * 1000
-      : undefined;
+    const configuredTimeout = parseTimeoutMinutes(this.stateStore.getConfig('timeout_minutes'));
+    const timeoutMs = configuredTimeout ? configuredTimeout * 60 * 1000 : undefined;
 
     // Playwright eval jobs need access to Playwright MCP tools for exploratory testing
     const allowedTools = job.type === 'playwright_eval'

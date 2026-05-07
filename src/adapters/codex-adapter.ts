@@ -1,14 +1,13 @@
 import { spawn } from 'node:child_process';
+import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
-
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
 export class CodexAdapter implements AgentAdapter {
   public readonly name = 'codex';
   private readonly timeoutMs: number;
   private readonly extraArgs: readonly string[];
 
-  constructor(timeoutMs = DEFAULT_TIMEOUT_MS, extraArgs: string[] = []) {
+  constructor(timeoutMs = DEFAULT_JOB_TIMEOUT_MS, extraArgs: string[] = []) {
     this.timeoutMs = timeoutMs;
     this.extraArgs = extraArgs;
   }

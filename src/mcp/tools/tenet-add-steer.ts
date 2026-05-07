@@ -22,7 +22,7 @@ export const registerTenetAddSteerTool = (registerTool: RegisterTool, stateStore
           .default('agent')
           .describe(
             'Who created this message. "user" for human-originated steers (always higher priority), ' +
-            '"agent" for agent-originated steers (e.g., self-unblocking after max retries).',
+            '"agent" for agent-originated steers (e.g., self-unblocking after retry stagnation).',
           ),
         affected_job_ids: z
           .array(z.string())

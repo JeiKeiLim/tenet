@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 
 type ClaudeJsonOutput = {
@@ -8,8 +9,6 @@ type ClaudeJsonOutput = {
   text?: unknown;
   message?: unknown;
 };
-
-const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
 const DEFAULT_ALLOWED_TOOLS = [
   'Read',
@@ -39,7 +38,7 @@ export class ClaudeAdapter implements AgentAdapter {
   private readonly timeoutMs: number;
   private readonly extraArgs: readonly string[];
 
-  constructor(timeoutMs = DEFAULT_TIMEOUT_MS, extraArgs: string[] = []) {
+  constructor(timeoutMs = DEFAULT_JOB_TIMEOUT_MS, extraArgs: string[] = []) {
     this.timeoutMs = timeoutMs;
     this.extraArgs = extraArgs;
   }

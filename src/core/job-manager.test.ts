@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from '../adapters/base.js';
 import { AdapterRegistry } from '../adapters/index.js';
 import { JobManager } from './job-manager.js';
+import { UNLIMITED_RETRIES } from './runtime-config.js';
 import { StateStore } from './state-store.js';
 
 class MockAdapter implements AgentAdapter {
@@ -256,6 +257,48 @@ describe('JobManager', () => {
 
     const childStatus = manager.checkJobStatus(child.id, null);
     expect(childStatus.pending_reason).toBe('queued_after_parent');
+  });
+
+  it('defaults new jobs to unlimited retries', () => {
+    const { store, manager } = createHarness();
+
+    const job = manager.createPendingJob('dev', { prompt: 'retry forever when useful' });
+
+    expect(store.getJob(job.id)?.maxRetries).toBe(UNLIMITED_RETRIES);
+  });
+
+  it('allows retrying a job with unlimited retry budget', () => {
+    const { store, manager } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'failed',
+      params: { prompt: 'try again' },
+      retryCount: 99,
+      maxRetries: UNLIMITED_RETRIES,
+      error: 'failed before',
+    });
+
+    const retried = manager.retryJob(job.id, 'try again with new evidence');
+
+    expect(retried.status).toBe('pending');
+    expect(retried.retryCount).toBe(100);
+    expect(retried.maxRetries).toBe(UNLIMITED_RETRIES);
+  });
+
+  it('treats zero max retries as no retry budget', () => {
+    const { store, manager } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'failed',
+      params: { prompt: 'do not retry' },
+      retryCount: 0,
+      maxRetries: 0,
+      error: 'failed before',
+    });
+
+    expect(() => manager.retryJob(job.id)).toThrowError(/exhausted retries \(0\/0\)/);
   });
 
   it('detects stalled running jobs and marks them failed', () => {

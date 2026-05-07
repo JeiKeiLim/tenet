@@ -102,6 +102,8 @@ export const registerTenetGetStatusTool = (registerTool: RegisterTool, stateStor
           update_available: updateInfo.latest,
           update_command: updateInfo.update_command,
           current_version: updateInfo.current,
+          upgrade_guidance: updateInfo.upgrade_guidance,
+          upgrade_steps: updateInfo.upgrade_steps,
         });
       }
 

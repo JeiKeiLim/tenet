@@ -10,6 +10,7 @@ import {
   UnsupportedDbVersionError,
   UpgradeRequiredError,
 } from './migrations.js';
+import { parseMaxRetries, parseTimeoutMinutes } from './runtime-config.js';
 import { writeStatusFiles } from './status-writer.js';
 
 type JobRow = {
@@ -402,8 +403,20 @@ export class StateStore {
       if (typeof raw.default_agent === 'string' && raw.default_agent.length > 0) {
         this.setConfig('default_agent', raw.default_agent);
       }
-      if (typeof raw.max_retries === 'number' && Number.isFinite(raw.max_retries)) {
-        this.setConfig('max_retries', String(raw.max_retries));
+      const maxRetries =
+        typeof raw.max_retries === 'number' || typeof raw.max_retries === 'string'
+          ? parseMaxRetries(raw.max_retries)
+          : null;
+      if (maxRetries !== null) {
+        this.setConfig('max_retries', String(maxRetries));
+      }
+
+      const timeoutMinutes =
+        typeof raw.timeout_minutes === 'number' || typeof raw.timeout_minutes === 'string'
+          ? parseTimeoutMinutes(raw.timeout_minutes)
+          : null;
+      if (timeoutMinutes !== null) {
+        this.setConfig('timeout_minutes', String(timeoutMinutes));
       }
     } catch {
       return;

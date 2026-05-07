@@ -95,9 +95,10 @@ Run this before mode selection or execution:
 3. Call `tenet_health_check()`.
 4. If health fails because the MCP server is unreachable, tell the user: "Tenet MCP server is not running. Run `npx tenet init` in the project root, then restart your agent." Do not self-start the server; host config manages MCP lifecycle.
 5. Call `tenet_get_status()`.
-6. If `.tenet/` was just created and the project has existing source code, read and execute `phases/00-brownfield-scan.md` before mode selection.
-7. Detect whether `.git/` exists. Git behavior is defined in `phases/05-execution-loop.md`.
-8. Probe Playwright MCP availability if possible. If unavailable, warn once that exploratory Stage 5 testing will be skipped; this is not a blocker.
+6. If either call returns `update_available`, tell the user the current version, latest version, and `update_command`. Do not auto-update during an active run; instruct the user to close the agent, install the update, run `tenet init --upgrade`, then restart.
+7. If `.tenet/` was just created and the project has existing source code, read and execute `phases/00-brownfield-scan.md` before mode selection.
+8. Detect whether `.git/` exists. Git behavior is defined in `phases/05-execution-loop.md`.
+9. Probe Playwright MCP availability if possible. If unavailable, warn once that exploratory Stage 5 testing will be skipped; this is not a blocker.
 
 Do not enter execution while health is bad.
 
@@ -175,7 +176,7 @@ Read `phases/05-execution-loop.md` before starting execution.
 - Treat all eval failures as blocking for the current job or report-only parent.
 - Prefer `tenet_retry_job(job_id, enhanced_prompt)` for failed implementation jobs.
 - Use `tenet_report_blocking_finding` only for report-only jobs that discover blocking findings they must not fix directly.
-- If retries are exhausted, mark/report the job as blocked and continue only to independent jobs.
+- If a finite retry budget is exhausted, mark/report the job as blocked and continue only to independent jobs. If retries are unlimited, continue only while each retry uses new evidence or a changed approach.
 - In agile mode, the normal execution loop is scoped to the current slice; the outer slice/checkpoint loop is defined in `phases/07-agile-checkpoints.md`.
 
 ## Steering
@@ -200,7 +201,7 @@ Use confidence tags such as `[implemented-and-tested]`, `[implemented-not-tested
 ## Safety
 
 - Detect stagnation: repeated identical failures, edit/revert cycles, repeated rereads without new decisions, or repeated tool-call loops.
-- Rotate approach before retrying repeatedly; after configured max retries, block and report.
+- Rotate approach before retrying repeatedly. A finite retry budget is a hard stop; unlimited retry mode still stops on stagnation, emergency steer, or user intervention.
 - Respect harness danger zones. If breached, cancel active jobs and process emergency steer.
 - Do not self-steer to bypass a hard gate.
 

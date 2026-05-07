@@ -19,6 +19,13 @@ import {
   readStateConfig,
   writeStateConfig,
 } from './init.js';
+import {
+  DEFAULT_JOB_TIMEOUT_MINUTES,
+  formatMaxRetries,
+  parseMaxRetries,
+  parseTimeoutMinutes,
+  UNLIMITED_RETRIES,
+} from '../core/runtime-config.js';
 import { showStatus } from './status.js';
 
 const resolveProjectPath = (project?: string): string => path.resolve(project ?? process.cwd());
@@ -282,8 +289,8 @@ const run = async (): Promise<void> => {
     .description('View or update Tenet project configuration')
     .option('--project <path>', 'Project path', '.')
     .option('--agent <name>', 'Set default agent (claude-code, opencode, codex)')
-    .option('--max-retries <n>', 'Set max retries per job (default: 3)')
-    .option('--timeout <minutes>', 'Set job timeout in minutes (default: 30)')
+    .option('--max-retries <n|unlimited>', 'Set max retries per job (default: unlimited)')
+    .option('--timeout <minutes>', `Set job timeout in minutes (default: ${DEFAULT_JOB_TIMEOUT_MINUTES})`)
     .option(
       '--claude-args <args>',
       'Extra CLI args to pass to every claude-code subprocess (e.g. "--allowedTools Bash,Read,Write"). Use "" to clear.',
@@ -323,19 +330,21 @@ const run = async (): Promise<void> => {
       }
 
       if (options.maxRetries) {
-        const n = Number.parseInt(options.maxRetries, 10);
-        if (!Number.isFinite(n) || n < 0) {
-          console.error('--max-retries must be a non-negative integer');
+        const raw = options.maxRetries.trim();
+        const isUnlimited = ['unlimited', 'infinite', 'inf'].includes(raw.toLowerCase());
+        if (!isUnlimited && !/^\d+$/.test(raw)) {
+          console.error('--max-retries must be a non-negative integer or "unlimited"');
           process.exit(1);
         }
-        config.max_retries = n;
+        const n = isUnlimited ? UNLIMITED_RETRIES : Number.parseInt(raw, 10);
+        config.max_retries = isUnlimited ? 'unlimited' : n;
         changed = true;
-        console.log(`Max retries set to: ${n}`);
+        console.log(`Max retries set to: ${formatMaxRetries(n)}`);
       }
 
       if (options.timeout) {
-        const t = Number.parseInt(options.timeout, 10);
-        if (!Number.isFinite(t) || t < 1) {
+        const t = parseTimeoutMinutes(options.timeout);
+        if (t === null) {
           console.error('--timeout must be a positive integer (minutes)');
           process.exit(1);
         }
@@ -388,15 +397,20 @@ const run = async (): Promise<void> => {
         return;
       }
 
+      const configuredMaxRetries = config.max_retries === undefined
+        ? UNLIMITED_RETRIES
+        : parseMaxRetries(config.max_retries);
+      const configuredTimeout = config.timeout_minutes ?? DEFAULT_JOB_TIMEOUT_MINUTES;
+
       console.log('Tenet configuration:');
       console.log(`  default_agent: ${config.default_agent ?? '(not set)'}`);
-      console.log(`  max_retries: ${config.max_retries ?? 3} (default: 3)`);
-      console.log(`  timeout: ${config.timeout_minutes ?? 30} minutes (default: 30)`);
+      console.log(`  max_retries: ${formatMaxRetries(configuredMaxRetries)} (default: unlimited)`);
+      console.log(`  timeout: ${configuredTimeout} minutes (default: ${DEFAULT_JOB_TIMEOUT_MINUTES})`);
       console.log(`  claude_args: ${config.claude_args ?? '(none)'}`);
       console.log(`  opencode_args: ${config.opencode_args ?? '(none)'}`);
       console.log(`  codex_args: ${config.codex_args ?? '(none)'}`);
       console.log(
-        '\nTo change: tenet config --agent <name> --max-retries <n> --timeout <minutes> \\',
+        '\nTo change: tenet config --agent <name> --max-retries <n|unlimited> --timeout <minutes> \\',
       );
       console.log(
         '                         --claude-args "..." --opencode-args "..." --codex-args "..."',

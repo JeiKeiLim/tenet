@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
+import { formatMaxRetries } from '../core/runtime-config.js';
 import { StateStore } from '../core/state-store.js';
 import type { Job } from '../types/index.js';
 
@@ -71,7 +72,7 @@ const printJobTable = (jobs: Job[]): void => {
       ? formatDuration((job.completedAt ?? Date.now()) - job.startedAt)
       : '-';
     const error = job.error ? ` (${job.error})` : '';
-    const retry = job.retryCount > 0 ? ` [retry ${job.retryCount}/${job.maxRetries}]` : '';
+    const retry = job.retryCount > 0 ? ` [retry ${job.retryCount}/${formatMaxRetries(job.maxRetries)}]` : '';
 
     // Show timestamps: registered → started → completed
     const timestamps: string[] = [];

@@ -8,6 +8,7 @@ import { JobManager } from '../core/job-manager.js';
 import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { StateStore } from '../core/state-store.js';
 import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
+import { getPackageVersion } from '../cli/version.js';
 
 const PROJECT_PATH = process.env.TENET_PROJECT_PATH || process.cwd();
 
@@ -31,7 +32,7 @@ const loadAdapterExtraArgs = (projectPath: string): ReturnType<typeof parseAdapt
 const server = new McpServer(
   {
     name: 'tenet',
-    version: '0.1.0',
+    version: getPackageVersion(),
   },
   {
     capabilities: {

@@ -119,7 +119,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 **Four layers:**
 
 1. **Core** — Job orchestration with DAG execution, heartbeat stall detection, configurable retry logic, and server-ID crash recovery
-2. **Adapters** — Pluggable agent adapters that spawn CLI subprocesses. 30-minute default timeout, configurable.
+2. **Adapters** — Pluggable agent adapters that spawn CLI subprocesses. 120-minute default timeout, configurable.
 3. **MCP Server** — 18 tools via `@modelcontextprotocol/server`. Zod-validated inputs.
 4. **CLI** — `init`, `serve`, `status`, `config` commands. Scaffolds `.tenet/`, copies skills to agent-specific locations, and runs explicit DB upgrades.
 
@@ -142,8 +142,9 @@ tenet status --all  # Include completed/failed jobs
 # Configure
 tenet config                          # View current config
 tenet config --agent claude-code      # Set default agent
-tenet config --max-retries 5          # Set retry limit
-tenet config --timeout 45             # Set job timeout (minutes)
+tenet config --max-retries unlimited  # Default: no fixed retry cap
+tenet config --max-retries 5          # Optional finite retry limit
+tenet config --timeout 120            # Set job timeout (minutes)
 ```
 
 ## MCP Tools
@@ -187,8 +188,8 @@ your-project/
       tenet.db      # Versioned SQLite state (jobs, events, steer, config)
       config.json   # Project configuration
   .mcp.json         # MCP server configuration (auto-generated)
-  .claude/skills/tenet/  # Skill files for Claude Code
-  .agents/skills/tenet/  # Skill files for Codex
+  .claude/skills/tenet/  # Generated skill files for Claude Code, with Tenet version metadata
+  .agents/skills/tenet/  # Generated skill files for Codex, with Tenet version metadata
 ```
 
 ## Execution Modes
@@ -204,9 +205,10 @@ your-project/
 Tenet is designed for long autonomous runs where crashes are expected:
 
 - **Server restart**: Stale "running" jobs are reset to "pending" only after their heartbeat exceeds the timeout
-- **Adapter timeout**: 30-minute default (configurable), prevents zombie subprocesses
+- **Adapter timeout**: 120-minute default (configurable), prevents zombie subprocesses
 - **Heartbeat monitoring**: Detects truly stuck jobs within a session
 - **MCP disconnect**: Skill instructs agents to attempt server restart, halt if unrecoverable
+- **Update checks**: Health/status can surface newer npm versions with manual upgrade guidance; Tenet does not auto-update during an active run
 - **DB upgrades**: Normal startup refuses old/newer DB schemas with guidance. Close the agent, run `tenet init --upgrade`, then restart; upgrade backs up `.tenet/.state/tenet.db` first.
 
 ## Diagnostics

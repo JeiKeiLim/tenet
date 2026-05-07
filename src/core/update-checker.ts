@@ -9,6 +9,8 @@ export type UpdateInfo = {
   latest: string;
   update_available: boolean;
   update_command: string;
+  upgrade_guidance: string;
+  upgrade_steps: string[];
 };
 
 let cachedLatest: string | undefined;
@@ -66,5 +68,14 @@ export async function checkForUpdate(): Promise<UpdateInfo | undefined> {
     latest: cachedLatest,
     update_available: isNewer(cachedLatest, current),
     update_command: `npm install -g ${PACKAGE_NAME}`,
+    upgrade_guidance:
+      'Do not auto-update during an active Tenet run. Ask the user to close the agent, ' +
+      `run npm install -g ${PACKAGE_NAME}, run tenet init --upgrade in the project root, then restart the agent.`,
+    upgrade_steps: [
+      'Close the current agent session.',
+      `Run npm install -g ${PACKAGE_NAME}.`,
+      'Run tenet init --upgrade in the project root.',
+      'Restart the agent.',
+    ],
   };
 }

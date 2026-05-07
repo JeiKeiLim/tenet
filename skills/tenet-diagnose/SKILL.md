@@ -63,7 +63,7 @@ sqlite3 .tenet/.state/tenet.db "SELECT substr(json_extract(params, '$.name'), 1,
 
 Common failure patterns:
 - **"stall detected"** — server restarted while job was running. Check if server_id column exists (migration may be needed). Run `tenet init --upgrade`.
-- **"invocation timed out after Xms"** — adapter timeout too short. Check `tenet config` for timeout setting. Default is 30 minutes.
+- **"invocation timed out after Xms"** — adapter timeout too short. Check `tenet config` for timeout setting. Default is 120 minutes.
 - **"Not inside a trusted directory"** — git safe.directory issue. Run: `git config --global --add safe.directory <project-path>`
 - **"no agent adapter available"** — the configured agent CLI is not installed or not in PATH.
 
@@ -142,7 +142,7 @@ sqlite3 .tenet/.state/tenet.db "UPDATE jobs SET status='pending', started_at=NUL
 ```
 
 ### Eval jobs always timing out
-Check adapter timeout: `tenet config`. Default is 30 min. For Playwright e2e jobs that need to start servers + run tests, this may need to be higher.
+Check adapter timeout: `tenet config`. Default is 120 min. For Playwright e2e jobs that need to start servers + run tests, this may need to be higher.
 
 ### Agent using wrong CLI
 ```bash
