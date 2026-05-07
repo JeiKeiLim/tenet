@@ -150,7 +150,7 @@ job-4: Dashboard ─────────────┤
 }
 ```
 
-**Integration test jobs do NOT fix code.** They only report results. Register report-only verification jobs with `report_only: true` so they can use `tenet_request_remediation` when they discover real bugs.
+**Integration test jobs do NOT fix code.** They only report results. Register report-only verification jobs with `report_only: true` so they can use `tenet_report_blocking_finding` when they discover blocking findings.
 
 ## 6. Job Registration
 

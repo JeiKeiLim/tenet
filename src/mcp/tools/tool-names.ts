@@ -25,7 +25,7 @@ export const TENET_MCP_TOOL_NAMES = [
   'tenet_health_check',
   'tenet_get_status',
   'tenet_retry_job',
-  'tenet_request_remediation',
+  'tenet_report_blocking_finding',
 ] as const;
 
 export type TenetMcpToolName = (typeof TENET_MCP_TOOL_NAMES)[number];

@@ -5,7 +5,7 @@ export type JobStatus =
   | 'failed'
   | 'cancelled'
   | 'blocked'
-  | 'blocked_remediation_required';
+  | 'blocked_on_finding';
 
 export type JobType = 'dev' | 'eval' | 'critic_eval' | 'playwright_eval' | 'mechanical_eval' | 'integration_test' | 'compile_context' | 'health_check';
 
@@ -23,15 +23,29 @@ export interface Job {
   maxRetries: number;
   parentJobId?: string;
   error?: string;
+  serverId?: string;
 }
 
+export type PendingReason =
+  | 'queued_after_parent'
+  | 'orphan_reset_after_stale_heartbeat'
+  | 'retry_reset'
+  | 'blocking_finding_resolved'
+  | 'not_started'
+  | 'unknown_pending';
+
 export interface JobWaitResponse {
+  job_id: string;
+  job_type: JobType;
   status: JobStatus;
   progress_line: string;
   cursor: string;
   is_terminal: boolean;
   elapsed_ms: number;
   job_name?: string;
+  parent_job_id?: string;
+  server_id?: string;
+  pending_reason?: PendingReason;
   recent_events: string[];
 }
 
@@ -48,6 +62,7 @@ export interface ContinuationState {
   all_done: boolean;
   all_blocked: boolean;
   next_job?: Job;
+  running_jobs?: Job[];
   blocked_jobs?: Job[];
   completed_count: number;
   total_count: number;

@@ -10,14 +10,18 @@ class MockAdapter implements AgentAdapter {
   public readonly name: string;
   private readonly delayMs: number;
   private readonly outputOverride?: string;
+  private readonly available: boolean;
+  public calls = 0;
 
-  constructor(name: string, delayMs = 0, outputOverride?: string) {
+  constructor(name: string, delayMs = 0, outputOverride?: string, available = true) {
     this.name = name;
     this.delayMs = delayMs;
     this.outputOverride = outputOverride;
+    this.available = available;
   }
 
   async invoke(invocation: AgentInvocation): Promise<AgentResponse> {
+    this.calls += 1;
     if (this.delayMs > 0) {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, this.delayMs);
@@ -32,7 +36,7 @@ class MockAdapter implements AgentAdapter {
   }
 
   async isAvailable(): Promise<boolean> {
-    return true;
+    return this.available;
   }
 }
 
@@ -62,6 +66,19 @@ const createHarness = (
 
   return { store, manager };
 };
+
+const createRegistry = (...adapters: AgentAdapter[]): AdapterRegistry => {
+  const registry = new AdapterRegistry();
+  const holder = registry as unknown as { adapters: Map<string, AgentAdapter> };
+  holder.adapters.clear();
+  for (const adapter of adapters) {
+    registry.register(adapter);
+  }
+  return registry;
+};
+
+const getServerId = (manager: JobManager): string =>
+  (manager as unknown as { serverId: string }).serverId;
 
 afterEach(() => {
   while (stores.length > 0) {
@@ -111,6 +128,53 @@ describe('JobManager', () => {
     expect(cancelled?.error).toBe('cancelled by user');
   });
 
+  it('does not fall back to another adapter when the configured adapter is unavailable', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
+    tempDirs.push(tempDir);
+    const store = new StateStore(tempDir);
+    stores.push(store);
+    store.setConfig('default_agent', 'codex');
+
+    const codex = new MockAdapter('codex', 0, undefined, false);
+    const claude = new MockAdapter('claude-code');
+    const manager = new JobManager(store, createRegistry(codex, claude), {
+      heartbeatTimeoutMs: 100,
+      defaultJobTimeoutMs: 2_000,
+    });
+
+    const job = manager.startJob('dev', { prompt: 'build with codex' });
+    const waited = await manager.waitForJob(job.id, null, 5_000);
+
+    expect(waited.status).toBe('failed');
+    expect(codex.calls).toBe(0);
+    expect(claude.calls).toBe(0);
+    const output = store.getJobOutput(job.id) as { tried_agent: string; hint: string };
+    expect(output.tried_agent).toBe('codex');
+    expect(output.hint).toContain('will not switch agents automatically');
+  });
+
+  it('does not pick an installed adapter when no agent is configured', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
+    tempDirs.push(tempDir);
+    const store = new StateStore(tempDir);
+    stores.push(store);
+
+    const claude = new MockAdapter('claude-code');
+    const manager = new JobManager(store, createRegistry(claude), {
+      heartbeatTimeoutMs: 100,
+      defaultJobTimeoutMs: 2_000,
+    });
+
+    const job = manager.startJob('dev', { prompt: 'build without configured agent' });
+    const waited = await manager.waitForJob(job.id, null, 5_000);
+
+    expect(waited.status).toBe('failed');
+    expect(claude.calls).toBe(0);
+    const output = store.getJobOutput(job.id) as { tried_agent: string | null; hint: string };
+    expect(output.tried_agent).toBeNull();
+    expect(output.hint).toContain('Set an agent explicitly');
+  });
+
   it('computes continuation over DAG dependencies and all_done transition', () => {
     const { store, manager } = createHarness();
 
@@ -158,6 +222,42 @@ describe('JobManager', () => {
     expect(finalState.total_count).toBe(3);
   });
 
+  it('reports running jobs in continuation and deterministic pending reasons', () => {
+    const { store, manager } = createHarness();
+
+    const running = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { prompt: 'active', name: 'active-job' },
+      retryCount: 0,
+      maxRetries: 1,
+      startedAt: Date.now(),
+      lastHeartbeat: Date.now(),
+    });
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { prompt: 'parent', name: 'parent-job' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    const child = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { prompt: 'child', name: 'child-job' },
+      retryCount: 0,
+      maxRetries: 1,
+      parentJobId: parent.id,
+    });
+
+    const state = manager.continue();
+    expect(state.running_jobs?.map((j) => j.id)).toContain(running.id);
+    expect(state.all_blocked).toBe(false);
+
+    const childStatus = manager.checkJobStatus(child.id, null);
+    expect(childStatus.pending_reason).toBe('queued_after_parent');
+  });
+
   it('detects stalled running jobs and marks them failed', () => {
     const { store, manager } = createHarness();
 
@@ -170,12 +270,88 @@ describe('JobManager', () => {
       startedAt: Date.now() - 10_000,
       lastHeartbeat: Date.now() - 10_000,
     });
+    store.setJobServerId(stale.id, getServerId(manager));
 
     manager.continue();
 
     const updated = store.getJob(stale.id);
     expect(updated?.status).toBe('failed');
     expect(updated?.error).toBe('stall detected');
+  });
+
+  it('does not reset a fresh running job owned by another server', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
+    tempDirs.push(tempDir);
+    const store = new StateStore(tempDir);
+    stores.push(store);
+
+    const running = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { prompt: 'active', name: 'active-job' },
+      retryCount: 0,
+      maxRetries: 1,
+      startedAt: Date.now(),
+      lastHeartbeat: Date.now(),
+    });
+    store.setJobServerId(running.id, 'server-a');
+
+    const registry = new AdapterRegistry();
+    registry.register(new MockAdapter('mock-adapter'));
+    new JobManager(store, registry, { heartbeatTimeoutMs: 30 * 60 * 1000 });
+
+    expect(store.getJob(running.id)?.status).toBe('running');
+    expect(store.getEventsForJob(running.id).some((event) => event.event === 'job_orphan_reset')).toBe(false);
+  });
+
+  it('records stale orphan reset events so pending_reason is not guessed', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
+    tempDirs.push(tempDir);
+    const store = new StateStore(tempDir);
+    stores.push(store);
+
+    const orphan = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { prompt: 'orphan', name: 'orphan-job' },
+      retryCount: 0,
+      maxRetries: 1,
+      startedAt: Date.now() - 10_000,
+      lastHeartbeat: Date.now() - 10_000,
+    });
+    store.setJobServerId(orphan.id, 'server-a');
+
+    const registry = new AdapterRegistry();
+    registry.register(new MockAdapter('mock-adapter'));
+    const manager = new JobManager(store, registry, { heartbeatTimeoutMs: 100 });
+
+    expect(store.getJob(orphan.id)?.status).toBe('pending');
+    expect(store.getEventsForJob(orphan.id).some((event) => event.event === 'job_orphan_reset')).toBe(true);
+    expect(manager.checkJobStatus(orphan.id, null).pending_reason).toBe(
+      'orphan_reset_after_stale_heartbeat',
+    );
+  });
+
+  it('resets a stale foreign-owned running job during later polling', () => {
+    const { store, manager } = createHarness();
+
+    const orphan = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { prompt: 'later orphan', name: 'later-orphan-job' },
+      retryCount: 0,
+      maxRetries: 1,
+      startedAt: Date.now() - 10_000,
+      lastHeartbeat: Date.now() - 10_000,
+    });
+    store.setJobServerId(orphan.id, 'server-a');
+
+    manager.continue();
+
+    expect(store.getJob(orphan.id)?.status).toBe('pending');
+    expect(manager.checkJobStatus(orphan.id, null).pending_reason).toBe(
+      'orphan_reset_after_stale_heartbeat',
+    );
   });
 
   it('persists eval_parallel_safe verdict to config when readiness eval completes', async () => {

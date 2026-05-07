@@ -13,7 +13,7 @@ const jobEntrySchema = z.object({
     .optional()
     .describe(
       'If true, the job produces an assessment/report only and MUST NOT edit project files. ' +
-        'Use tenet_request_remediation to escalate real bugs discovered during verification. ' +
+        'Use tenet_report_blocking_finding to escalate blocking issues discovered during verification. ' +
         'Typical cases: final acceptance sweeps, architectural reviews, drift audits.',
     ),
 });

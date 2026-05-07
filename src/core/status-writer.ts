@@ -101,7 +101,7 @@ const jobStatusIcon = (status: Job['status']): string => {
     case 'failed': return '[!]';
     case 'cancelled': return '[-]';
     case 'blocked': return '[B]';
-    case 'blocked_remediation_required': return '[R]';
+    case 'blocked_on_finding': return '[F]';
     case 'pending': return '[ ]';
     default: return '[ ]';
   }

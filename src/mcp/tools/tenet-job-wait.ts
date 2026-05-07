@@ -12,7 +12,8 @@ export const registerTenetJobWaitTool = (registerTool: RegisterTool, jobManager:
         'Check the current status of a running job. ' +
         'By default returns instantly with the job state. ' +
         'Use wait_seconds to make the server wait before responding (useful for agents that expect blocking behavior). ' +
-        'When is_terminal is true, the job is done — collect results with tenet_job_result.',
+        'When is_terminal is true, the job is done — collect results with tenet_job_result. ' +
+        'If status is pending, pending_reason is event-derived and may be "unknown_pending" when Tenet cannot prove why.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
         cursor: z.string().optional().describe('Event cursor from previous call for incremental updates'),

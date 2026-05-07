@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
-import type { ContinuationState, Job, JobResult, JobType, JobWaitResponse } from '../types/index.js';
+import type { ContinuationState, Job, JobResult, JobType, JobWaitResponse, PendingReason } from '../types/index.js';
 import { AdapterRegistry } from '../adapters/index.js';
 import type { AgentAdapter, AgentInvocation } from '../adapters/base.js';
 import { StateStore } from './state-store.js';
@@ -76,8 +76,10 @@ export class JobManager {
     this.defaultJobTimeoutMs = config?.defaultJobTimeoutMs ?? 30_000;
     this.serverId = crypto.randomUUID();
 
-    // Reset any jobs left "running" by a previous server instance
-    const resetCount = this.stateStore.resetOrphanedJobs(this.serverId);
+    // Reset only stale jobs left "running" by a previous server instance.
+    // A different server_id alone is not enough: nested MCP clients can start
+    // while the owning server is still alive and heartbeating the job.
+    const resetCount = this.stateStore.resetOrphanedJobs(this.serverId, this.heartbeatTimeoutMs);
     if (resetCount > 0) {
       this.stateStore.appendEvent('system', 'orphaned_jobs_reset', {
         count: resetCount,
@@ -205,29 +207,8 @@ export class JobManager {
       throw new Error(`job not found: ${jobId}`);
     }
 
-    let currentCursor = cursor ?? '0';
-    const events = this.stateStore
-      .getEventsSince(currentCursor)
-      .filter((event) => event.jobId === jobId);
-    if (events.length > 0) {
-      currentCursor = events[events.length - 1].id;
-    }
-
-    const jobName = typeof job.params.name === 'string' ? job.params.name : undefined;
-    const elapsed = job.startedAt ? Date.now() - job.startedAt : 0;
-    const recentEvents = events.slice(-5).map((e) => e.event);
-
-    return {
-      status: job.status,
-      progress_line: TERMINAL_STATUSES.has(job.status)
-        ? this.progressLine(job.status)
-        : `${this.progressLine(job.status)} (${Math.round(elapsed / 1000)}s elapsed)`,
-      cursor: currentCursor,
-      is_terminal: TERMINAL_STATUSES.has(job.status),
-      elapsed_ms: elapsed,
-      job_name: jobName,
-      recent_events: recentEvents,
-    };
+    const { currentCursor, events } = this.collectJobEvents(jobId, cursor);
+    return this.buildJobWaitResponse(job, currentCursor, events);
   }
 
   async waitForJob(jobId: string, cursor: string | null, timeoutMs: number): Promise<JobWaitResponse> {
@@ -243,39 +224,16 @@ export class JobManager {
         throw new Error(`job not found: ${jobId}`);
       }
 
-      const events = this.stateStore
-        .getEventsSince(currentCursor)
-        .filter((event) => event.jobId === jobId);
-      if (events.length > 0) {
-        currentCursor = events[events.length - 1].id;
-      }
-
-      const jobName = typeof job.params.name === 'string' ? job.params.name : undefined;
-      const elapsed = job.startedAt ? Date.now() - job.startedAt : 0;
-      const recentEvents = events.slice(-5).map((e) => e.event);
+      const collected = this.collectJobEvents(jobId, currentCursor);
+      currentCursor = collected.currentCursor;
+      const response = this.buildJobWaitResponse(job, currentCursor, collected.events);
 
       if (TERMINAL_STATUSES.has(job.status)) {
-        return {
-          status: job.status,
-          progress_line: this.progressLine(job.status),
-          cursor: currentCursor,
-          is_terminal: true,
-          elapsed_ms: elapsed,
-          job_name: jobName,
-          recent_events: recentEvents,
-        };
+        return response;
       }
 
       if (Date.now() - startedAt >= timeout) {
-        return {
-          status: job.status,
-          progress_line: `${this.progressLine(job.status)} (${Math.round(elapsed / 1000)}s elapsed)`,
-          cursor: currentCursor,
-          is_terminal: false,
-          elapsed_ms: elapsed,
-          job_name: jobName,
-          recent_events: recentEvents,
-        };
+        return response;
       }
 
       await sleep(500);
@@ -363,13 +321,15 @@ export class JobManager {
     this.detectStalledJobs();
     const nextJob = this.stateStore.getNextRunnableJob();
     const blockedJobs = this.stateStore.getBlockedJobs();
+    const runningJobs = this.stateStore.getJobsByStatus('running');
     const totalCount = this.stateStore.getTotalCount();
     const completedCount = this.stateStore.getCompletedCount();
 
     return {
       all_done: totalCount > 0 && completedCount === totalCount,
-      all_blocked: !nextJob && blockedJobs.length > 0,
+      all_blocked: !nextJob && runningJobs.length === 0 && blockedJobs.length > 0,
       next_job: nextJob ?? undefined,
+      running_jobs: runningJobs.length > 0 ? runningJobs : undefined,
       blocked_jobs: blockedJobs.length > 0 ? blockedJobs : undefined,
       completed_count: completedCount,
       total_count: totalCount,
@@ -387,6 +347,7 @@ export class JobManager {
 
   private detectStalledJobs(): void {
     const now = Date.now();
+    this.stateStore.resetOrphanedJobs(this.serverId, this.heartbeatTimeoutMs);
     const activeJobs = this.stateStore.getJobsByStatus('running');
     for (const job of activeJobs) {
       if (!job.lastHeartbeat) {
@@ -406,14 +367,13 @@ export class JobManager {
     }
   }
 
-  private resolveAgentName(type: JobType): string {
+  private resolveAgentName(type: JobType): string | undefined {
     const typeOverride = this.stateStore.getConfig(`agent_override_${type}`);
     if (typeOverride) {
       return typeOverride;
     }
 
-    const defaultAgent = this.stateStore.getConfig('default_agent');
-    return defaultAgent ?? 'default';
+    return this.stateStore.getConfig('default_agent') ?? undefined;
   }
 
   private async executeJob(jobId: string): Promise<void> {
@@ -442,21 +402,30 @@ export class JobManager {
         const available = await this.adapterRegistry.listAvailable();
         const availableNames = available.filter((a) => a.available).map((a) => a.name);
         const allNames = available.map((a) => `${a.name}(${a.available ? 'available' : 'unavailable'})`);
+        const requestedAgent =
+          job.agentName && job.agentName !== 'default'
+            ? job.agentName
+            : this.stateStore.getConfig('default_agent');
 
         const stubOutput = {
-          message: `No agent adapter available to execute this job. Configure one with tenet_set_agent.`,
-          tried_agent: job.agentName ?? 'default',
+          message: requestedAgent
+            ? `Configured agent adapter "${requestedAgent}" is not available to execute this job.`
+            : 'No Tenet agent is configured to execute this job.',
+          tried_agent: requestedAgent ?? null,
           adapters: allNames,
           available_adapters: availableNames,
-          hint: availableNames.length === 0
-            ? 'No CLI agents found in PATH. Ensure claude, opencode, or codex CLI is installed and accessible.'
-            : `Available: ${availableNames.join(', ')}. Use tenet_set_agent to assign.`,
+          hint: requestedAgent
+            ? `Install or authenticate "${requestedAgent}", or choose a different agent explicitly with tenet config --agent <name>. Tenet will not switch agents automatically.`
+            : 'Set an agent explicitly with tenet config --agent <name>. Tenet will not pick an installed CLI automatically.',
           type: job.type,
           params: job.params,
         };
 
         const finishedAt = Date.now();
         this.stateStore.setJobOutput(jobId, stubOutput);
+        if (this.preserveBlockedFindingParent(jobId)) {
+          return;
+        }
         this.stateStore.updateJob(jobId, {
           status: 'failed',
           completedAt: finishedAt,
@@ -476,6 +445,10 @@ export class JobManager {
         output: response.output,
         duration_ms: response.durationMs,
       });
+
+      if (this.preserveBlockedFindingParent(jobId)) {
+        return;
+      }
 
       if (response.success) {
         // For dev jobs, verify the worker actually produced file changes
@@ -510,7 +483,7 @@ export class JobManager {
 
         this.persistReadinessVerdict(job, response.output);
         this.dispatchChainedChildren(jobId);
-        this.checkRemediationResume(job, response.output);
+        this.checkBlockingFindingResume(job, response.output);
         return;
       }
 
@@ -527,6 +500,9 @@ export class JobManager {
     } catch (error) {
       const finishedAt = Date.now();
       const message = error instanceof Error ? error.message : String(error);
+      if (this.preserveBlockedFindingParent(jobId)) {
+        return;
+      }
       this.stateStore.updateJob(jobId, {
         status: 'failed',
         completedAt: finishedAt,
@@ -540,18 +516,105 @@ export class JobManager {
   }
 
   private async selectAdapter(agentName?: string): Promise<AgentAdapter | null> {
-    if (agentName && agentName !== 'default') {
-      const explicit = this.adapterRegistry.get(agentName);
-      if (explicit && (await explicit.isAvailable())) {
-        return explicit;
+    const requestedAgent =
+      agentName && agentName !== 'default'
+        ? agentName
+        : this.stateStore.getConfig('default_agent');
+
+    if (!requestedAgent) {
+      return null;
+    }
+
+    const adapter = this.adapterRegistry.get(requestedAgent);
+    if (!adapter || !(await adapter.isAvailable())) {
+      return null;
+    }
+
+    return adapter;
+  }
+
+  private collectJobEvents(
+    jobId: string,
+    cursor: string | null,
+  ): { currentCursor: string; events: Array<{ id: string; jobId: string; event: string; data: unknown; timestamp: number }> } {
+    let currentCursor = cursor ?? '0';
+    const events = this.stateStore
+      .getEventsSince(currentCursor)
+      .filter((event) => event.jobId === jobId);
+    if (events.length > 0) {
+      currentCursor = events[events.length - 1].id;
+    }
+    return { currentCursor, events };
+  }
+
+  private buildJobWaitResponse(
+    job: Job,
+    cursor: string,
+    events: Array<{ id: string; jobId: string; event: string; data: unknown; timestamp: number }>,
+  ): JobWaitResponse {
+    const jobName = typeof job.params.name === 'string' ? job.params.name : undefined;
+    const elapsed = job.startedAt ? Date.now() - job.startedAt : 0;
+    const recentEvents = events.slice(-5).map((e) => e.event);
+    const isTerminal = TERMINAL_STATUSES.has(job.status);
+
+    return {
+      job_id: job.id,
+      job_type: job.type,
+      status: job.status,
+      progress_line: isTerminal
+        ? this.progressLine(job.status)
+        : `${this.progressLine(job.status)} (${Math.round(elapsed / 1000)}s elapsed)`,
+      cursor,
+      is_terminal: isTerminal,
+      elapsed_ms: elapsed,
+      job_name: jobName,
+      parent_job_id: job.parentJobId,
+      server_id: job.serverId,
+      pending_reason: this.pendingReason(job),
+      recent_events: recentEvents,
+    };
+  }
+
+  private pendingReason(job: Job): PendingReason | undefined {
+    if (job.status !== 'pending') {
+      return undefined;
+    }
+
+    if (job.parentJobId) {
+      const parent = this.stateStore.getJob(job.parentJobId);
+      if (parent && parent.status !== 'completed') {
+        return 'queued_after_parent';
       }
     }
 
-    try {
-      return await this.adapterRegistry.getDefault();
-    } catch {
-      return null;
+    const events = this.stateStore.getEventsForJob(job.id, 100).slice().reverse();
+    for (const event of events) {
+      if (event.event === 'job_orphan_reset') {
+        return 'orphan_reset_after_stale_heartbeat';
+      }
+      if (event.event === 'job_retried') {
+        return 'retry_reset';
+      }
+      if (event.event === 'blocking_finding_resolved') {
+        return 'blocking_finding_resolved';
+      }
     }
+
+    if (!job.startedAt) {
+      return 'not_started';
+    }
+
+    return 'unknown_pending';
+  }
+
+  private preserveBlockedFindingParent(jobId: string): boolean {
+    const current = this.stateStore.getJob(jobId);
+    if (current?.status !== 'blocked_on_finding') {
+      return false;
+    }
+
+    this.stateStore.appendEvent(jobId, 'blocked_finding_parent_exit_preserved');
+    return true;
   }
 
   private toInvocation(job: Job): AgentInvocation {
@@ -766,7 +829,7 @@ export class JobManager {
     }
   }
 
-  private checkRemediationResume(completedJob: Job, rawOutput: unknown): void {
+  private checkBlockingFindingResume(completedJob: Job, rawOutput: unknown): void {
     const evalStages = new Set(['code_critic', 'test_critic', 'playwright_eval']);
     if (!evalStages.has(typeof completedJob.params.eval_stage === 'string' ? completedJob.params.eval_stage : '')) {
       return;
@@ -783,14 +846,14 @@ export class JobManager {
       return;
     }
 
-    const remediationFor =
-      typeof sourceJob.params.remediation_for === 'string' ? sourceJob.params.remediation_for : undefined;
-    if (!remediationFor) {
+    const blockedParentId =
+      typeof sourceJob.params.blocking_finding_for === 'string' ? sourceJob.params.blocking_finding_for : undefined;
+    if (!blockedParentId) {
       return;
     }
 
-    const parent = this.stateStore.getJob(remediationFor);
-    if (!parent || parent.status !== 'blocked_remediation_required') {
+    const parent = this.stateStore.getJob(blockedParentId);
+    if (!parent || parent.status !== 'blocked_on_finding') {
       return;
     }
 
@@ -824,15 +887,15 @@ export class JobManager {
       }
     }
 
-    // All three critics passed — auto-resume the remediation parent
-    this.stateStore.updateJob(remediationFor, {
+    // All three critics passed — let the report-only parent run again with fresh context.
+    this.stateStore.updateJob(blockedParentId, {
       status: 'pending',
       startedAt: undefined,
       completedAt: undefined,
       lastHeartbeat: undefined,
       error: undefined,
     });
-    this.stateStore.appendEvent(remediationFor, 'remediation_resumed', {
+    this.stateStore.appendEvent(blockedParentId, 'blocking_finding_resolved', {
       child_job_id: sourceJobId,
     });
   }
@@ -875,8 +938,8 @@ export class JobManager {
         return 'job cancelled';
       case 'blocked':
         return 'job blocked';
-      case 'blocked_remediation_required':
-        return 'job blocked — waiting for child remediation';
+      case 'blocked_on_finding':
+        return 'job blocked — waiting for blocking finding follow-up';
       default:
         return 'job status unknown';
     }

@@ -8,7 +8,7 @@ import { JobManager } from './job-manager.js';
 import { StateStore } from './state-store.js';
 import { registerTenetStartEvalTool } from '../mcp/tools/tenet-start-eval.js';
 import { registerTenetGetStatusTool } from '../mcp/tools/tenet-get-status.js';
-import { registerTenetRequestRemediationTool } from '../mcp/tools/tenet-request-remediation.js';
+import { registerTenetReportBlockingFindingTool } from '../mcp/tools/tenet-report-blocking-finding.js';
 
 // ─── Harness ────────────────────────────────────────────────────────────────
 // A full-stack test harness: real StateStore, real JobManager, real AdapterRegistry
@@ -27,11 +27,12 @@ type StartEvalHandler = (args: {
 
 type GetStatusHandler = (args: Record<string, unknown>) => Promise<CallToolResult>;
 
-type RequestRemediationHandler = (args: {
+type ReportBlockingFindingHandler = (args: {
   job_id: string;
-  reason: string;
-  suggested_fix: string;
-  target_files?: string[];
+  finding: string;
+  why_it_blocks_report: string;
+  recommended_followup: string;
+  suspected_files?: string[];
 }) => Promise<CallToolResult>;
 
 type Harness = {
@@ -40,7 +41,7 @@ type Harness = {
   manager: JobManager;
   startEval: StartEvalHandler;
   getStatus: GetStatusHandler;
-  requestRemediation: RequestRemediationHandler;
+  reportBlockingFinding: ReportBlockingFindingHandler;
 };
 
 const createHarness = (rules: FakeFixtureRule[]): Harness => {
@@ -83,12 +84,12 @@ const createHarness = (rules: FakeFixtureRule[]): Harness => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     registerTenetGetStatusTool(rt as any, store),
   );
-  const requestRemediation = captureHandler<RequestRemediationHandler>((rt) =>
+  const reportBlockingFinding = captureHandler<ReportBlockingFindingHandler>((rt) =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    registerTenetRequestRemediationTool(rt as any, manager, store),
+    registerTenetReportBlockingFindingTool(rt as any, manager, store),
   );
 
-  return { projectPath: tempDir, store, manager, startEval, getStatus, requestRemediation };
+  return { projectPath: tempDir, store, manager, startEval, getStatus, reportBlockingFinding };
 };
 
 const parseResult = (r: CallToolResult): Record<string, unknown> => {
@@ -224,11 +225,11 @@ describe('integration: sequential critic chain', () => {
   });
 });
 
-// ─── C. Remediation auto-resume ─────────────────────────────────────────────
+// ─── C. Blocking finding auto-resume ────────────────────────────────────────
 
-describe('integration: remediation auto-resume', () => {
+describe('integration: blocking finding auto-resume', () => {
   it('C1: child dev completes + all 3 critics pass → parent flips to pending', async () => {
-    const { store, manager, requestRemediation } = createHarness([
+    const { store, manager, reportBlockingFinding } = createHarness([
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
@@ -243,16 +244,17 @@ describe('integration: remediation auto-resume', () => {
       maxRetries: 3,
     });
 
-    const r = await requestRemediation({
+    const r = await reportBlockingFinding({
       job_id: parent.id,
-      reason: 'harness cleanup bug',
-      suggested_fix: 'Add cleanup trap to tests/setup.sh',
+      finding: 'harness cleanup bug',
+      why_it_blocks_report: 'acceptance report cannot distinguish product failure from cleanup failure',
+      recommended_followup: 'Add cleanup trap to tests/setup.sh',
     });
     const parsed = parseResult(r);
     const childId = parsed.child_job_id as string;
 
     await manager.waitForJob(childId, null, 5_000);
-    expect(store.getJob(parent.id)?.status).toBe('blocked_remediation_required');
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
 
     // Orchestrator fires the 3 critics
     const code = manager.startJob('critic_eval', {
@@ -278,8 +280,8 @@ describe('integration: remediation auto-resume', () => {
     expect(store.getJob(parent.id)?.status).toBe('pending');
   });
 
-  it('C2: only one critic passed → parent stays blocked_remediation_required', async () => {
-    const { store, manager, requestRemediation } = createHarness([
+  it('C2: only one critic passed → parent stays blocked_on_finding', async () => {
+    const { store, manager, reportBlockingFinding } = createHarness([
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
     ]);
@@ -292,10 +294,11 @@ describe('integration: remediation auto-resume', () => {
       maxRetries: 3,
     });
 
-    const r = await requestRemediation({
+    const r = await reportBlockingFinding({
       job_id: parent.id,
-      reason: 'some bug',
-      suggested_fix: 'fix it',
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
     });
     const parsed = parseResult(r);
     const childId = parsed.child_job_id as string;
@@ -310,7 +313,7 @@ describe('integration: remediation auto-resume', () => {
     });
     await manager.waitForJob(code.id, null, 5_000);
 
-    expect(store.getJob(parent.id)?.status).toBe('blocked_remediation_required');
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
 });
 
@@ -369,7 +372,7 @@ describe('integration: parser robustness', () => {
   it('E1: critic output with trailing prose still parses → auto-resume proceeds', async () => {
     // This is the stress case that motivated Tier 1: real agents wrap JSON in prose.
     // If extractRubricJson can't handle it, the chain stalls silently in production.
-    const { store, manager, requestRemediation } = createHarness([
+    const { store, manager, reportBlockingFinding } = createHarness([
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-trailing-prose.md' },
       { match: matchers.evalStage('test_critic'), fixture: 'critic-passing-trailing-prose.md' },
@@ -384,10 +387,11 @@ describe('integration: parser robustness', () => {
       maxRetries: 3,
     });
 
-    const r = await requestRemediation({
+    const r = await reportBlockingFinding({
       job_id: parent.id,
-      reason: 'bug',
-      suggested_fix: 'fix',
+      finding: 'bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix',
     });
     const parsed = parseResult(r);
     const childId = parsed.child_job_id as string;
@@ -417,7 +421,7 @@ describe('integration: parser robustness', () => {
   });
 
   it('E2: truncated critic output does NOT trigger auto-resume', async () => {
-    const { store, manager, requestRemediation } = createHarness([
+    const { store, manager, reportBlockingFinding } = createHarness([
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-truncated.txt' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
@@ -432,10 +436,11 @@ describe('integration: parser robustness', () => {
       maxRetries: 3,
     });
 
-    const r = await requestRemediation({
+    const r = await reportBlockingFinding({
       job_id: parent.id,
-      reason: 'bug',
-      suggested_fix: 'fix',
+      finding: 'bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix',
     });
     const parsed = parseResult(r);
     const childId = parsed.child_job_id as string;
@@ -463,11 +468,11 @@ describe('integration: parser robustness', () => {
 
     // code_critic output was truncated — extractRubricJson should not report passed.
     // Therefore the parent must stay blocked.
-    expect(store.getJob(parent.id)?.status).toBe('blocked_remediation_required');
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
 
   it('E3: failing critic with findings does NOT trigger auto-resume', async () => {
-    const { store, manager, requestRemediation } = createHarness([
+    const { store, manager, reportBlockingFinding } = createHarness([
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
@@ -482,10 +487,11 @@ describe('integration: parser robustness', () => {
       maxRetries: 3,
     });
 
-    const r = await requestRemediation({
+    const r = await reportBlockingFinding({
       job_id: parent.id,
-      reason: 'bug',
-      suggested_fix: 'fix',
+      finding: 'bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix',
     });
     const parsed = parseResult(r);
     const childId = parsed.child_job_id as string;
@@ -511,6 +517,6 @@ describe('integration: parser robustness', () => {
     await manager.waitForJob(test.id, null, 5_000);
     await manager.waitForJob(play.id, null, 5_000);
 
-    expect(store.getJob(parent.id)?.status).toBe('blocked_remediation_required');
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
 });

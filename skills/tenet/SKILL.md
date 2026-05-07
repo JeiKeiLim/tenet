@@ -26,7 +26,7 @@ allowed-tools:
   - tenet_health_check
   - tenet_get_status
   - tenet_retry_job
-  - tenet_request_remediation
+  - tenet_report_blocking_finding
   # tenet_set_agent is CLI-only, not exposed via MCP
   # Host agent tools (used during crystallization phase)
   - Bash
@@ -129,7 +129,7 @@ Read the relevant phase file before executing that phase. The phrase "read" mean
 3. Pre-spec research, spec, harness, readiness gate: `phases/02-spec-and-harness.md`
 4. Visual artifacts and prototypes: `phases/03-visuals.md`
 5. DAG decomposition and job registration: `phases/04-decomposition.md`
-6. Autonomous execution loop, report-only remediation, finding dispatch, and git behavior: `phases/05-execution-loop.md`
+6. Autonomous execution loop, report-only blocking findings, finding dispatch, and git behavior: `phases/05-execution-loop.md`
 7. Evaluation pipeline and failure handling: `phases/06-evaluation.md`
 8. Agile checkpoints and redirects: `phases/07-agile-checkpoints.md`
 
@@ -174,7 +174,7 @@ Read `phases/05-execution-loop.md` before starting execution.
 - `tenet_start_eval` may return parallel or sequential eval execution. Wait according to the returned job IDs and `execution_mode`; do not assume all critics are already running.
 - Treat all eval failures as blocking for the current job or report-only parent.
 - Prefer `tenet_retry_job(job_id, enhanced_prompt)` for failed implementation jobs.
-- Use `tenet_request_remediation` only for report-only jobs that discover real bugs they must not fix directly.
+- Use `tenet_report_blocking_finding` only for report-only jobs that discover blocking findings they must not fix directly.
 - If retries are exhausted, mark/report the job as blocked and continue only to independent jobs.
 - In agile mode, the normal execution loop is scoped to the current slice; the outer slice/checkpoint loop is defined in `phases/07-agile-checkpoints.md`.
 

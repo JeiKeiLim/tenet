@@ -13,7 +13,7 @@ Every critic finding (code critic, test critic) MUST include a `category` so the
 | `harness_bug` | Build/lint/test harness itself is broken | Retry or remediate with scope limited to build/CI/scripts |
 | `evidence_mismatch` | Report numbers don't match fresh command output | Re-run the source job's verification commands, refresh report |
 | `contention` | Failure looks like sibling eval stepping on shared state | Re-run after siblings complete, or switch to sequential mode |
-| `scope_conflict` | Job edited files outside its declared scope (e.g. report-only job touched code) | Trigger the remediation escape hatch (see 05-execution-loop.md) |
+| `scope_conflict` | Job edited files outside its declared scope (e.g. report-only job touched code) | Trigger the blocking finding escape hatch (see 05-execution-loop.md) |
 
 The critic emits findings as objects: `{"category": "...", "detail": "..."}`. Orchestrators MUST read the category to pick the right response — plain retry loops waste cycles on bugs that aren't product bugs.
 
@@ -103,7 +103,7 @@ The test critic checks:
 - Are there routes/pages/endpoints with NO test coverage at all?
 - Are there interactive elements (buttons, forms) with no test?
 
-If tests are insufficient, the test critic outputs specific tests that need to be added or strengthened. These become requirements for a retry or remediation before the integration checkpoint can pass.
+If tests are insufficient, the test critic outputs specific tests that need to be added or strengthened. These become requirements for a retry or blocking-finding follow-up before the integration checkpoint can pass.
 
 ## Integration Test Evaluation
 
@@ -111,10 +111,10 @@ Integration test jobs (`integration_test` type) have a different eval flow:
 1. The integration test agent runs acceptance tests and reports results
 2. If ALL tests pass → job completes successfully
 3. If ANY test fails → job fails with detailed failure report
-4. On failure, report-only integration jobs request targeted remediation with `tenet_request_remediation`
-5. After remediation children complete and pass eval, the integration test is retried
+4. On failure, report-only integration jobs report a blocking finding with `tenet_report_blocking_finding`
+5. After linked follow-up children complete and pass eval, the integration test is retried
 
-The orchestrator should parse the integration test output to identify specific failures and request focused remediation rather than retrying the entire feature.
+The orchestrator should parse the integration test output to identify specific failures and report a focused blocking finding rather than retrying the entire feature.
 
 ## Evaluation Result Format
 Record results via `tenet_update_knowledge` with a descriptive title. Example: `title="eval project-scaffold mechanical-and-spec-compliance"`. The tool generates a dated markdown file in `.tenet/knowledge/`.
@@ -151,7 +151,7 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 - **Stage 1/1.5 Fail**: Retry the current implementation job with an enhanced prompt that includes the mechanical/runtime failure.
 - **Stage 3 Fail (Code Critic)**: Run reflection to find the root cause, then retry via `tenet_retry_job` with the critic findings.
 - **Stage 4 Fail (Test Critic)**: Retry via `tenet_retry_job` with explicit test-strengthening requirements from the critic.
-- **Integration test Fail**: If the job is `report_only`, call `tenet_request_remediation` with the observed failure, suggested fix, and likely target files. Otherwise retry the integration job with an enhanced prompt.
+- **Integration test Fail**: If the job is `report_only`, call `tenet_report_blocking_finding` with the observed finding, why it blocks the report, recommended follow-up, and likely target files. Otherwise retry the integration job with an enhanced prompt.
 - **Limits**: Max 3 retries per job before marking it as blocked.
 
 ### Stage 5: Playwright E2E (Two Layers, Independent Job)
@@ -200,7 +200,7 @@ The worker uses Playwright MCP tools to interact with the app like a real user:
 **When the application won't start:** FAIL the eval. The application must start to be tested.
 
 **PASS**: Scripted tests pass AND exploratory testing finds no issues.
-**FAIL**: Any scripted test fails OR exploratory testing finds visual/behavioral bugs. Retry or request remediation with screenshots and findings as evidence.
+**FAIL**: Any scripted test fails OR exploratory testing finds visual/behavioral bugs. Retry or report a blocking finding with screenshots and findings as evidence.
 
 ## Anti-Skip Enforcement
 Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode requires Stage 3 (code critic), Stage 4 (test critic), and Stage 5 (agent-driven e2e). Both critics run in separate agent sessions with no access to the author's reasoning. The author cannot evaluate their own work.

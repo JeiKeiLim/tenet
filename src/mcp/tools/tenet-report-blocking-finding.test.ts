@@ -6,7 +6,7 @@ import type { AgentAdapter, AgentInvocation, AgentResponse } from '../../adapter
 import { AdapterRegistry } from '../../adapters/index.js';
 import { JobManager } from '../../core/job-manager.js';
 import { StateStore } from '../../core/state-store.js';
-import { registerTenetRequestRemediationTool } from './tenet-request-remediation.js';
+import { registerTenetReportBlockingFindingTool } from './tenet-report-blocking-finding.js';
 
 class PassingAdapter implements AgentAdapter {
   public readonly name = 'mock-adapter';
@@ -22,18 +22,60 @@ class PassingAdapter implements AgentAdapter {
   }
 }
 
+class ControlledParentAdapter implements AgentAdapter {
+  public readonly name = 'mock-adapter';
+  private releaseParent: (() => void) | undefined;
+  public readonly parentStarted: Promise<void>;
+  private resolveParentStarted: (() => void) | undefined;
+
+  constructor() {
+    this.parentStarted = new Promise((resolve) => {
+      this.resolveParentStarted = resolve;
+    });
+  }
+
+  release(): void {
+    this.releaseParent?.();
+  }
+
+  async invoke(invocation: AgentInvocation): Promise<AgentResponse> {
+    if (invocation.prompt.includes('parent waits')) {
+      this.resolveParentStarted?.();
+      await new Promise<void>((resolve) => {
+        this.releaseParent = resolve;
+      });
+      return {
+        success: true,
+        output: 'parent reported a blocking finding and exited',
+        durationMs: 0,
+      };
+    }
+
+    return {
+      success: true,
+      output: JSON.stringify({ passed: true, findings: [] }),
+      durationMs: 0,
+    };
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+}
+
 type Handler = (args: {
   job_id: string;
-  reason: string;
-  suggested_fix: string;
-  target_files?: string[];
+  finding: string;
+  why_it_blocks_report: string;
+  recommended_followup: string;
+  suspected_files?: string[];
 }) => Promise<CallToolResult>;
 
 const tempDirs: string[] = [];
 const stores: StateStore[] = [];
 
 const createHarness = (): { store: StateStore; manager: JobManager; handler: Handler } => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-remediation-test-'));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-blocking-finding-test-'));
   tempDirs.push(tempDir);
 
   const store = new StateStore(tempDir);
@@ -57,7 +99,40 @@ const createHarness = (): { store: StateStore; manager: JobManager; handler: Han
     captured = h;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any;
-  registerTenetRequestRemediationTool(registerTool, manager, store);
+  registerTenetReportBlockingFindingTool(registerTool, manager, store);
+  if (!captured) throw new Error('handler not captured');
+
+  return { store, manager, handler: captured };
+};
+
+const createHarnessWithAdapter = (
+  adapter: AgentAdapter,
+): { store: StateStore; manager: JobManager; handler: Handler } => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-blocking-finding-live-test-'));
+  tempDirs.push(tempDir);
+
+  const store = new StateStore(tempDir);
+  stores.push(store);
+  store.setConfig('agent_override_dev', adapter.name);
+  store.setConfig('agent_override_eval', adapter.name);
+  store.setConfig('agent_override_critic_eval', adapter.name);
+  store.setConfig('agent_override_playwright_eval', adapter.name);
+
+  const registry = new AdapterRegistry();
+  registry.register(adapter);
+
+  const manager = new JobManager(store, registry, {
+    heartbeatTimeoutMs: 500,
+    defaultJobTimeoutMs: 2_000,
+    maxParallelAgents: 4,
+  });
+
+  let captured: Handler | undefined;
+  const registerTool = ((_n: string, _d: unknown, h: Handler) => {
+    captured = h;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any;
+  registerTenetReportBlockingFindingTool(registerTool, manager, store);
   if (!captured) throw new Error('handler not captured');
 
   return { store, manager, handler: captured };
@@ -77,7 +152,7 @@ afterEach(() => {
   }
 });
 
-describe('tenet_request_remediation', () => {
+describe('tenet_report_blocking_finding', () => {
   it('throws when job is not tagged report_only', async () => {
     const { store, handler } = createHarness();
     const reportJob = store.createJob({
@@ -89,11 +164,16 @@ describe('tenet_request_remediation', () => {
     });
 
     await expect(
-      handler({ job_id: reportJob.id, reason: 'bug', suggested_fix: 'fix' }),
+      handler({
+        job_id: reportJob.id,
+        finding: 'bug',
+        why_it_blocks_report: 'report would be false',
+        recommended_followup: 'fix',
+      }),
     ).rejects.toThrow(/report_only=true/);
   });
 
-  it('flips parent to blocked_remediation_required and spawns a dev child', async () => {
+  it('flips parent to blocked_on_finding and spawns a dev child', async () => {
     const { store, handler } = createHarness();
     const reportJob = store.createJob({
       type: 'dev',
@@ -105,23 +185,61 @@ describe('tenet_request_remediation', () => {
 
     const result = await handler({
       job_id: reportJob.id,
-      reason: 'SQLite gets locked',
-      suggested_fix: 'Add cleanup trap',
-      target_files: ['scripts/test.sh'],
+      finding: 'SQLite gets locked',
+      why_it_blocks_report: 'final report cannot distinguish product failure from harness lock',
+      recommended_followup: 'Add cleanup trap',
+      suspected_files: ['scripts/test.sh'],
     });
     const parsed = parseResult(result);
 
     const parent = store.getJob(reportJob.id);
-    expect(parent?.status).toBe('blocked_remediation_required');
+    expect(parent?.status).toBe('blocked_on_finding');
 
     const childId = parsed.child_job_id as string;
     const child = store.getJob(childId);
     expect(child?.type).toBe('dev');
-    expect(child?.params.remediation_for).toBe(reportJob.id);
+    expect(child?.params.blocking_finding_for).toBe(reportJob.id);
     const childPrompt = child?.params.prompt as string;
     expect(childPrompt).toContain('SQLite gets locked');
     expect(childPrompt).toContain('Add cleanup trap');
     expect(childPrompt).toContain('scripts/test.sh');
+    expect(parsed.next_tool).toBe('tenet_job_wait');
+  });
+
+  it('preserves blocked parent status when the active report-only worker exits', async () => {
+    const adapter = new ControlledParentAdapter();
+    const { store, manager, handler } = createHarnessWithAdapter(adapter);
+
+    const reportJob = manager.startJob('dev', {
+      name: 'final-report',
+      prompt: 'parent waits',
+      report_only: true,
+    });
+
+    await adapter.parentStarted;
+
+    const result = await handler({
+      job_id: reportJob.id,
+      finding: 'login flow fails',
+      why_it_blocks_report: 'final report cannot claim login works',
+      recommended_followup: 'repair the login flow',
+    });
+    const parsed = parseResult(result);
+
+    expect(store.getJob(reportJob.id)?.status).toBe('blocked_on_finding');
+    adapter.release();
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+    expect(store.getJob(reportJob.id)?.status).toBe('blocked_on_finding');
+
+    const preservedEvents = store
+      .getEventsForJob(reportJob.id)
+      .filter((event) => event.event === 'blocked_finding_parent_exit_preserved');
+    expect(preservedEvents.length).toBeGreaterThan(0);
+    await manager.waitForJob(parsed.child_job_id as string, null, 5_000);
+    expect(store.getJob(parsed.child_job_id as string)?.status).toBe('completed');
   });
 
   it('auto-resumes parent when all three critic evals for the child pass', async () => {
@@ -137,8 +255,9 @@ describe('tenet_request_remediation', () => {
 
     const result = await handler({
       job_id: reportJob.id,
-      reason: 'harness flaky',
-      suggested_fix: 'cleanup hook',
+      finding: 'harness flaky',
+      why_it_blocks_report: 'acceptance report would be unreliable',
+      recommended_followup: 'cleanup hook',
     });
     const parsed = parseResult(result);
     const childId = parsed.child_job_id as string;
@@ -146,7 +265,7 @@ describe('tenet_request_remediation', () => {
     // Wait for child dev to complete
     await manager.waitForJob(childId, null, 5_000);
     expect(store.getJob(childId)?.status).toBe('completed');
-    expect(store.getJob(reportJob.id)?.status).toBe('blocked_remediation_required');
+    expect(store.getJob(reportJob.id)?.status).toBe('blocked_on_finding');
 
     // Simulate the orchestrator dispatching 3 critic evals for the child
     const codeCritic = manager.startJob('critic_eval', {
@@ -186,8 +305,9 @@ describe('tenet_request_remediation', () => {
 
     const result = await handler({
       job_id: reportJob.id,
-      reason: 'bug',
-      suggested_fix: 'fix',
+      finding: 'bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix',
     });
     const parsed = parseResult(result);
     const childId = parsed.child_job_id as string;
@@ -203,6 +323,6 @@ describe('tenet_request_remediation', () => {
     await manager.waitForJob(codeCritic.id, null, 5_000);
 
     // Parent stays blocked (only one of three critics has passed)
-    expect(store.getJob(reportJob.id)?.status).toBe('blocked_remediation_required');
+    expect(store.getJob(reportJob.id)?.status).toBe('blocked_on_finding');
   });
 });

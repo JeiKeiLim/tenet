@@ -1,6 +1,22 @@
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
+import type { Job } from '../../types/index.js';
 import { jsonResult, jobTypeSchema, type RegisterTool } from './utils.js';
+
+const startJobResponse = (job: Job): Record<string, unknown> => {
+  const jobName = typeof job.params.name === 'string' ? job.params.name : undefined;
+  return {
+    job_id: job.id,
+    job_type: job.type,
+    job_name: jobName,
+    status: job.status,
+    started_at: job.startedAt,
+    server_id: job.serverId,
+    next_tool: 'tenet_job_wait',
+    next_args: { job_id: job.id, wait_seconds: 30 },
+    message: `Job dispatched and recorded as ${job.status}. Wait with tenet_job_wait, then fetch terminal output with tenet_job_result.`,
+  };
+};
 
 export const registerTenetStartJobTool = (registerTool: RegisterTool, jobManager: JobManager): void => {
   registerTool(
@@ -19,7 +35,7 @@ export const registerTenetStartJobTool = (registerTool: RegisterTool, jobManager
     async ({ job_id, job_type, params }) => {
       if (job_id) {
         const job = jobManager.dispatchJob(job_id);
-        return jsonResult({ job_id: job.id });
+        return jsonResult(startJobResponse(job));
       }
 
       if (!job_type) {
@@ -27,7 +43,7 @@ export const registerTenetStartJobTool = (registerTool: RegisterTool, jobManager
       }
 
       const job = jobManager.startJob(job_type, params ?? {});
-      return jsonResult({ job_id: job.id });
+      return jsonResult(startJobResponse(job));
     },
   );
 };

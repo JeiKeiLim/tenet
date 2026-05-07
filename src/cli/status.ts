@@ -42,6 +42,7 @@ const statusIcon = (status: Job['status']): string => {
     case 'failed': return 'FAILED';
     case 'cancelled': return 'cancelled';
     case 'blocked': return 'blocked';
+    case 'blocked_on_finding': return 'blocked-finding';
     case 'pending': return 'pending';
     default: return status;
   }
@@ -114,6 +115,7 @@ export function showStatus(projectPath: string, options?: StatusOptions): void {
         ...stateStore.getJobsByStatus('running'),
         ...stateStore.getJobsByStatus('pending'),
         ...stateStore.getJobsByStatus('blocked'),
+        ...stateStore.getJobsByStatus('blocked_on_finding'),
         ...stateStore.getJobsByStatus('failed'),
         ...stateStore.getJobsByStatus('completed'),
         ...stateStore.getJobsByStatus('cancelled'),
@@ -124,13 +126,13 @@ export function showStatus(projectPath: string, options?: StatusOptions): void {
       const failed = allJobs.filter((j) => j.status === 'failed').length;
       const running = allJobs.filter((j) => j.status === 'running').length;
       const pending = allJobs.filter((j) => j.status === 'pending').length;
-      const blocked = allJobs.filter((j) => j.status === 'blocked').length;
+      const blocked = allJobs.filter((j) => j.status === 'blocked' || j.status === 'blocked_on_finding').length;
 
       console.log(`Jobs: ${completed} done, ${running} running, ${pending} pending, ${failed} failed, ${blocked} blocked (${allJobs.length} total)`);
       console.log('');
 
       // Active jobs: running, pending, blocked (not completed, cancelled, or failed)
-      const activeJobs = allJobs.filter((j) => ['running', 'pending', 'blocked'].includes(j.status));
+      const activeJobs = allJobs.filter((j) => ['running', 'pending', 'blocked', 'blocked_on_finding'].includes(j.status));
       if (activeJobs.length > 0) {
         printJobTable(activeJobs);
       } else if (allJobs.length > 0) {

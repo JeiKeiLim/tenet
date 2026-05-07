@@ -101,7 +101,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
                          MCP Protocol
                              |
                     +--------v--------+
-                    |   MCP Server    |  17 tools (start_job, eval, steer, etc.)
+                    |   MCP Server    |  18 tools (start_job, eval, steer, etc.)
                     +--------+--------+
                              |
               +--------------+--------------+
@@ -120,7 +120,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 
 1. **Core** — Job orchestration with DAG execution, heartbeat stall detection, configurable retry logic, and server-ID crash recovery
 2. **Adapters** — Pluggable agent adapters that spawn CLI subprocesses. 30-minute default timeout, configurable.
-3. **MCP Server** — 17 tools via `@modelcontextprotocol/server`. Zod-validated inputs.
+3. **MCP Server** — 18 tools via `@modelcontextprotocol/server`. Zod-validated inputs.
 4. **CLI** — `init`, `serve`, `status`, `config` commands. Scaffolds `.tenet/` and copies skills to agent-specific locations.
 
 ## CLI Reference
@@ -155,11 +155,12 @@ tenet config --timeout 45             # Set job timeout (minutes)
 | `tenet_register_jobs` | Load a job DAG with dependencies |
 | `tenet_start_job` | Execute a single job via agent adapter |
 | `tenet_continue` | Get the next actionable job from the DAG |
-| `tenet_job_wait` | Block until a job reaches a terminal state |
+| `tenet_job_wait` | Check or long-poll job status |
 | `tenet_job_result` | Retrieve job output and status |
 | `tenet_retry_job` | Reset a failed/completed job to pending |
 | `tenet_cancel_job` | Cancel a running or pending job |
 | `tenet_start_eval` | Dispatch code critic + test critic + playwright eval |
+| `tenet_report_blocking_finding` | Let report-only jobs pause and spawn a linked follow-up job |
 | `tenet_update_knowledge` | Write knowledge/journal entries |
 | `tenet_add_steer` | Submit a steer message (context/directive/emergency) |
 | `tenet_process_steer` | Acknowledge and act on steer messages |
@@ -202,7 +203,7 @@ your-project/
 
 Tenet is designed for long autonomous runs where crashes are expected:
 
-- **Server restart**: Orphaned "running" jobs are automatically reset to "pending" via server-ID tracking
+- **Server restart**: Stale "running" jobs are reset to "pending" only after their heartbeat exceeds the timeout
 - **Adapter timeout**: 30-minute default (configurable), prevents zombie subprocesses
 - **Heartbeat monitoring**: Detects truly stuck jobs within a session
 - **MCP disconnect**: Skill instructs agents to attempt server restart, halt if unrecoverable

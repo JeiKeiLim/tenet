@@ -1,0 +1,963 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tenet Harness Investigation Board</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #607080;
+      --line: #d8e0e7;
+      --line-strong: #b7c3ce;
+      --green: #166534;
+      --green-bg: #dcfce7;
+      --blue: #075985;
+      --blue-bg: #e0f2fe;
+      --amber: #92400e;
+      --amber-bg: #fef3c7;
+      --red: #991b1b;
+      --red-bg: #fee2e2;
+      --teal: #0f766e;
+      --teal-bg: #ccfbf1;
+      --violet: #5b21b6;
+      --violet-bg: #ede9fe;
+      --code-bg: #eef2f6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: var(--code-bg);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .wrap {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 28px;
+      align-items: center;
+      padding: 30px 0;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 12px;
+      font-size: clamp(30px, 5vw, 54px);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin-bottom: 14px;
+      font-size: 24px;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 16px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .hero-board {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fafbfc;
+    }
+
+    .signal {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 10px;
+      align-items: start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .signal-mark {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      font-weight: 800;
+    }
+
+    .signal strong {
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .signal span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .good .signal-mark {
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    .bad .signal-mark {
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .watch .signal-mark {
+      background: var(--amber-bg);
+      color: var(--amber);
+    }
+
+    main {
+      padding: 26px 0 48px;
+    }
+
+    section {
+      margin-bottom: 28px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+
+    .span-4 {
+      grid-column: span 4;
+    }
+
+    .span-5 {
+      grid-column: span 5;
+    }
+
+    .span-6 {
+      grid-column: span 6;
+    }
+
+    .span-7 {
+      grid-column: span 7;
+    }
+
+    .span-12 {
+      grid-column: span 12;
+    }
+
+    .panel {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .big-answer {
+      min-height: 210px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+    }
+
+    .label {
+      display: inline-flex;
+      width: fit-content;
+      align-items: center;
+      min-height: 26px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .label.green {
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    .label.red {
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .label.amber {
+      background: var(--amber-bg);
+      color: var(--amber);
+    }
+
+    .label.blue {
+      background: var(--blue-bg);
+      color: var(--blue);
+    }
+
+    .label.violet {
+      background: var(--violet-bg);
+      color: var(--violet);
+    }
+
+    .answer-word {
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 0.95;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .diagram {
+      overflow: hidden;
+      padding: 0;
+    }
+
+    .diagram-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .diagram-body {
+      padding: 18px;
+    }
+
+    .state-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) 52px minmax(120px, 1fr) 52px minmax(120px, 1fr);
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .state {
+      min-height: 100px;
+      padding: 14px;
+      border: 2px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    .state.good {
+      border-color: #86efac;
+      background: var(--green-bg);
+    }
+
+    .state.warn {
+      border-color: #fbbf24;
+      background: var(--amber-bg);
+    }
+
+    .state.bad {
+      border-color: #fca5a5;
+      background: var(--red-bg);
+    }
+
+    .arrow {
+      height: 2px;
+      position: relative;
+      background: var(--line-strong);
+    }
+
+    .arrow::after {
+      content: "";
+      position: absolute;
+      top: -5px;
+      right: -1px;
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+      border-left: 8px solid var(--line-strong);
+    }
+
+    .mini-note {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .fork {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .branch {
+      position: relative;
+      min-height: 220px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    .branch::before {
+      content: "";
+      position: absolute;
+      inset: 54px auto 22px 31px;
+      width: 2px;
+      background: var(--line);
+    }
+
+    .dot-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 10px;
+      margin-top: 13px;
+      align-items: start;
+    }
+
+    .dot {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: 2px solid var(--panel);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .dot.good {
+      background: var(--green);
+      color: white;
+    }
+
+    .dot.bad {
+      background: var(--red);
+      color: white;
+    }
+
+    .dot.warn {
+      background: var(--amber);
+      color: white;
+    }
+
+    .dot.blue {
+      background: var(--blue);
+      color: white;
+    }
+
+    .dot-content strong {
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .dot-content span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: 92px repeat(3, 1fr);
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .axis,
+    .cell {
+      min-height: 76px;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      font-size: 13px;
+    }
+
+    .axis {
+      display: grid;
+      place-items: center;
+      background: transparent;
+      border-style: dashed;
+      color: var(--muted);
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .cell.high {
+      background: var(--red-bg);
+      border-color: #fca5a5;
+    }
+
+    .cell.med {
+      background: var(--amber-bg);
+      border-color: #fbbf24;
+    }
+
+    .cell.low {
+      background: var(--blue-bg);
+      border-color: #7dd3fc;
+    }
+
+    .cell strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .fix-track {
+      display: grid;
+      gap: 12px;
+    }
+
+    .fix {
+      display: grid;
+      grid-template-columns: 48px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    .rank {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      background: var(--ink);
+      color: white;
+      font-weight: 850;
+    }
+
+    .effort {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    details + details {
+      margin-top: 10px;
+    }
+
+    summary {
+      cursor: pointer;
+      padding: 14px 16px;
+      font-weight: 800;
+    }
+
+    details > div {
+      padding: 0 16px 16px;
+      color: var(--muted);
+    }
+
+    .source-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .source-list li {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+    }
+
+    @media (max-width: 880px) {
+      .hero,
+      .grid,
+      .fork,
+      .state-row,
+      .fix {
+        grid-template-columns: 1fr;
+      }
+
+      .span-4,
+      .span-5,
+      .span-6,
+      .span-7,
+      .span-12 {
+        grid-column: span 1;
+      }
+
+      .arrow {
+        width: 2px;
+        height: 34px;
+        margin-left: 18px;
+      }
+
+      .arrow::after {
+        top: auto;
+        right: auto;
+        bottom: -1px;
+        left: -5px;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-top: 8px solid var(--line-strong);
+        border-bottom: 0;
+      }
+
+      .matrix {
+        grid-template-columns: 1fr;
+      }
+
+      .axis {
+        min-height: 36px;
+      }
+
+      .effort {
+        white-space: normal;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap hero">
+      <div>
+        <h1>Tenet Harness Investigation Board</h1>
+        <p class="subtitle">
+          The short version: <code>start_job</code> probably changes the DB correctly.
+          The confusing parts are queued sequential evals, thin MCP responses, MCP restart
+          recovery, and report-only blocking-finding wording/state handling.
+        </p>
+      </div>
+      <div class="hero-board" aria-label="Top signals">
+        <div class="signal good">
+          <div class="signal-mark">OK</div>
+          <div>
+            <strong><code>start_job</code> has the status update</strong>
+            <span>Registered and ad-hoc paths both set jobs to <code>running</code>.</span>
+          </div>
+        </div>
+        <div class="signal bad">
+          <div class="signal-mark">!</div>
+          <div>
+            <strong>Remediation can halt the visible loop</strong>
+            <span>The tool response says <code>End your turn now.</code>.</span>
+          </div>
+        </div>
+        <div class="signal watch">
+          <div class="signal-mark">?</div>
+          <div>
+            <strong>Agents inspect SQLite when tool replies are vague</strong>
+            <span>Several next actions are implied by prompts, not returned as data.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section>
+      <h2>One-Screen Answer</h2>
+      <div class="grid">
+        <article class="panel big-answer span-4">
+          <span class="label green">Question 1</span>
+          <div class="answer-word">Not likely</div>
+          <p>
+            <code>start_job</code> itself does not appear to leave the direct job pending.
+            It writes <code>running</code> before returning.
+          </p>
+        </article>
+        <article class="panel big-answer span-4">
+          <span class="label red">Question 2</span>
+          <div class="answer-word">Yes</div>
+          <p>
+            the old <code>request_remediation</code> contract could plausibly make an agent stop because its
+            own return message tells the caller to stop.
+          </p>
+        </article>
+        <article class="panel big-answer span-4">
+          <span class="label amber">Root Pattern</span>
+          <div class="answer-word">Contract gap</div>
+          <p>
+            The harness knows the lifecycle, but tools return too little structured guidance.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <article class="panel diagram">
+        <div class="diagram-head">
+          <h2>Direct Job State Machine</h2>
+          <span class="label green">Looks correct</span>
+        </div>
+        <div class="diagram-body">
+          <div class="state-row">
+            <div class="state">
+              <h3>Pending</h3>
+              <p class="muted">Created by <code>tenet_register_jobs</code> or ad-hoc start.</p>
+            </div>
+            <div class="arrow"></div>
+            <div class="state good">
+              <h3>Running</h3>
+              <p>Both <code>dispatchJob</code> and <code>startJob</code> write this before returning.</p>
+            </div>
+            <div class="arrow"></div>
+            <div class="state">
+              <h3>Terminal</h3>
+              <p class="muted"><code>completed</code>, <code>failed</code>, or <code>cancelled</code>.</p>
+            </div>
+          </div>
+          <div class="mini-note">
+            If you see <code>pending</code> after a start, look for sequential eval children,
+            MCP restart reset, or the agent looking at a different job than the one just started.
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section>
+      <div class="grid">
+        <article class="panel diagram span-7">
+          <div class="diagram-head">
+            <h2>Why <code>pending</code> Can Still Appear</h2>
+            <span class="label amber">Likely confusion source</span>
+          </div>
+          <div class="diagram-body">
+            <div class="fork">
+              <div class="branch">
+                <h3>Normal implementation job</h3>
+                <div class="dot-row">
+                  <div class="dot good">1</div>
+                  <div class="dot-content">
+                    <strong><code>tenet_start_job</code></strong>
+                    <span>Updates job to <code>running</code>.</span>
+                  </div>
+                </div>
+                <div class="dot-row">
+                  <div class="dot blue">2</div>
+                  <div class="dot-content">
+                    <strong><code>tenet_job_wait</code></strong>
+                    <span>Returns <code>running</code> until terminal.</span>
+                  </div>
+                </div>
+                <div class="dot-row">
+                  <div class="dot good">3</div>
+                  <div class="dot-content">
+                    <strong>Expected view</strong>
+                    <span>One active running job.</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="branch">
+                <h3>Sequential eval jobs</h3>
+                <div class="dot-row">
+                  <div class="dot good">1</div>
+                  <div class="dot-content">
+                    <strong>Code critic</strong>
+                    <span>Starts immediately as <code>running</code>.</span>
+                  </div>
+                </div>
+                <div class="dot-row">
+                  <div class="dot warn">2</div>
+                  <div class="dot-content">
+                    <strong>Test critic</strong>
+                    <span>Created as <code>pending</code> behind code critic.</span>
+                  </div>
+                </div>
+                <div class="dot-row">
+                  <div class="dot warn">3</div>
+                  <div class="dot-content">
+                    <strong>Playwright eval</strong>
+                    <span>Created as <code>pending</code> behind test critic.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="mini-note">
+              The second branch is intentional, but the tool response should label those jobs
+              as queued, not just return IDs and leave agents to infer from SQLite.
+            </div>
+          </div>
+        </article>
+
+        <article class="panel span-5">
+          <h2>Risk Matrix</h2>
+          <div class="matrix" aria-label="Risk matrix">
+            <div class="axis">Impact</div>
+            <div class="axis">Low</div>
+            <div class="axis">Medium</div>
+            <div class="axis">High</div>
+
+            <div class="axis">High</div>
+            <div class="cell med">
+              <strong>Status CLI misses finding-blocked jobs</strong>
+              Small visibility bug.
+            </div>
+            <div class="cell high">
+              <strong>Tool replies too thin</strong>
+              Causes manual SQLite detours.
+            </div>
+            <div class="cell high">
+              <strong>Remediation parent overwritten</strong>
+              Can break auto-resume.
+            </div>
+
+            <div class="axis">Medium</div>
+            <div class="cell low">
+              <strong>Name <code>job_wait</code></strong>
+              Biases toward blocking.
+            </div>
+            <div class="cell med">
+              <strong>Sequential pending ambiguous</strong>
+              Correct state, unclear meaning.
+            </div>
+            <div class="cell med">
+              <strong>MCP restart reset</strong>
+              Running becomes pending by recovery rule.
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <article class="panel diagram">
+        <div class="diagram-head">
+          <h2>Remediation Hazard</h2>
+          <span class="label red">Most important fix</span>
+        </div>
+        <div class="diagram-body">
+          <svg viewBox="0 0 1120 360" role="img" aria-label="Remediation sequence diagram" style="width:100%;height:auto;display:block">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L9,3 z" fill="#607080"></path>
+              </marker>
+            </defs>
+
+            <rect x="20" y="20" width="210" height="46" rx="8" fill="#e0f2fe" stroke="#7dd3fc"></rect>
+            <text x="125" y="49" text-anchor="middle" font-size="15" font-weight="700" fill="#075985">Report-only worker</text>
+
+            <rect x="330" y="20" width="210" height="46" rx="8" fill="#fee2e2" stroke="#fca5a5"></rect>
+            <text x="435" y="49" text-anchor="middle" font-size="15" font-weight="700" fill="#991b1b">Remediation tool</text>
+
+            <rect x="640" y="20" width="210" height="46" rx="8" fill="#dcfce7" stroke="#86efac"></rect>
+            <text x="745" y="49" text-anchor="middle" font-size="15" font-weight="700" fill="#166534">Child dev job</text>
+
+            <rect x="890" y="20" width="210" height="46" rx="8" fill="#fef3c7" stroke="#fbbf24"></rect>
+            <text x="995" y="49" text-anchor="middle" font-size="15" font-weight="700" fill="#92400e">Orchestrator</text>
+
+            <line x1="125" y1="78" x2="125" y2="335" stroke="#d8e0e7" stroke-width="2"></line>
+            <line x1="435" y1="78" x2="435" y2="335" stroke="#d8e0e7" stroke-width="2"></line>
+            <line x1="745" y1="78" x2="745" y2="335" stroke="#d8e0e7" stroke-width="2"></line>
+            <line x1="995" y1="78" x2="995" y2="335" stroke="#d8e0e7" stroke-width="2"></line>
+
+            <line x1="130" y1="108" x2="425" y2="108" stroke="#607080" stroke-width="2" marker-end="url(#arrow)"></line>
+            <text x="278" y="97" text-anchor="middle" font-size="13" fill="#17202a">reports blocking finding</text>
+
+            <line x1="440" y1="150" x2="735" y2="150" stroke="#607080" stroke-width="2" marker-end="url(#arrow)"></line>
+            <text x="588" y="139" text-anchor="middle" font-size="13" fill="#17202a">starts child dev job</text>
+
+            <line x1="435" y1="194" x2="125" y2="194" stroke="#991b1b" stroke-width="2" marker-end="url(#arrow)"></line>
+            <text x="280" y="183" text-anchor="middle" font-size="13" fill="#991b1b">returns "End your turn now"</text>
+
+            <rect x="35" y="218" width="180" height="58" rx="8" fill="#fee2e2" stroke="#fca5a5"></rect>
+            <text x="125" y="242" text-anchor="middle" font-size="13" font-weight="700" fill="#991b1b">Hazard</text>
+            <text x="125" y="263" text-anchor="middle" font-size="12" fill="#991b1b">parent later exits and may</text>
+            <text x="125" y="279" text-anchor="middle" font-size="12" fill="#991b1b">overwrite blocked status</text>
+
+            <line x1="745" y1="222" x2="990" y2="222" stroke="#607080" stroke-width="2" marker-end="url(#arrow)"></line>
+            <text x="868" y="211" text-anchor="middle" font-size="13" fill="#17202a">needs supervision + eval</text>
+
+            <line x1="990" y1="282" x2="750" y2="282" stroke="#607080" stroke-width="2" marker-end="url(#arrow)"></line>
+            <text x="870" y="271" text-anchor="middle" font-size="13" fill="#17202a">wait, eval, then resume parent</text>
+
+            <rect x="865" y="302" width="260" height="38" rx="8" fill="#fef3c7" stroke="#fbbf24"></rect>
+            <text x="995" y="326" text-anchor="middle" font-size="13" font-weight="700" fill="#92400e">Current wording hides this next step</text>
+          </svg>
+        </div>
+      </article>
+    </section>
+
+    <section>
+      <h2>Fix Roadmap</h2>
+      <div class="fix-track">
+        <div class="fix">
+          <div class="rank">1</div>
+          <div>
+            <h3>Preserve finding-blocked parent state</h3>
+            <p class="muted">
+              Before <code>executeJob</code> writes terminal state, reload the job. If it is
+              <code>blocked_on_finding</code>, do not overwrite it.
+            </p>
+          </div>
+          <div class="effort">Correctness first</div>
+        </div>
+        <div class="fix">
+          <div class="rank">2</div>
+          <div>
+            <h3>Make tool responses self-directing</h3>
+            <p class="muted">
+              Return <code>next_tool</code>, <code>next_args</code>, <code>status</code>, and
+              per-job lifecycle state from start tools.
+            </p>
+          </div>
+          <div class="effort">Agent-following boost</div>
+        </div>
+        <div class="fix">
+          <div class="rank">3</div>
+          <div>
+            <h3>Replace role-unsafe escalation message</h3>
+            <p class="muted">
+              Worker instruction: stop editing and exit. Orchestrator instruction: supervise
+              child job, evaluate it, then pick the parent back up.
+            </p>
+          </div>
+          <div class="effort">Prompt + schema</div>
+        </div>
+        <div class="fix">
+          <div class="rank">4</div>
+          <div>
+            <h3>Expose running and queued jobs in continuation/status</h3>
+            <p class="muted">
+              <code>tenet_continue</code> should show when work is already running or queued
+              behind a parent, so agents do not reconstruct the queue manually.
+            </p>
+          </div>
+          <div class="effort">Visibility</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Details When You Have Focus</h2>
+      <details>
+        <summary>Evidence: <code>start_job</code> updates DB status</summary>
+        <div>
+          <p>
+            <code>dispatchJob</code> rejects non-pending jobs, then writes
+            <code>status: running</code>, <code>startedAt</code>, and <code>lastHeartbeat</code>.
+            <code>startJob</code> creates a pending ad-hoc job, then immediately writes
+            <code>running</code>.
+          </p>
+          <p>
+            Relevant source:
+            <a href="../../src/core/job-manager.ts">src/core/job-manager.ts</a>.
+          </p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Evidence: sequential eval leaves some jobs pending by design</summary>
+        <div>
+          <p>
+            When <code>eval_parallel_safe</code> is false or missing,
+            <code>tenet_start_eval</code> starts code critic but creates test critic and
+            Playwright as pending child jobs with <code>auto_dispatch_on_parent_complete</code>.
+          </p>
+          <p>
+            Relevant source:
+            <a href="../../src/mcp/tools/tenet-start-eval.ts">src/mcp/tools/tenet-start-eval.ts</a>.
+          </p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Evidence: old remediation stop wording</summary>
+        <div>
+          <p>
+            The old <code>tenet_request_remediation</code> returned a message ending with
+            <code>End your turn now.</code>. That should be scoped to the report-only worker,
+            not the whole orchestrator.
+          </p>
+          <p>
+            Relevant source:
+            It has been replaced by <a href="../../src/mcp/tools/tenet-report-blocking-finding.ts">src/mcp/tools/tenet-report-blocking-finding.ts</a>.
+          </p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Evidence: restart recovery can reset running to pending</summary>
+        <div>
+          <p>
+            <code>resetOrphanedJobs</code> changes jobs from <code>running</code> to
+            <code>pending</code> if their <code>server_id</code> does not match the current
+            MCP server. This is recovery behavior, not necessarily a bug.
+          </p>
+          <p>
+            Relevant source:
+            <a href="../../src/core/state-store.ts">src/core/state-store.ts</a>.
+          </p>
+        </div>
+      </details>
+    </section>
+
+    <section>
+      <h2>Source Map</h2>
+      <ul class="source-list">
+        <li><a href="../../src/core/job-manager.ts">src/core/job-manager.ts</a> - job transitions, execution completion, blocking-finding resume.</li>
+        <li><a href="../../src/mcp/tools/tenet-start-job.ts">src/mcp/tools/tenet-start-job.ts</a> - thin <code>{ job_id }</code> start response.</li>
+        <li><a href="../../src/mcp/tools/tenet-start-eval.ts">src/mcp/tools/tenet-start-eval.ts</a> - sequential eval queueing.</li>
+        <li><a href="../../src/mcp/tools/tenet-report-blocking-finding.ts">src/mcp/tools/tenet-report-blocking-finding.ts</a> - linked follow-up job spawn and role-specific next actions.</li>
+        <li><a href="../../src/core/state-store.ts">src/core/state-store.ts</a> - orphaned job reset behavior.</li>
+        <li><a href="../../skills/tenet/phases/05-execution-loop.md">skills/tenet/phases/05-execution-loop.md</a> - intended orchestration protocol.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

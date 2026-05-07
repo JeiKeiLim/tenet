@@ -39,7 +39,7 @@ Execute this sequence for every job cycle:
 9.  **Background Wait for Eval**: Same pattern as step 6. If `execution_mode` is sequential, later eval jobs may remain pending until parents complete; keep waiting on the returned IDs until all are terminal.
 10. **Get Eval Results**: `tenet_job_result(job_id="<eval_job_id>")`
     Retrieve every returned eval result. ALL must pass.
-11. **Update Knowledge or Retry**: `tenet_update_knowledge(...)` on success; `tenet_retry_job(...)` or `tenet_request_remediation(...)` on failure, as described below.
+11. **Update Knowledge or Retry**: `tenet_update_knowledge(...)` on success; `tenet_retry_job(...)` or `tenet_report_blocking_finding(...)` on failure, as described below.
     Persist any architectural discoveries or critical findings.
 12. **Trust Status Sync**:
     `.tenet/status/job-queue.md` and `.tenet/status/status.md` are generated from MCP state transitions. Do not edit them manually to advance runtime.
@@ -74,7 +74,7 @@ After every job:
 - Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion.
 - If the job produced reusable technical insight, also write a knowledge entry via `tenet_update_knowledge(type="knowledge")` with appropriate confidence tag.
 
-## Report-Only Jobs (remediation escape hatch)
+## Report-Only Jobs (blocking finding escape hatch)
 
 Some jobs are **report-only** — their deliverable is an assessment or final acceptance report, not code. They must NOT edit project files (other than writing the report itself).
 
@@ -93,15 +93,15 @@ Typical cases: final acceptance sweeps, architectural reviews, test-flakiness au
 When a report-only job's context is compiled, `tenet_compile_context` prepends a **Report-Only Scope** preamble telling the worker:
 
 - You MUST NOT edit project files.
-- If you find a real bug that must be fixed for the report to be trustworthy, call `tenet_request_remediation({ job_id, reason, suggested_fix, target_files })` instead of editing.
+- If you find a blocking finding that must be resolved for the report to be trustworthy, call `tenet_report_blocking_finding({ job_id, finding, why_it_blocks_report, recommended_followup, suspected_files })` instead of editing.
 
-### Remediation flow
+### Blocking finding flow
 
-1. Report-only agent discovers a real bug during verification.
-2. Agent calls `tenet_request_remediation(job_id=<self>, reason=..., suggested_fix=..., target_files=[...])`.
-3. Tenet marks the agent's job as `blocked_remediation_required` and spawns a child `dev` job with the requested fix.
-4. Agent ends its turn.
-5. Orchestrator processes the child like any other dev job: dispatch → eval via `tenet_start_eval` → if all three critics pass, Tenet **auto-resumes** the report-only parent (flips it from `blocked_remediation_required` → `pending`).
+1. Report-only agent discovers a blocking finding during verification.
+2. Agent calls `tenet_report_blocking_finding(job_id=<self>, finding=..., why_it_blocks_report=..., recommended_followup=..., suspected_files=[...])`.
+3. Tenet marks the agent's job as `blocked_on_finding` and spawns a linked child `dev` follow-up job.
+4. The report-only worker stops report-only work and does not edit files for the finding.
+5. Orchestrator processes the child like any other dev job: dispatch → eval via `tenet_start_eval` → if all three critics pass, Tenet **auto-resumes** the report-only parent (flips it from `blocked_on_finding` → `pending`).
 6. Orchestrator picks up the parent via `tenet_continue()` and redispatches it with fresh context (it now sees the post-fix state).
 
 ### Why this shape
@@ -129,15 +129,21 @@ for finding in code_output.findings + test_output.findings:
         tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="directive")
         tenet_retry_job(job_id=source_job.id)
     elif finding.category == "scope_conflict":
-        # If this is a report-only job that discovered a real bug, use the
-        # remediation escape hatch. Otherwise retry with corrected scope.
+        # If this is a report-only job that discovered a blocking finding, use the
+        # blocking finding escape hatch. Otherwise retry with corrected scope.
         if source_job.report_only:
-            tenet_request_remediation(job_id=source_job.id, reason=finding.detail, suggested_fix="Fix the scoped issue without report-only edits", target_files=[])
+            tenet_report_blocking_finding(
+                job_id=source_job.id,
+                finding=finding.detail,
+                why_it_blocks_report="The report-only job cannot produce a trustworthy report until this finding is resolved.",
+                recommended_followup="Resolve the scoped issue without report-only edits",
+                suspected_files=[]
+            )
         else:
             tenet_retry_job(job_id=source_job.id, enhanced_prompt="Respect declared scope: " + finding.detail)
 ```
 
-Plain "just retry" wastes cycles on test/harness/evidence bugs — route by category and include the category-specific context in the enhanced prompt. Use `tenet_request_remediation` only for report-only jobs that must not edit files directly.
+Plain "just retry" wastes cycles on test/harness/evidence bugs — route by category and include the category-specific context in the enhanced prompt. Use `tenet_report_blocking_finding` only for report-only jobs that must not edit files directly.
 
 ## Eval-mode decision (reminder)
 

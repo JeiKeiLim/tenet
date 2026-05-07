@@ -42,6 +42,8 @@ type SteerRow = {
   affected_job_ids: string | null;
 };
 
+type EventRecord = { id: string; jobId: string; event: string; data: unknown; timestamp: number };
+
 const parseJson = <T>(value: string | null, fallback: T): T => {
   if (value == null) {
     return fallback;
@@ -193,17 +195,35 @@ export class StateStore {
       .run(jobId, event, payload, Date.now());
   }
 
-  getEventsSince(cursor: string): Array<{ id: string; jobId: string; event: string; data: unknown; timestamp: number }> {
+  getEventsSince(cursor: string): EventRecord[] {
     const parsedCursor = Number.parseInt(cursor, 10);
     const numericCursor = Number.isNaN(parsedCursor) ? 0 : parsedCursor;
     const rows = this.db.prepare('SELECT * FROM events WHERE id > ? ORDER BY id ASC').all(numericCursor) as EventRow[];
-    return rows.map((row) => ({
+    return rows.map((row) => this.toEvent(row));
+  }
+
+  getEventsForJob(jobId: string, limit = 50): EventRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE job_id = ? ORDER BY id DESC LIMIT ?')
+      .all(jobId, limit) as EventRow[];
+    return rows.reverse().map((row) => this.toEvent(row));
+  }
+
+  getLatestEventForJob(jobId: string, eventName: string): EventRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM events WHERE job_id = ? AND event = ? ORDER BY id DESC LIMIT 1')
+      .get(jobId, eventName) as EventRow | undefined;
+    return row ? this.toEvent(row) : null;
+  }
+
+  private toEvent(row: EventRow): EventRecord {
+    return {
       id: String(row.id),
       jobId: row.job_id,
       event: row.event,
       data: parseJson(row.data, null),
       timestamp: row.timestamp,
-    }));
+    };
   }
 
   getNextRunnableJob(): Job | null {
@@ -243,7 +263,7 @@ export class StateStore {
   getBlockedJobs(): Job[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM jobs WHERE status IN ('blocked', 'blocked_remediation_required') ORDER BY created_at ASC",
+        "SELECT * FROM jobs WHERE status IN ('blocked', 'blocked_on_finding') ORDER BY created_at ASC",
       )
       .all() as JobRow[];
     return rows.map((row) => this.toJob(row));
@@ -346,7 +366,7 @@ export class StateStore {
       failed: jobs.filter((j) => j.status === 'failed'),
       pending: jobs.filter((j) => j.status === 'pending'),
       blocked: jobs.filter(
-        (j) => j.status === 'blocked' || j.status === 'blocked_remediation_required',
+        (j) => j.status === 'blocked' || j.status === 'blocked_on_finding',
       ),
     });
   }
@@ -433,14 +453,49 @@ export class StateStore {
     }
   }
 
-  resetOrphanedJobs(currentServerId: string): number {
-    const result = this.db
+  resetOrphanedJobs(currentServerId: string, staleAfterMs: number): number {
+    const cutoff = Date.now() - staleAfterMs;
+    const orphaned = this.db
       .prepare(
-        `UPDATE jobs SET status = 'pending', started_at = NULL, last_heartbeat = NULL, server_id = NULL
-         WHERE status = 'running' AND (server_id IS NULL OR server_id != @serverId)`,
+        `SELECT id, server_id, started_at, last_heartbeat FROM jobs
+         WHERE status = 'running' AND (server_id IS NULL OR server_id != @serverId)
+           AND COALESCE(last_heartbeat, started_at, created_at) <= @cutoff
+         ORDER BY created_at ASC`,
       )
-      .run({ serverId: currentServerId });
-    return result.changes;
+      .all({ serverId: currentServerId, cutoff }) as Array<{
+        id: string;
+        server_id: string | null;
+        started_at: number | null;
+        last_heartbeat: number | null;
+      }>;
+
+    if (orphaned.length === 0) {
+      return 0;
+    }
+
+    const update = this.db.prepare(
+      `UPDATE jobs
+       SET status = 'pending', started_at = NULL, last_heartbeat = NULL, server_id = NULL
+       WHERE id = @id`,
+    );
+
+    for (const job of orphaned) {
+      update.run({ id: job.id });
+      this.appendEvent(job.id, 'job_status_changed', {
+        status: 'pending',
+        reason: 'orphan_reset_after_stale_heartbeat',
+      });
+      this.appendEvent(job.id, 'job_orphan_reset', {
+        previous_server_id: job.server_id,
+        current_server_id: currentServerId,
+        stale_after_ms: staleAfterMs,
+        started_at: job.started_at,
+        last_heartbeat: job.last_heartbeat,
+      });
+    }
+
+    this.syncStatusFiles();
+    return orphaned.length;
   }
 
   setJobServerId(jobId: string, serverId: string): void {
@@ -462,6 +517,7 @@ export class StateStore {
       maxRetries: row.max_retries,
       parentJobId: row.parent_job_id ?? undefined,
       error: row.error ?? undefined,
+      serverId: row.server_id ?? undefined,
     };
   }
 

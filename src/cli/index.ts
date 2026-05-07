@@ -39,7 +39,7 @@ const runMcpPreApprovalFlow = async (
   };
 
   console.log('\nPre-approve Tenet MCP tools?');
-  console.log('Each Tenet MCP tool normally triggers an approval prompt on first use (17 tools × agents).');
+  console.log('Each Tenet MCP tool normally triggers an approval prompt on first use (18 tools × agents).');
 
   const doClaude = await ask(
     '\nClaude Code: add Tenet tool allowlist to .claude/settings.local.json (gitignored)?',
