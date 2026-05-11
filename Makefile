@@ -1,4 +1,4 @@
-.PHONY: help build clean test test-migrations test-e2e lint typecheck check dev publish link unlink e2e-cli e2e-api e2e-web e2e-agile e2e-agile-full e2e-all
+.PHONY: help build clean test test-migrations test-e2e lint typecheck check dev docs-review docs-review-e2e publish link unlink e2e-cli e2e-api e2e-web e2e-agile e2e-agile-full e2e-all
 
 .DEFAULT_GOAL := help
 
@@ -29,6 +29,12 @@ typecheck: ## Type-check without emitting
 	pnpm run typecheck
 
 check: clean build typecheck lint test ## Run all checks (pre-publish gate)
+
+docs-review: ## AI doc/code consistency review (Claude by default)
+	node scripts/docs-review.mjs $(DOCS_REVIEW_ARGS)
+
+docs-review-e2e: ## E2E: run docs-review against real Claude+Codex subprocesses
+	pnpm run docs:review:e2e
 
 # E2E canaries (manual — each runs a real agent CLI end-to-end; costs money/time)
 # See docs/e2e-runbook.md for setup, cost estimates, and troubleshooting.

@@ -40,6 +40,8 @@
     "test:migrations": "vitest run src/core/migrations.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "docs:review": "node scripts/docs-review.mjs",
+    "docs:review:e2e": "node scripts/docs-review-e2e.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",

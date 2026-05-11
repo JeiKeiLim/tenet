@@ -27,6 +27,10 @@ AI coding agents are powerful but short-lived. They lose context, drift off-spec
 - **Agent-agnostic** — Works with Claude Code, OpenCode, and Codex. Switch agents mid-project without losing state.
 - **Persistent state** — Versioned SQLite + WAL mode. Jobs, events, steer messages, and config survive crashes.
 
+## Built With Tenet
+
+See [Built With Tenet](docs/built-with-tenet.md) for real projects produced while testing Tenet, including their `.tenet/` artifacts, critic feedback, retry trails, and validation notes.
+
 ## Quick Start
 
 ```bash
@@ -248,6 +252,59 @@ pnpm install
 pnpm run build
 pnpm run test
 pnpm run lint
+```
+
+### Doc/Code Consistency Review
+
+This repository includes a maintainer-only AI review script that checks current Markdown docs against code-derived facts such as MCP tool names, CLI options, adapter defaults, and runtime defaults. It is not shipped in the npm package and it does not apply fixes.
+
+Run the normal review with Claude:
+
+```bash
+make docs-review
+```
+
+Pass custom review arguments through `DOCS_REVIEW_ARGS`:
+
+```bash
+# Use a different reviewer
+DOCS_REVIEW_ARGS="--agents codex" make docs-review
+DOCS_REVIEW_ARGS="--agents opencode" make docs-review
+
+# Use combinations
+DOCS_REVIEW_ARGS="--agents claude,codex" make docs-review
+DOCS_REVIEW_ARGS="--agents claude,codex,opencode" make docs-review
+
+# Save cognition-alignment JSON and keep printing Markdown
+DOCS_REVIEW_ARGS="--json-out /tmp/tenet-doc-review.json" make docs-review
+
+# Save both outputs
+DOCS_REVIEW_ARGS="--json-out /tmp/tenet-doc-review.json --markdown-out /tmp/tenet-doc-review.md" make docs-review
+
+# Save Markdown without printing it
+DOCS_REVIEW_ARGS="--markdown-out /tmp/tenet-doc-review.md --no-print" make docs-review
+```
+
+Run the real-agent E2E smoke test with Claude + Codex by default:
+
+```bash
+make docs-review-e2e
+```
+
+Customize E2E reviewers with `DOCS_REVIEW_E2E_AGENTS`:
+
+```bash
+DOCS_REVIEW_E2E_AGENTS=codex make docs-review-e2e
+DOCS_REVIEW_E2E_AGENTS=opencode make docs-review-e2e
+DOCS_REVIEW_E2E_AGENTS=claude,opencode make docs-review-e2e
+DOCS_REVIEW_E2E_AGENTS=claude,codex,opencode make docs-review-e2e
+```
+
+The E2E always runs with `--fail-on never` and only verifies real subprocess plumbing, JSON shape, Markdown output, reviewer metadata, and that repo-tracked files did not change. It writes reports to a temp directory by default. To choose an output directory, use a path outside the repository:
+
+```bash
+DOCS_REVIEW_E2E_OUTPUT_DIR=/tmp/tenet-doc-review-e2e make docs-review-e2e
+DOCS_REVIEW_E2E_PRINT_MARKDOWN=1 make docs-review-e2e
 ```
 
 ## License

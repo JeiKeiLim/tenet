@@ -17,6 +17,8 @@ make typecheck    # Type-check without emitting
 make lint         # ESLint on src/
 make test         # Run all tests (vitest)
 make test-migrations  # Run DB migration tests
+make docs-review  # AI doc/code consistency review (Claude by default)
+make docs-review-e2e  # Real Claude+Codex subprocess smoke test for docs-review
 make check        # clean + build + typecheck + lint + test (pre-publish gate)
 make link / unlink  # Global pnpm link for local dev
 make bump-patch   # YY.MM.PATCH → YY.MM.PATCH+1
@@ -25,6 +27,10 @@ make release      # bump-patch + check + npm publish
 ```
 
 Direct `pnpm` scripts remain available (`pnpm run build`, `pnpm run test:coverage`, etc.) for cases the Makefile doesn't cover.
+
+Doc/code consistency review is repo-maintenance tooling, not shipped Tenet runtime:
+- `make docs-review` runs `scripts/docs-review.mjs` against current authoritative docs and code-derived facts. Default reviewer: Claude. Use `pnpm docs:review -- --agents claude,codex,opencode` for a broader review.
+- `make docs-review-e2e` runs the same command through real Claude+Codex subprocesses with `--fail-on never` and asserts the repo status is unchanged. It verifies reviewer plumbing only; it must not apply fixes from AI findings.
 
 Run a single test file:
 ```bash
