@@ -6,7 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_AGENTS = ['claude'];
+const DEFAULT_SYNTHESIZER = 'claude';
 const VALID_AGENTS = new Set(['claude', 'codex', 'opencode']);
+const VALID_SYNTHESIZERS = new Set(['claude', 'codex', 'opencode', 'none']);
 const VALID_SCOPES = new Set(['current', 'all']);
 const VALID_FAIL_MODES = new Set(['blocking', 'any', 'never']);
 const DEFAULT_TIMEOUT_MINUTES = 30;
@@ -60,6 +62,7 @@ export const parseArgs = (argv) => {
     failOn: 'blocking',
     timeoutMinutes: DEFAULT_TIMEOUT_MINUTES,
     repoRoot: null,
+    synthesizer: DEFAULT_SYNTHESIZER,
   };
 
   const readValue = (tokens, index, flag) => {
@@ -91,6 +94,16 @@ export const parseArgs = (argv) => {
           }
         }
         options.agents = agents;
+        break;
+      }
+      case '--synthesizer': {
+        const [value, next] = readValue(argv, i, '--synthesizer');
+        i = next;
+        const synthesizer = normalizeAgentName(value);
+        if (!VALID_SYNTHESIZERS.has(synthesizer)) {
+          throw new Error('--synthesizer must be claude, codex, opencode, or none');
+        }
+        options.synthesizer = synthesizer;
         break;
       }
       case '--scope': {
@@ -391,6 +404,54 @@ Required JSON shape:
 
 If no issues are found, return {"summary":"No doc/code consistency issues found.","findings":[]}.`;
 
+export const buildSynthesisPrompt = ({ reviewerResults, rawFindings }) => {
+  const reviewers = reviewerResults.map((result) => ({
+    reviewer: result.reviewer,
+    summary: result.summary,
+    finding_count: result.findings.length,
+  }));
+
+  return `You are the final synthesizer for Tenet doc/code consistency review.
+
+Goal:
+- Group duplicate or overlapping raw findings into canonical merged issues.
+- Preserve source attribution and do not invent new issues.
+- This is NOT a fresh review. You may only use the raw findings provided below.
+
+Rules:
+1. Every raw finding source_id MUST appear in exactly one merged issue.
+2. Do not create a merged issue without at least one source_id.
+3. If two findings describe the same underlying doc/code drift, group them together.
+4. If findings are related but require different fixes, keep them separate.
+5. Use the highest source severity in a group as the merged severity.
+6. Preserve all reviewers in reported_by.
+7. Return ONLY one JSON object. Do not wrap it in Markdown.
+
+Reviewer summaries:
+${JSON.stringify(reviewers, null, 2)}
+
+Raw findings:
+${JSON.stringify(rawFindings, null, 2)}
+
+Required JSON shape:
+{
+  "summary": "short synthesis summary",
+  "merged_issues": [
+    {
+      "id": "stable-short-id",
+      "title": "canonical issue title",
+      "severity": "blocking|warning|info",
+      "category": "tool_list_drift|runtime_default_drift|cli_doc_drift|skill_doc_drift|release_doc_drift|test_doc_drift|other",
+      "summary": "what the grouped issue means",
+      "recommended_action": "what should be changed",
+      "source_findings": ["claude:readme-tool-table", "codex:readme-mcp-table"],
+      "merge_confidence": "high|medium|low",
+      "severity_notes": "optional note when reviewers disagreed"
+    }
+  ]
+}`;
+};
+
 const runProcess = ({ command, args, cwd, input, timeoutMs }) =>
   new Promise((resolve) => {
     const startedAt = Date.now();
@@ -633,14 +694,117 @@ export const normalizeReviewerResult = (value, agent = 'unknown') => {
   };
 };
 
+const findingSourceId = (finding) => `${finding.reviewer}:${finding.id}`;
+
+export const addSourceIds = (findings) =>
+  findings.map((finding, index) => ({
+    ...finding,
+    source_id: finding.source_id || findingSourceId(finding) || `${finding.reviewer}:finding-${index + 1}`,
+  }));
+
 const decisionSeverity = (severity) => {
   if (severity === 'blocking') return 'critical';
   if (severity === 'warning') return 'important';
   return 'consider';
 };
 
+const highestSeverity = (values) =>
+  values.reduce((highest, current) =>
+    SEVERITY_ORDER[normalizeSeverity(current)] > SEVERITY_ORDER[highest] ? normalizeSeverity(current) : highest,
+  'info');
+
+const uniqueSorted = (values) => [...new Set(values.filter(Boolean))].sort();
+
+const slugify = (value, fallback) => {
+  const slug = String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || fallback;
+};
+
+const buildSingletonIssue = (finding, index = 0) => ({
+  id: slugify(finding.id || finding.title, `issue-${index + 1}`),
+  title: finding.title,
+  severity: finding.severity,
+  category: finding.category,
+  reported_by: [finding.reviewer],
+  doc_paths: [...finding.doc_paths],
+  code_paths: [...finding.code_paths],
+  summary: `${finding.doc_claim || 'Documentation claim'} ${finding.code_evidence ? `Code evidence: ${finding.code_evidence}` : ''}`.trim(),
+  recommended_action: finding.recommendation,
+  source_findings: [finding.source_id],
+  merge_confidence: 'high',
+  severity_notes: '',
+});
+
+export const buildSingletonIssues = (rawFindings) =>
+  rawFindings.map((finding, index) => buildSingletonIssue(finding, index));
+
+export const normalizeSynthesisResult = (value, rawFindings) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('synthesizer did not return an object');
+  }
+
+  const rawById = new Map(rawFindings.map((finding) => [finding.source_id, finding]));
+  const used = new Set();
+  const mergedIssues = [];
+  const candidateIssues = Array.isArray(value.merged_issues) ? value.merged_issues : [];
+
+  for (const issue of candidateIssues) {
+    const requestedSourceIds = normalizeStringArray(issue.source_findings);
+    const sourceIds = [];
+    for (const sourceId of requestedSourceIds) {
+      if (rawById.has(sourceId) && !used.has(sourceId)) {
+        used.add(sourceId);
+        sourceIds.push(sourceId);
+      }
+    }
+
+    if (sourceIds.length === 0) {
+      continue;
+    }
+
+    const sources = sourceIds.map((sourceId) => rawById.get(sourceId));
+    const sourceSeverity = highestSeverity(sources.map((source) => source.severity));
+
+    mergedIssues.push({
+      id: slugify(issue.id || issue.title || sources[0].title, `issue-${mergedIssues.length + 1}`),
+      title: asString(issue.title || sources[0].title),
+      severity: sourceSeverity,
+      category: asString(issue.category || sources[0].category || 'other'),
+      reported_by: uniqueSorted(sources.map((source) => source.reviewer)),
+      doc_paths: uniqueSorted(sources.flatMap((source) => source.doc_paths)),
+      code_paths: uniqueSorted(sources.flatMap((source) => source.code_paths)),
+      summary: asString(issue.summary || sources.map((source) => source.doc_claim).filter(Boolean).join(' ')),
+      recommended_action: asString(issue.recommended_action || sources.map((source) => source.recommendation).filter(Boolean).join(' ')),
+      source_findings: sourceIds,
+      merge_confidence: ['high', 'medium', 'low'].includes(String(issue.merge_confidence)) ? String(issue.merge_confidence) : 'medium',
+      severity_notes: asString(issue.severity_notes || ''),
+    });
+  }
+
+  for (const finding of rawFindings) {
+    if (!used.has(finding.source_id)) {
+      mergedIssues.push(buildSingletonIssue(finding, mergedIssues.length));
+    }
+  }
+
+  return {
+    summary: asString(value.summary || `Synthesized ${rawFindings.length} raw finding(s) into ${mergedIssues.length} issue(s).`),
+    merged_issues: mergedIssues,
+  };
+};
+
+export const parseSynthesisOutput = (rawOutput, rawFindings) => {
+  const first = parseJsonFromText(rawOutput);
+  const unwrapped = unwrapCliJson(first);
+  const parsed = typeof unwrapped === 'string' ? parseJsonFromText(unwrapped) : unwrapped;
+  return normalizeSynthesisResult(parsed, rawFindings);
+};
+
 const recommendedOption = (finding) => {
-  const recommendation = `${finding.recommendation} ${finding.title}`.toLowerCase();
+  const recommendation = `${finding.recommended_action ?? finding.recommendation} ${finding.title}`.toLowerCase();
   if (recommendation.includes('code')) return 'fix-code';
   if (recommendation.includes('defer')) return 'defer';
   return 'fix-docs';
@@ -652,32 +816,35 @@ export const buildDecisionReport = ({
   documents,
   codeFacts,
   reviewerResults,
+  mergedIssues,
+  synthesis = null,
   toolErrors = [],
   generatedAt = new Date().toISOString(),
 }) => {
-  const findings = reviewerResults.flatMap((result) => result.findings);
+  const findings = addSourceIds(reviewerResults.flatMap((result) => result.findings));
+  const issues = mergedIssues ?? buildSingletonIssues(findings);
   const reviewers = reviewerResults.map((result) => ({
     reviewer: result.reviewer,
     summary: result.summary,
     finding_count: result.findings.length,
   }));
 
-  const decisions = findings.length > 0
-    ? findings.map((finding, index) => ({
-      id: `${finding.reviewer}-${finding.id || index + 1}`,
-      question: `How should Tenet resolve this doc/code inconsistency: ${finding.title}?`,
-      oneLineSummary: finding.title.slice(0, 60),
-      severity: decisionSeverity(finding.severity),
-      background: `Reviewer ${finding.reviewer} reported a ${finding.category} issue. Docs: ${finding.doc_paths.join(', ') || 'unspecified'}. Code: ${finding.code_paths.join(', ') || 'unspecified'}.`,
-      implication: finding.severity === 'blocking'
+  const decisions = issues.length > 0
+    ? issues.map((issue, index) => ({
+      id: issue.id || `issue-${index + 1}`,
+      question: `How should Tenet resolve this doc/code inconsistency: ${issue.title}?`,
+      oneLineSummary: issue.title.slice(0, 60),
+      severity: decisionSeverity(issue.severity),
+      background: `Reported by ${issue.reported_by.join(', ')} as ${issue.category}. Docs: ${issue.doc_paths.join(', ') || 'unspecified'}. Code: ${issue.code_paths.join(', ') || 'unspecified'}.`,
+      implication: issue.severity === 'blocking'
         ? 'If this remains, agents or maintainers can follow stale instructions and debug the wrong layer.'
         : 'If this remains, documentation trust degrades and future changes become harder to review.',
-      recommended: recommendedOption(finding),
+      recommended: recommendedOption(issue),
       options: [
         {
           id: 'fix-docs',
           label: 'Fix Docs',
-          description: `Update the referenced Markdown so it matches the code evidence: ${finding.code_evidence}`,
+          description: `Update the referenced Markdown so it matches the code evidence. ${issue.summary}`,
           pros: ['Fastest path when code is source of truth', 'Reduces prompt and runbook drift'],
           cons: ['Does not change runtime behavior'],
           effort: 'low',
@@ -685,7 +852,7 @@ export const buildDecisionReport = ({
         {
           id: 'fix-code',
           label: 'Fix Code',
-          description: `Change code behavior if the documented claim is the intended contract: ${finding.doc_claim}`,
+          description: 'Change code behavior if the documented claim is the intended contract.',
           pros: ['Preserves the documented contract when docs are right'],
           cons: ['Requires implementation and normal tests'],
           effort: 'medium',
@@ -693,7 +860,7 @@ export const buildDecisionReport = ({
         {
           id: 'defer',
           label: 'Defer',
-          description: 'Leave this inconsistency in place for now and record why it is acceptable.',
+          description: `Leave this inconsistency in place for now and record why it is acceptable. Source findings: ${issue.source_findings.join(', ')}.`,
           pros: ['Avoids churn when the claim is intentionally transitional'],
           cons: ['Leaves future reviewers with known drift'],
           effort: 'low',
@@ -733,7 +900,7 @@ export const buildDecisionReport = ({
   return {
     version: '1.0',
     title: 'Tenet Doc/Code Consistency Review',
-    summary: `${reviewerResults.length} reviewer(s) checked ${documents.length} document(s) against code-derived facts and reported ${findings.length} finding(s).`,
+    summary: `${reviewerResults.length} reviewer(s) checked ${documents.length} document(s) against code-derived facts and reported ${findings.length} raw finding(s), synthesized into ${issues.length} issue(s).`,
     context: [
       {
         heading: 'Review Boundary',
@@ -746,13 +913,19 @@ export const buildDecisionReport = ({
     ],
     diagram: 'flowchart LR\n  Docs[Authoritative Markdown] --> Review[AI consistency review]\n  Code[Code-derived facts] --> Review\n  Review --> Report[Cognition JSON + Markdown]',
     decisions,
-    notes: reviewers.map((reviewer) => `${reviewer.reviewer}: ${reviewer.finding_count} finding(s). ${reviewer.summary}`).join('\n'),
+    notes: [
+      ...reviewers.map((reviewer) => `${reviewer.reviewer}: ${reviewer.finding_count} finding(s). ${reviewer.summary}`),
+      synthesis ? `synthesis: ${synthesis.summary}` : 'synthesis: disabled; raw findings were converted to singleton issues.',
+    ].join('\n'),
     metadata: {
       generated_at: generatedAt,
       repo_root: repoRoot,
       scope,
       documents,
       reviewers,
+      synthesis,
+      merged_issues: issues,
+      raw_findings: findings,
       findings,
       tool_errors: toolErrors,
     },
@@ -766,7 +939,8 @@ const findingSort = (a, b) => {
 };
 
 export const renderMarkdownReport = (report) => {
-  const findings = [...(report.metadata?.findings ?? [])].sort(findingSort);
+  const issues = [...(report.metadata?.merged_issues ?? report.metadata?.findings ?? [])].sort(findingSort);
+  const rawFindings = report.metadata?.raw_findings ?? report.metadata?.findings ?? [];
   const reviewers = report.metadata?.reviewers ?? [];
   const lines = [
     '# Tenet Doc/Code Consistency Review',
@@ -778,32 +952,49 @@ export const renderMarkdownReport = (report) => {
     `- Reviewers: ${reviewers.map((reviewer) => reviewer.reviewer).join(', ') || 'none'}`,
     `- Documents reviewed: ${(report.metadata?.documents ?? []).length}`,
     '',
-    '## Findings',
+    '## Merged Issues',
     '',
   ];
 
-  if (findings.length === 0) {
+  if (issues.length === 0) {
     lines.push('No doc/code consistency findings reported.');
   } else {
-    for (const finding of findings) {
-      lines.push(`### ${finding.severity.toUpperCase()}: ${finding.title}`);
+    for (const issue of issues) {
+      lines.push(`### ${issue.severity.toUpperCase()}: ${issue.title}`);
       lines.push('');
-      lines.push(`- Reviewer: ${finding.reviewer}`);
-      lines.push(`- Category: ${finding.category}`);
-      lines.push(`- Confidence: ${finding.confidence}`);
-      lines.push(`- Docs: ${finding.doc_paths.join(', ') || '(unspecified)'}`);
-      lines.push(`- Code: ${finding.code_paths.join(', ') || '(unspecified)'}`);
-      lines.push(`- Doc claim: ${finding.doc_claim || '(not provided)'}`);
-      lines.push(`- Code evidence: ${finding.code_evidence || '(not provided)'}`);
-      lines.push(`- Recommendation: ${finding.recommendation || '(not provided)'}`);
+      lines.push(`- Reported by: ${issue.reported_by?.join(', ') || '(unknown)'}`);
+      lines.push(`- Category: ${issue.category}`);
+      lines.push(`- Merge confidence: ${issue.merge_confidence || '(not provided)'}`);
+      lines.push(`- Docs: ${issue.doc_paths?.join(', ') || '(unspecified)'}`);
+      lines.push(`- Code: ${issue.code_paths?.join(', ') || '(unspecified)'}`);
+      lines.push(`- Summary: ${issue.summary || '(not provided)'}`);
+      lines.push(`- Recommendation: ${issue.recommended_action || '(not provided)'}`);
+      lines.push(`- Source findings: ${issue.source_findings?.join(', ') || '(not provided)'}`);
+      if (issue.severity_notes) {
+        lines.push(`- Severity notes: ${issue.severity_notes}`);
+      }
       lines.push('');
     }
   }
+
+  lines.push('## Raw Findings');
+  lines.push('');
+  if (rawFindings.length === 0) {
+    lines.push('No raw reviewer findings reported.');
+  } else {
+    for (const finding of rawFindings) {
+      lines.push(`- ${finding.source_id || findingSourceId(finding)} (${finding.reviewer}, ${finding.severity}): ${finding.title}`);
+    }
+  }
+  lines.push('');
 
   lines.push('## Reviewer Summaries');
   lines.push('');
   for (const reviewer of reviewers) {
     lines.push(`- ${reviewer.reviewer}: ${reviewer.finding_count} finding(s). ${reviewer.summary}`);
+  }
+  if (report.metadata?.synthesis) {
+    lines.push(`- synthesis: ${report.metadata.synthesis.summary}`);
   }
 
   return `${lines.join('\n')}\n`;
@@ -814,7 +1005,7 @@ const ensureParentDir = (filePath) => {
 };
 
 export const shouldFail = (report, failOn) => {
-  const findings = report.metadata?.findings ?? [];
+  const findings = report.metadata?.merged_issues ?? report.metadata?.findings ?? [];
   if (failOn === 'never') return false;
   if (failOn === 'any') return findings.length > 0;
   return findings.some((finding) => finding.severity === 'blocking');
@@ -889,7 +1080,73 @@ export const runDocsReview = async (options) => {
     }
   }
 
-  const report = buildDecisionReport({ repoRoot, scope: options.scope, documents, codeFacts, reviewerResults, toolErrors });
+  const rawFindings = addSourceIds(reviewerResults.flatMap((result) => result.findings));
+  let synthesis = null;
+  let mergedIssues = buildSingletonIssues(rawFindings);
+
+  if (rawFindings.length > 0 && options.synthesizer !== 'none') {
+    const synthesisPrompt = buildSynthesisPrompt({ reviewerResults, rawFindings });
+    const invocation = await invokeReviewer({
+      agent: options.synthesizer,
+      prompt: synthesisPrompt,
+      repoRoot,
+      timeoutMs,
+    });
+
+    if (!invocation.success) {
+      toolErrors.push({
+        reviewer: options.synthesizer,
+        kind: 'synthesis_invocation_failed',
+        detail: invocation.error || invocation.stderr || invocation.stdout || 'unknown error',
+      });
+      synthesis = {
+        synthesizer: options.synthesizer,
+        summary: `${options.synthesizer} synthesis failed; raw findings were converted to singleton issues.`,
+        error: invocation.error || invocation.stderr || invocation.stdout || 'unknown error',
+      };
+    } else {
+      try {
+        const parsedSynthesis = parseSynthesisOutput(invocation.stdout, rawFindings);
+        synthesis = {
+          synthesizer: options.synthesizer,
+          summary: parsedSynthesis.summary,
+        };
+        mergedIssues = parsedSynthesis.merged_issues;
+      } catch (error) {
+        toolErrors.push({
+          reviewer: options.synthesizer,
+          kind: 'synthesis_output_parse_failed',
+          detail: error instanceof Error ? error.message : String(error),
+        });
+        synthesis = {
+          synthesizer: options.synthesizer,
+          summary: `${options.synthesizer} synthesis output could not be parsed; raw findings were converted to singleton issues.`,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+  } else if (rawFindings.length === 0) {
+    synthesis = {
+      synthesizer: options.synthesizer,
+      summary: 'No raw findings to synthesize.',
+    };
+  } else {
+    synthesis = {
+      synthesizer: 'none',
+      summary: 'Synthesis disabled; raw findings were converted to singleton issues.',
+    };
+  }
+
+  const report = buildDecisionReport({
+    repoRoot,
+    scope: options.scope,
+    documents,
+    codeFacts,
+    reviewerResults,
+    mergedIssues,
+    synthesis,
+    toolErrors,
+  });
   const markdown = renderMarkdownReport(report);
 
   if (options.jsonOut) {
@@ -914,6 +1171,7 @@ const printHelp = () => {
 
 Options:
   --agents <list>              Comma-separated reviewers: claude,codex,opencode (default: claude)
+  --synthesizer <agent|none>   Final merge agent for duplicate findings (default: claude)
   --scope current|all          Markdown scope to review (default: current)
   --json-out <path>            Save cognition-alignment JSON report
   --markdown-out <path>        Save human-readable Markdown report

@@ -11,6 +11,7 @@ const repoRoot = findRepoRoot();
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const docsReviewPath = path.join(scriptDir, 'docs-review.mjs');
 const agents = process.env.DOCS_REVIEW_E2E_AGENTS || 'claude,codex';
+const synthesizer = process.env.DOCS_REVIEW_E2E_SYNTHESIZER || 'claude';
 const timeoutMinutes = process.env.DOCS_REVIEW_E2E_TIMEOUT_MINUTES || '30';
 const outputDirEnv = process.env.DOCS_REVIEW_E2E_OUTPUT_DIR;
 const shouldPrintMarkdown = ['1', 'true', 'yes'].includes(
@@ -108,6 +109,8 @@ const main = async () => {
       docsReviewPath,
       '--agents',
       agents,
+      '--synthesizer',
+      synthesizer,
       '--json-out',
       jsonOut,
       '--markdown-out',
@@ -140,6 +143,15 @@ const main = async () => {
   if (!report.metadata || !Array.isArray(report.metadata.reviewers)) {
     throw new Error('report.metadata.reviewers is required');
   }
+  if (!Array.isArray(report.metadata.merged_issues)) {
+    throw new Error('report.metadata.merged_issues is required');
+  }
+  if (!Array.isArray(report.metadata.raw_findings)) {
+    throw new Error('report.metadata.raw_findings is required');
+  }
+  if (!report.metadata.synthesis || report.metadata.synthesis.synthesizer !== synthesizer) {
+    throw new Error(`report.metadata.synthesis.synthesizer must be ${synthesizer}`);
+  }
   if (Array.isArray(report.metadata.tool_errors) && report.metadata.tool_errors.length > 0) {
     throw new Error(`reviewer tool errors were reported:\n${JSON.stringify(report.metadata.tool_errors, null, 2)}`);
   }
@@ -165,7 +177,7 @@ const main = async () => {
     process.stdout.write(`\n${markdown}\n`);
   }
 
-  process.stdout.write(`docs-review e2e passed\nagents: ${agents}\njson: ${jsonOut}\nmarkdown: ${markdownOut}\n`);
+  process.stdout.write(`docs-review e2e passed\nagents: ${agents}\nsynthesizer: ${synthesizer}\njson: ${jsonOut}\nmarkdown: ${markdownOut}\n`);
 };
 
 main().catch((error) => {

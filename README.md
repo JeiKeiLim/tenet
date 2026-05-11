@@ -256,7 +256,7 @@ pnpm run lint
 
 ### Doc/Code Consistency Review
 
-This repository includes a maintainer-only AI review script that checks current Markdown docs against code-derived facts such as MCP tool names, CLI options, adapter defaults, and runtime defaults. It is not shipped in the npm package and it does not apply fixes.
+This repository includes a maintainer-only AI review script that checks current Markdown docs against code-derived facts such as MCP tool names, CLI options, adapter defaults, and runtime defaults. It is not shipped in the npm package and it does not apply fixes. When multiple reviewers are used, their raw findings are preserved and a final synthesizer groups duplicate or overlapping findings into merged issues.
 
 Run the normal review with Claude:
 
@@ -275,6 +275,10 @@ DOCS_REVIEW_ARGS="--agents opencode" make docs-review
 DOCS_REVIEW_ARGS="--agents claude,codex" make docs-review
 DOCS_REVIEW_ARGS="--agents claude,codex,opencode" make docs-review
 
+# Control the final merge/synthesis pass
+DOCS_REVIEW_ARGS="--agents claude,codex --synthesizer claude" make docs-review
+DOCS_REVIEW_ARGS="--agents claude,codex --synthesizer none" make docs-review
+
 # Save cognition-alignment JSON and keep printing Markdown
 DOCS_REVIEW_ARGS="--json-out /tmp/tenet-doc-review.json" make docs-review
 
@@ -291,16 +295,18 @@ Run the real-agent E2E smoke test with Claude + Codex by default:
 make docs-review-e2e
 ```
 
-Customize E2E reviewers with `DOCS_REVIEW_E2E_AGENTS`:
+Customize E2E reviewers and the final synthesizer:
 
 ```bash
 DOCS_REVIEW_E2E_AGENTS=codex make docs-review-e2e
 DOCS_REVIEW_E2E_AGENTS=opencode make docs-review-e2e
 DOCS_REVIEW_E2E_AGENTS=claude,opencode make docs-review-e2e
 DOCS_REVIEW_E2E_AGENTS=claude,codex,opencode make docs-review-e2e
+DOCS_REVIEW_E2E_SYNTHESIZER=codex make docs-review-e2e
+DOCS_REVIEW_E2E_SYNTHESIZER=none make docs-review-e2e
 ```
 
-The E2E always runs with `--fail-on never` and only verifies real subprocess plumbing, JSON shape, Markdown output, reviewer metadata, and that repo-tracked files did not change. It writes reports to a temp directory by default. To choose an output directory, use a path outside the repository:
+The E2E always runs with `--fail-on never` and only verifies real subprocess plumbing, JSON shape, Markdown output, reviewer metadata, merged issue metadata, and that repo-tracked files did not change. It writes reports to a temp directory by default. To choose an output directory, use a path outside the repository:
 
 ```bash
 DOCS_REVIEW_E2E_OUTPUT_DIR=/tmp/tenet-doc-review-e2e make docs-review-e2e

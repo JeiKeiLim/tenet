@@ -2,8 +2,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildDecisionReport,
+  buildSingletonIssues,
   extractCodeFacts,
   getReviewDocuments,
+  normalizeSynthesisResult,
   normalizeReviewerResult,
   parseArgs,
   parseJsonFromText,
@@ -19,6 +21,8 @@ describe('docs-review repo maintenance tool', () => {
     const options = parseArgs([
       '--agents',
       'claude-code,codex',
+      '--synthesizer',
+      'codex',
       '--scope',
       'all',
       '--json-out',
@@ -32,6 +36,7 @@ describe('docs-review repo maintenance tool', () => {
     ]);
 
     expect(options.agents).toEqual(['claude', 'codex']);
+    expect(options.synthesizer).toBe('codex');
     expect(options.scope).toBe('all');
     expect(options.jsonOut).toBe('/tmp/report.json');
     expect(options.markdownOut).toBe('/tmp/report.md');
@@ -135,8 +140,86 @@ describe('docs-review repo maintenance tool', () => {
     expect(report.version).toBe('1.0');
     expect(report.decisions[0].options.map((option) => option.id)).toEqual(['fix-docs', 'fix-code', 'defer']);
     expect(report.metadata.reviewers[0].reviewer).toBe('claude');
+    expect(report.metadata.raw_findings[0].source_id).toBe('claude:timeout');
+    expect(report.metadata.merged_issues[0].source_findings).toEqual(['claude:timeout']);
     expect(markdown).toContain('Timeout default claim is stale');
     expect(shouldFail(report, 'blocking')).toBe(false);
     expect(shouldFail(report, 'any')).toBe(true);
+  });
+
+  it('normalizes synthesis output and preserves unmerged raw findings', () => {
+    const rawFindings = [
+      ...normalizeReviewerResult({
+        summary: 'claude',
+        findings: [
+          {
+            id: 'readme-tools',
+            title: 'README tool table is stale',
+            severity: 'warning',
+            category: 'tool_list_drift',
+            doc_paths: ['README.md'],
+            code_paths: ['src/mcp/tools/tool-names.ts'],
+            doc_claim: 'README lists 16 tools.',
+            code_evidence: 'Code declares 18 tools.',
+            recommendation: 'Update README table.',
+            confidence: 'high',
+          },
+        ],
+      }, 'claude').findings,
+      ...normalizeReviewerResult({
+        summary: 'codex',
+        findings: [
+          {
+            id: 'mcp-table',
+            title: 'README MCP table omits tools',
+            severity: 'info',
+            category: 'tool_list_drift',
+            doc_paths: ['README.md'],
+            code_paths: ['src/mcp/tools/index.ts'],
+            doc_claim: 'README table is complete.',
+            code_evidence: 'Two tools are missing.',
+            recommendation: 'Add missing tools.',
+            confidence: 'medium',
+          },
+          {
+            id: 'phase-count',
+            title: 'README says seven phases',
+            severity: 'info',
+            category: 'skill_doc_drift',
+            doc_paths: ['README.md'],
+            code_paths: ['skills/tenet/SKILL.md'],
+            doc_claim: 'Seven phases.',
+            code_evidence: 'Eight phase files.',
+            recommendation: 'Update phase count.',
+            confidence: 'high',
+          },
+        ],
+      }, 'codex').findings,
+    ].map((finding) => ({
+      ...finding,
+      source_id: `${finding.reviewer}:${finding.id}`,
+    }));
+
+    const synthesis = normalizeSynthesisResult({
+      summary: 'Grouped duplicate tool table findings.',
+      merged_issues: [
+        {
+          id: 'readme-mcp-tool-table',
+          title: 'README MCP tool table is stale',
+          severity: 'info',
+          category: 'tool_list_drift',
+          summary: 'Both reviewers found the same stale README table.',
+          recommended_action: 'Update README MCP table.',
+          source_findings: ['claude:readme-tools', 'codex:mcp-table'],
+          merge_confidence: 'high',
+        },
+      ],
+    }, rawFindings);
+
+    expect(synthesis.merged_issues).toHaveLength(2);
+    expect(synthesis.merged_issues[0].reported_by).toEqual(['claude', 'codex']);
+    expect(synthesis.merged_issues[0].severity).toBe('warning');
+    expect(synthesis.merged_issues[1].source_findings).toEqual(['codex:phase-count']);
+    expect(buildSingletonIssues(rawFindings)).toHaveLength(3);
   });
 });

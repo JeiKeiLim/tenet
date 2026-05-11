@@ -29,8 +29,8 @@ make release      # bump-patch + check + npm publish
 Direct `pnpm` scripts remain available (`pnpm run build`, `pnpm run test:coverage`, etc.) for cases the Makefile doesn't cover.
 
 Doc/code consistency review is repo-maintenance tooling, not shipped Tenet runtime:
-- `make docs-review` runs `scripts/docs-review.mjs` against current authoritative docs and code-derived facts. Default reviewer: Claude. Use `pnpm docs:review -- --agents claude,codex,opencode` for a broader review.
-- `make docs-review-e2e` runs the same command through real Claude+Codex subprocesses with `--fail-on never` and asserts the repo status is unchanged. It verifies reviewer plumbing only; it must not apply fixes from AI findings.
+- `make docs-review` runs `scripts/docs-review.mjs` against current authoritative docs and code-derived facts. Default reviewer: Claude; default synthesizer: Claude. Use `DOCS_REVIEW_ARGS="--agents claude,codex,opencode --synthesizer claude" make docs-review` for a broader review, or `--synthesizer none` to skip merged-issue synthesis.
+- `make docs-review-e2e` runs the same command through real Claude+Codex subprocesses with `--fail-on never` and asserts the repo status is unchanged. It verifies reviewer plumbing, merged issue metadata, and output shape only; it must not apply fixes from AI findings.
 
 Run a single test file:
 ```bash
