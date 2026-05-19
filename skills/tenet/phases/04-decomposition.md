@@ -154,10 +154,17 @@ job-4: Dashboard ─────────────┤
 
 ## 6. Job Registration
 
-Call `tenet_register_jobs` with all jobs including integration checkpoints:
+Call `tenet_register_jobs` with all jobs including integration checkpoints and the exact artifact paths that passed readiness:
 ```
 tenet_register_jobs({
   feature: "oauth",
+  artifact_paths: {
+    spec: ".tenet/spec/2026-04-08-oauth.md",
+    harness: ".tenet/harness/current.md",
+    scenarios: ".tenet/spec/scenarios-2026-04-08-oauth.md",
+    interview: ".tenet/interview/2026-04-08-oauth.md",
+    decomposition: ".tenet/decomposition/2026-04-08-oauth.md"
+  },
   jobs: [
     { id: "job-1", name: "Core API", type: "dev", depends_on: [], prompt: "..." },
     { id: "job-2", name: "Auth Service", type: "dev", depends_on: ["job-1"], prompt: "..." },
@@ -168,6 +175,8 @@ tenet_register_jobs({
   ]
 })
 ```
+
+Do not rely on feature-only document lookup for new runs. The registered jobs carry `artifact_paths` into `tenet_compile_context`, so implementation workers read the same spec/harness/scenarios/interview/decomposition that passed the readiness gate.
 
 ## 7. Execution Protocol (CRITICAL)
 1. **Write Acceptance Tests First**: Generate test stubs from scenarios before writing the DAG.

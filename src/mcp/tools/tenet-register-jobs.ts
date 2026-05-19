@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { parseMaxRetries } from '../../core/runtime-config.js';
 import { StateStore } from '../../core/state-store.js';
+import { artifactPathsSchema, normalizeArtifactPaths, type ArtifactPaths } from './artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const jobEntrySchema = z.object({
@@ -30,11 +31,26 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
         'Each job becomes a pending SQLite entry that tenet_continue() can return.',
       inputSchema: z.object({
         feature: z.string().min(1).describe('Feature slug (e.g. "oauth", "payments"). Used to resolve spec/decomposition docs.'),
+        artifact_paths: artifactPathsSchema
+          .optional()
+          .describe(
+            'Exact project-relative or absolute paths for current-run artifacts. ' +
+              'Recommended: include spec, harness, scenarios, interview, and decomposition. ' +
+              'If omitted, jobs fall back to strict feature filename resolution and the response includes a warning.',
+          ),
         jobs: z.array(jobEntrySchema).min(1).describe('Array of jobs from the decomposition DAG'),
       }),
     },
-    async ({ feature, jobs }) => {
+    async ({ feature, artifact_paths, jobs }) => {
       const dagIdToDbId = new Map<string, string>();
+      const resolvedArtifactPaths: ArtifactPaths | undefined = artifact_paths
+        ? normalizeArtifactPaths(
+            stateStore.projectPath,
+            artifact_paths,
+            ['spec', 'harness', 'decomposition'],
+            ['scenarios', 'interview'],
+          )
+        : undefined;
 
       const maxRetries = parseMaxRetries(stateStore.getConfig('max_retries'));
 
@@ -48,6 +64,7 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
             prompt: entry.prompt,
             depends_on: entry.depends_on,
             feature,
+            ...(resolvedArtifactPaths ? { artifact_paths: resolvedArtifactPaths } : {}),
             ...(entry.report_only === true ? { report_only: true } : {}),
           },
           retryCount: 0,
@@ -83,6 +100,12 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
       return jsonResult({
         registered_count: registered.length,
         jobs: registered,
+        ...(resolvedArtifactPaths
+          ? { artifact_paths: resolvedArtifactPaths }
+          : {
+              warning:
+                'artifact_paths was not provided; registered jobs will use strict feature filename fallback in compile_context. Pass exact artifact_paths to avoid stale document selection.',
+            }),
       });
     },
   );

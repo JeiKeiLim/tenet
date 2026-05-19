@@ -24,7 +24,15 @@ class MockAdapter implements AgentAdapter {
   }
 }
 
-type CapturedHandler = (args: { feature: string }) => Promise<CallToolResult>;
+type ArtifactPaths = {
+  spec?: string;
+  harness?: string;
+  scenarios?: string | null;
+  interview?: string | null;
+};
+
+type CapturedHandlerArgs = { feature: string; artifact_paths?: ArtifactPaths };
+type ReadinessHandler = (args: CapturedHandlerArgs) => Promise<CallToolResult>;
 
 const tempDirs: string[] = [];
 const stores: StateStore[] = [];
@@ -33,7 +41,7 @@ const createHarness = (): {
   store: StateStore;
   manager: JobManager;
   projectPath: string;
-  handler: CapturedHandler;
+  handler: ReadinessHandler;
 } => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-readiness-test-'));
   tempDirs.push(tempDir);
@@ -51,8 +59,8 @@ const createHarness = (): {
     maxParallelAgents: 2,
   });
 
-  let captured: CapturedHandler | undefined;
-  const registerTool = ((_name: string, _def: unknown, handler: CapturedHandler) => {
+  let captured: ReadinessHandler | undefined;
+  const registerTool = ((_name: string, _def: unknown, handler: ReadinessHandler) => {
     captured = handler;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any;
@@ -280,10 +288,122 @@ describe('tenet_validate_readiness', () => {
     const job = store.getJob(parsed.job_id as string);
     const prompt = job?.params.prompt as string;
 
+    expect(prompt.indexOf('## Spec')).toBeLessThan(prompt.indexOf('# Spec'));
+    expect(prompt.indexOf('# Spec')).toBeLessThan(prompt.indexOf('## Harness'));
     expect(prompt).toContain('Scenario body');
     expect(prompt).toContain('Interview body');
     expect(prompt).toContain('do not re-score clarity');
 
     await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
+  it('uses explicit artifact paths for nonstandard current-run filenames', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(projectPath, '.tenet/spec/current-oauth-plan.md', '# Explicit current spec');
+    writeFile(projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Stale dated spec');
+    writeFile(projectPath, '.tenet/spec/scenarios-custom-oauth.md', '# Explicit scenarios');
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+
+    const result = await handler({
+      feature: 'oauth',
+      artifact_paths: {
+        spec: '.tenet/spec/current-oauth-plan.md',
+        harness: '.tenet/harness/current.md',
+        scenarios: '.tenet/spec/scenarios-custom-oauth.md',
+        interview: null,
+      },
+    });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const prompt = job?.params.prompt as string;
+
+    expect(parsed.warning).toBeUndefined();
+    expect(parsed.artifact_paths).toEqual({
+      spec: '.tenet/spec/current-oauth-plan.md',
+      harness: '.tenet/harness/current.md',
+      scenarios: '.tenet/spec/scenarios-custom-oauth.md',
+      interview: null,
+    });
+    expect(job?.params.artifact_paths).toEqual(parsed.artifact_paths);
+    expect(prompt).toContain('Explicit current spec');
+    expect(prompt).toContain('Explicit scenarios');
+    expect(prompt).not.toContain('Stale dated spec');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
+  it('warns but does not select scenarios as the spec in feature-only fallback', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Real spec');
+    writeFile(projectPath, '.tenet/spec/scenarios-2026-04-16-oauth.md', '# Scenario body');
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const prompt = job?.params.prompt as string;
+
+    expect(parsed.warning).toContain('artifact_paths was not provided');
+    expect(parsed.artifact_paths).toEqual({
+      spec: '.tenet/spec/2026-04-16-oauth.md',
+      harness: '.tenet/harness/current.md',
+      scenarios: '.tenet/spec/scenarios-2026-04-16-oauth.md',
+      interview: null,
+    });
+    expect(prompt.indexOf('## Spec')).toBeLessThan(prompt.indexOf('# Real spec'));
+    expect(prompt.indexOf('# Real spec')).toBeLessThan(prompt.indexOf('## Harness'));
+    expect(prompt.indexOf('## Scenarios & Anti-Scenarios')).toBeLessThan(prompt.indexOf('# Scenario body'));
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
+  it('accepts quoted YAML delivery_mode in spec front matter', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/spec/2026-04-16-oauth.md',
+      ['---', 'delivery_mode: "agile"', '---', '', '# Spec', '', '## Slice plan'].join('\n'),
+    );
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+    writeFile(
+      projectPath,
+      '.tenet/interview/2026-04-16-oauth.md',
+      [
+        '# Interview: OAuth',
+        '',
+        'Date: 2026-04-16',
+        'Mode: Full',
+        '',
+        '## Delivery Mode Decision',
+        '- Prompt shown: Choose autonomous or agile.',
+        '- User response: agile',
+        '- Selected delivery_mode: agile',
+        '- Selection basis: explicit_user_choice',
+      ].join('\n'),
+    );
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+
+    expect(job?.status).toBe('running');
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
+  it('rejects explicit artifact paths outside the project', async () => {
+    const { handler, projectPath } = createHarness();
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+
+    await expect(
+      handler({
+        feature: 'oauth',
+        artifact_paths: {
+          spec: path.join(os.tmpdir(), 'outside-spec.md'),
+          harness: '.tenet/harness/current.md',
+          scenarios: null,
+          interview: null,
+        },
+      }),
+    ).rejects.toThrow(/must be inside the project/);
   });
 });

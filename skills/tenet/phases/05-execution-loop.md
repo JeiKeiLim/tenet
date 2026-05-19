@@ -23,7 +23,7 @@ Execute this sequence for every job cycle:
 2.  **Get Next Job**: `tenet_continue()`
     Retrieves the next pending job from the runtime queue. The response includes `next_job` with its runtime `id`.
 3.  **Compile Context**: `tenet_compile_context(job_id="<next_job.id>")`
-    Gathers specifications, harness, decomposition, and relevant knowledge into a single string.
+    Gathers specifications, harness, decomposition, and relevant knowledge into a single string. For current runs, this reads the exact `artifact_paths` stored on the job during `tenet_register_jobs`; feature-only filename lookup is a compatibility fallback.
 4.  **Start Job**: `tenet_start_job(job_id="<next_job.id>")`
     Dispatches the registered job for execution. The MCP server transitions it from pending to running and allocates an agent.
 5.  **Brief User**: Tell the user which job was dispatched and that they can interact while it runs.

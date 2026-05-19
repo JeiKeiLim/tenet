@@ -74,9 +74,9 @@ Project-wide documents stay singular:
 Auto-generated from DB:
 - `status/status.md`, `status/job-queue.md`
 
-`tenet_compile_context` resolves the latest doc per feature by globbing `*-{feature}.md` and sorting by date prefix. Falls back to old singleton paths (`spec/spec.md`) for backward compatibility.
+Current-run document identity should flow through `artifact_paths`: `tenet_validate_readiness` validates exact spec/harness/scenarios/interview paths, `tenet_register_jobs` stores those plus decomposition on every job, and `tenet_compile_context` reads the stored paths. Feature-only filename lookup is a compatibility fallback only; it uses strict dated document patterns rather than loose `*-{feature}.md` matching.
 
-`tenet_register_jobs` requires a `feature` slug that propagates to all jobs in the DAG.
+`tenet_register_jobs` requires a `feature` slug that propagates to all jobs in the DAG, and current runs should also pass `artifact_paths` so job context cannot drift to stale documents.
 
 Dev-type jobs get a "Deliverable Requirements" preamble prepended to their prompt, with extra retry context when `retryCount > 0`.
 

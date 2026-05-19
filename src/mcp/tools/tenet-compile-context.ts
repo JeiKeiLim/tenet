@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { StateStore } from '../../core/state-store.js';
+import {
+  readArtifactFile,
+  resolveLatestFeatureDoc,
+  resolveLatestScenariosDoc,
+  type ArtifactPaths,
+} from './artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const readIfExists = (filePath: string): string => {
@@ -29,28 +35,49 @@ const listFiles = (dir: string, prefix: string): string => {
   return files.map((f) => `- ${prefix}${f}`).join('\n');
 };
 
-/**
- * Resolve the latest document matching `$date-$feature.md` in a directory.
- * Files are sorted lexicographically (date prefix ensures chronological order),
- * and the last match (most recent) is returned.
- * Returns empty string if no matches found.
- */
-const resolveLatest = (dir: string, feature: string): string => {
-  if (!fs.existsSync(dir)) {
+const readLatestFeatureDoc = (dir: string, feature: string): string => {
+  const docPath = resolveLatestFeatureDoc(dir, feature);
+  return docPath ? fs.readFileSync(docPath, 'utf8') : '';
+};
+
+const readLatestScenariosDoc = (dir: string, feature: string): string => {
+  const docPath = resolveLatestScenariosDoc(dir, feature);
+  return docPath ? fs.readFileSync(docPath, 'utf8') : '';
+};
+
+const getArtifactPaths = (value: unknown): ArtifactPaths | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as ArtifactPaths;
+};
+
+const readArtifactOrFallback = (
+  projectPath: string,
+  artifactPaths: ArtifactPaths | undefined,
+  key: keyof ArtifactPaths,
+  label: string,
+  fallback: () => string,
+): string => {
+  if (!artifactPaths) {
+    return fallback();
+  }
+
+  if (!(key in artifactPaths)) {
+    if (key === 'spec' || key === 'harness' || key === 'decomposition') {
+      throw new Error(`artifact_paths.${key} is missing from job context`);
+    }
+
     return '';
   }
 
-  const suffix = `-${feature}.md`;
-  const matches = fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(suffix))
-    .sort();
-
-  if (matches.length === 0) {
+  const artifactPath = artifactPaths[key];
+  if (artifactPath == null) {
     return '';
   }
 
-  return fs.readFileSync(path.join(dir, matches[matches.length - 1]), 'utf8');
+  return readArtifactFile(projectPath, artifactPath, label);
 };
 
 export const registerTenetCompileContextTool = (registerTool: RegisterTool, stateStore: StateStore): void => {
@@ -70,30 +97,61 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
 
       const tenetPath = path.join(stateStore.projectPath, '.tenet');
       const feature = typeof job.params.feature === 'string' ? job.params.feature : undefined;
+      const artifactPaths = getArtifactPaths(job.params.artifact_paths);
 
       // Resolve spec: feature-scoped with fallback to old singleton
-      const specMd = feature
-        ? resolveLatest(path.join(tenetPath, 'spec'), feature)
-        : readIfExists(path.join(tenetPath, 'spec', 'spec.md'));
+      const specMd = readArtifactOrFallback(
+        stateStore.projectPath,
+        artifactPaths,
+        'spec',
+        'artifact_paths.spec',
+        () =>
+          feature
+            ? readLatestFeatureDoc(path.join(tenetPath, 'spec'), feature)
+            : readIfExists(path.join(tenetPath, 'spec', 'spec.md')),
+      );
 
       // Resolve decomposition: own directory (new) or under spec/ (old)
-      const decompositionMd = feature
-        ? resolveLatest(path.join(tenetPath, 'decomposition'), feature)
-        : readIfExists(path.join(tenetPath, 'spec', 'decomposition.md'));
+      const decompositionMd = readArtifactOrFallback(
+        stateStore.projectPath,
+        artifactPaths,
+        'decomposition',
+        'artifact_paths.decomposition',
+        () =>
+          feature
+            ? readLatestFeatureDoc(path.join(tenetPath, 'decomposition'), feature)
+            : readIfExists(path.join(tenetPath, 'spec', 'decomposition.md')),
+      );
 
       // Resolve interview: feature-scoped, no old-format fallback
-      const interviewMd = feature
-        ? resolveLatest(path.join(tenetPath, 'interview'), feature)
-        : '';
+      const interviewMd = readArtifactOrFallback(
+        stateStore.projectPath,
+        artifactPaths,
+        'interview',
+        'artifact_paths.interview',
+        () => (feature ? readLatestFeatureDoc(path.join(tenetPath, 'interview'), feature) : ''),
+      );
 
       // Resolve scenarios: feature-scoped with fallback
-      const scenariosMd = feature
-        ? resolveLatest(path.join(tenetPath, 'spec'), `scenarios-${feature}`)
-            || resolveLatest(path.join(tenetPath, 'spec'), feature.replace(/^scenarios-/, ''))
-        : readIfExists(path.join(tenetPath, 'spec', 'scenarios.md'));
+      const scenariosMd = readArtifactOrFallback(
+        stateStore.projectPath,
+        artifactPaths,
+        'scenarios',
+        'artifact_paths.scenarios',
+        () =>
+          feature
+            ? readLatestScenariosDoc(path.join(tenetPath, 'spec'), feature)
+            : readIfExists(path.join(tenetPath, 'spec', 'scenarios.md')),
+      );
 
       // Project-wide documents (always singular)
-      const harnessMd = readIfExists(path.join(tenetPath, 'harness', 'current.md'));
+      const harnessMd = readArtifactOrFallback(
+        stateStore.projectPath,
+        artifactPaths,
+        'harness',
+        'artifact_paths.harness',
+        () => readIfExists(path.join(tenetPath, 'harness', 'current.md')),
+      );
       const statusMd = readIfExists(path.join(tenetPath, 'status', 'status.md'));
       // Steer messages now live in SQLite via tenet_add_steer, but keep reading inbox.md for backward compatibility
       const steerInbox = readIfExists(path.join(tenetPath, 'steer', 'inbox.md'));
@@ -133,6 +191,7 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         `job_type: ${job.type}`,
         `job_name: ${jobName}`,
         ...(feature ? [`feature: ${feature}`] : []),
+        ...(artifactPaths ? [`artifact_paths: ${JSON.stringify(artifactPaths)}`] : []),
         `job_dependencies: ${jobDeps}`,
         ...(reportOnly ? ['report_only: true'] : []),
         reportOnlyPreamble,

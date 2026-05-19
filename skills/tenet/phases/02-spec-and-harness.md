@@ -140,7 +140,21 @@ Verify these before proceeding:
 
 ## 6. Implementation Readiness Gate (hard block before decomposition)
 
-After the checklist above passes, run `tenet_validate_readiness(feature="{feature}")`. This is a **hard gate** — decomposition MUST NOT start until it passes.
+After the checklist above passes, run `tenet_validate_readiness` with the exact artifact paths you just wrote. This is a **hard gate** — decomposition MUST NOT start until it passes.
+
+```json
+{
+  "feature": "{feature}",
+  "artifact_paths": {
+    "spec": ".tenet/spec/{date}-{feature}.md",
+    "harness": ".tenet/harness/current.md",
+    "scenarios": ".tenet/spec/scenarios-{date}-{feature}.md",
+    "interview": ".tenet/interview/{date}-{feature}.md"
+  }
+}
+```
+
+If an optional artifact does not exist, pass `null` for that key rather than omitting it silently. Do not rely on Tenet to guess the current spec from `{feature}` alone; feature-only lookup exists only as a compatibility fallback and may warn.
 
 ### What readiness validates
 A fresh agent reads spec + harness (+ scenarios + interview) and scores 8 categories:

@@ -1,8 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { parse as parseYaml } from 'yaml';
 import { JobManager } from '../../core/job-manager.js';
 import { StateStore } from '../../core/state-store.js';
+import {
+  artifactPathsSchema,
+  normalizeArtifactPaths,
+  readArtifactFile,
+  resolveLatestFeatureDoc,
+  resolveLatestScenariosDoc,
+  toProjectRelativePath,
+  type ArtifactPaths,
+} from './artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const READINESS_RUBRIC = `Score this feature's IMPLEMENTATION READINESS. You are reading the spec + harness (+ optional interview) and deciding whether the agent has enough information to BUILD AND VERIFY the feature.
@@ -113,24 +123,6 @@ Respond with ONLY this JSON (no markdown, no explanation):
 
 Where blockers are hard stops (must be resolved or explicitly mocked-with-reason) and missing_info are softer gaps that should be noted but do not block decomposition.`;
 
-const resolveLatest = (dir: string, feature: string): string | undefined => {
-  if (!fs.existsSync(dir)) {
-    return undefined;
-  }
-
-  const suffix = `-${feature}.md`;
-  const matches = fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(suffix))
-    .sort();
-
-  if (matches.length === 0) {
-    return undefined;
-  }
-
-  return path.join(dir, matches[matches.length - 1]);
-};
-
 const readIfExists = (filePath: string): string | undefined => {
   if (!fs.existsSync(filePath)) {
     return undefined;
@@ -140,7 +132,6 @@ const readIfExists = (filePath: string): string | undefined => {
 
 type DeliveryMode = 'autonomous' | 'agile';
 
-const SPEC_DELIVERY_MODE_RE = /^delivery_mode:\s*(autonomous|agile)\b/im;
 const SLICE_PLAN_RE = /^## Slice plan\b/im;
 const FULL_MODE_RE = /^Mode:\s*Full\b/im;
 const DELIVERY_MODE_DECISION_RE = /^## Delivery Mode Decision\b/im;
@@ -150,9 +141,51 @@ const SELECTED_DELIVERY_MODE_RE = /^\s*-\s*Selected delivery_mode:\s*(autonomous
 const SELECTION_BASIS_RE =
   /^\s*-\s*Selection basis:\s*(explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision)\b/im;
 
-const parseSpecDeliveryMode = (specMd: string): DeliveryMode | null => {
-  const match = specMd.match(SPEC_DELIVERY_MODE_RE);
-  return match ? (match[1].toLowerCase() as DeliveryMode) : null;
+type FrontMatterResult = {
+  data: Record<string, unknown> | null;
+  error?: string;
+};
+
+const FRONT_MATTER_RE = /^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+const parseFrontMatter = (markdown: string): FrontMatterResult => {
+  const match = markdown.match(FRONT_MATTER_RE);
+  if (!match) {
+    return { data: null };
+  }
+
+  try {
+    const parsed = parseYaml(match[1]) as unknown;
+    if (parsed == null) {
+      return { data: {} };
+    }
+
+    if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { data: null, error: 'Spec front matter must be a YAML object.' };
+    }
+
+    return { data: parsed as Record<string, unknown> };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { data: null, error: `Spec front matter is invalid YAML: ${message}` };
+  }
+};
+
+const parseSpecDeliveryMode = (specMd: string): { mode: DeliveryMode | null; error?: string } => {
+  const frontMatter = parseFrontMatter(specMd);
+  if (frontMatter.error) {
+    return { mode: null, error: frontMatter.error };
+  }
+
+  const raw = frontMatter.data?.delivery_mode;
+  if (typeof raw !== 'string') {
+    return { mode: null };
+  }
+
+  const normalized = raw.toLowerCase();
+  return normalized === 'autonomous' || normalized === 'agile'
+    ? { mode: normalized }
+    : { mode: null };
 };
 
 const parseInterviewDeliveryMode = (interviewMd: string): DeliveryMode | null => {
@@ -162,7 +195,12 @@ const parseInterviewDeliveryMode = (interviewMd: string): DeliveryMode | null =>
 
 const getReadinessPreflightFailures = (specMd: string, interviewMd?: string): string[] => {
   const failures: string[] = [];
-  const specMode = parseSpecDeliveryMode(specMd);
+  const specDeliveryMode = parseSpecDeliveryMode(specMd);
+  const specMode = specDeliveryMode.mode;
+
+  if (specDeliveryMode.error) {
+    failures.push(specDeliveryMode.error);
+  }
 
   if (specMode === 'agile' && !SLICE_PLAN_RE.test(specMd)) {
     failures.push('Spec declares delivery_mode: agile but is missing ## Slice plan.');
@@ -205,6 +243,79 @@ const getReadinessPreflightFailures = (specMd: string, interviewMd?: string): st
   return failures;
 };
 
+type ResolvedReadinessArtifacts = {
+  artifactPaths: ArtifactPaths;
+  specMd: string;
+  harnessMd: string;
+  interviewMd?: string;
+  scenariosMd?: string;
+  warning?: string;
+};
+
+const resolveReadinessArtifacts = (
+  projectPath: string,
+  feature: string,
+  rawArtifactPaths?: z.infer<typeof artifactPathsSchema>,
+): ResolvedReadinessArtifacts => {
+  const tenetPath = path.join(projectPath, '.tenet');
+
+  if (rawArtifactPaths) {
+    const artifactPaths = normalizeArtifactPaths(
+      projectPath,
+      rawArtifactPaths,
+      ['spec', 'harness'],
+      ['scenarios', 'interview'],
+    );
+    const specMd = readArtifactFile(projectPath, artifactPaths.spec!, 'artifact_paths.spec');
+    const harnessMd = readArtifactFile(projectPath, artifactPaths.harness!, 'artifact_paths.harness');
+    const interviewMd = artifactPaths.interview
+      ? readArtifactFile(projectPath, artifactPaths.interview, 'artifact_paths.interview')
+      : undefined;
+    const scenariosMd = artifactPaths.scenarios
+      ? readArtifactFile(projectPath, artifactPaths.scenarios, 'artifact_paths.scenarios')
+      : undefined;
+
+    return { artifactPaths, specMd, harnessMd, interviewMd, scenariosMd };
+  }
+
+  const specPath = resolveLatestFeatureDoc(path.join(tenetPath, 'spec'), feature);
+  if (!specPath) {
+    throw new Error(
+      `Spec not found for feature "${feature}" — pass artifact_paths.spec or write .tenet/spec/{date}-${feature}.md before validating readiness`,
+    );
+  }
+
+  const harnessPath = path.join(tenetPath, 'harness', 'current.md');
+  const harnessMd = readIfExists(harnessPath);
+  if (!harnessMd) {
+    throw new Error(
+      'Harness not found at .tenet/harness/current.md — pass artifact_paths.harness or update the harness before validating readiness',
+    );
+  }
+
+  const interviewPath = resolveLatestFeatureDoc(path.join(tenetPath, 'interview'), feature);
+  const scenariosPath = resolveLatestScenariosDoc(path.join(tenetPath, 'spec'), feature);
+
+  return {
+    artifactPaths: {
+      spec: toProjectRelativePath(projectPath, specPath, 'resolved spec'),
+      harness: toProjectRelativePath(projectPath, harnessPath, 'resolved harness'),
+      interview: interviewPath
+        ? toProjectRelativePath(projectPath, interviewPath, 'resolved interview')
+        : null,
+      scenarios: scenariosPath
+        ? toProjectRelativePath(projectPath, scenariosPath, 'resolved scenarios')
+        : null,
+    },
+    specMd: fs.readFileSync(specPath, 'utf8'),
+    harnessMd,
+    interviewMd: interviewPath ? fs.readFileSync(interviewPath, 'utf8') : undefined,
+    scenariosMd: scenariosPath ? fs.readFileSync(scenariosPath, 'utf8') : undefined,
+    warning:
+      'artifact_paths was not provided; used strict feature filename fallback. Pass exact artifact_paths to avoid stale document selection.',
+  };
+};
+
 const createReadinessFailureOutput = (failures: string[]) => ({
   passed: false,
   categories: {
@@ -235,6 +346,7 @@ const createCompletedReadinessFailureJob = (
   stateStore: StateStore,
   feature: string,
   failures: string[],
+  artifactPaths?: ArtifactPaths,
 ) => {
   const now = Date.now();
   const job = jobManager.createPendingJob('eval', {
@@ -242,6 +354,7 @@ const createCompletedReadinessFailureJob = (
     prompt: `Deterministic readiness gate failure:\n${failures.map((failure) => `- ${failure}`).join('\n')}`,
     eval_type: 'readiness_validation',
     feature,
+    ...(artifactPaths ? { artifact_paths: artifactPaths } : {}),
   });
 
   stateStore.setJobOutput(job.id, createReadinessFailureOutput(failures));
@@ -274,31 +387,17 @@ export const registerTenetValidateReadinessTool = (
         feature: z
           .string()
           .describe('Feature slug used to resolve spec/interview files (e.g. "oauth"). Required.'),
+        artifact_paths: artifactPathsSchema
+          .optional()
+          .describe(
+            'Exact project-relative or absolute paths for current-run artifacts. ' +
+              'Recommended: { spec, harness, scenarios, interview }. If omitted, Tenet uses a strict compatibility filename fallback and returns a warning.',
+          ),
       }),
     },
-    async ({ feature }) => {
-      const tenetPath = path.join(stateStore.projectPath, '.tenet');
-
-      const specPath = resolveLatest(path.join(tenetPath, 'spec'), feature);
-      if (!specPath) {
-        throw new Error(
-          `Spec not found for feature "${feature}" — write .tenet/spec/{date}-${feature}.md before validating readiness`,
-        );
-      }
-      const specMd = fs.readFileSync(specPath, 'utf8');
-
-      const harnessMd = readIfExists(path.join(tenetPath, 'harness', 'current.md'));
-      if (!harnessMd) {
-        throw new Error(
-          'Harness not found at .tenet/harness/current.md — update the harness before validating readiness',
-        );
-      }
-
-      const interviewPath = resolveLatest(path.join(tenetPath, 'interview'), feature);
-      const interviewMd = interviewPath ? fs.readFileSync(interviewPath, 'utf8') : undefined;
-
-      const scenariosPath = resolveLatest(path.join(tenetPath, 'spec'), `scenarios-${feature}`);
-      const scenariosMd = scenariosPath ? fs.readFileSync(scenariosPath, 'utf8') : undefined;
+    async ({ feature, artifact_paths }) => {
+      const { artifactPaths, specMd, harnessMd, interviewMd, scenariosMd, warning } =
+        resolveReadinessArtifacts(stateStore.projectPath, feature, artifact_paths);
 
       const preflightFailures = getReadinessPreflightFailures(specMd, interviewMd);
       if (preflightFailures.length > 0) {
@@ -307,12 +406,15 @@ export const registerTenetValidateReadinessTool = (
           stateStore,
           feature,
           preflightFailures,
+          artifactPaths,
         );
 
         return jsonResult({
           job_id: job.id,
           message:
             'Readiness validation failed before dispatch. Use tenet_job_result to read the gate failure.',
+          artifact_paths: artifactPaths,
+          ...(warning ? { warning } : {}),
         });
       }
 
@@ -342,12 +444,15 @@ export const registerTenetValidateReadinessTool = (
         prompt,
         eval_type: 'readiness_validation',
         feature,
+        artifact_paths: artifactPaths,
       });
 
       return jsonResult({
         job_id: job.id,
         message:
           'Readiness validation dispatched. Use tenet_job_wait + tenet_job_result to get the verdict.',
+        artifact_paths: artifactPaths,
+        ...(warning ? { warning } : {}),
       });
     },
   );
