@@ -92,6 +92,31 @@ describe('docs-review repo maintenance tool', () => {
             code_paths: ['src/mcp/tools/tool-names.ts'],
             doc_claim: 'The table lists 16 tools.',
             code_evidence: 'TENET_MCP_TOOL_NAMES has 18 tools.',
+            doc_evidence: [
+              {
+                path: 'README.md',
+                line: 154,
+                quote: '16 MCP tools',
+                claim: 'README says the tool list has 16 tools.',
+              },
+            ],
+            code_evidence_details: [
+              {
+                path: 'src/mcp/tools/tool-names.ts',
+                line: 10,
+                symbol: 'TENET_MCP_TOOL_NAMES',
+                actual_behavior: 'The array contains 18 tools.',
+              },
+            ],
+            suggested_changes: [
+              {
+                file: 'README.md',
+                line: 154,
+                before: '16 MCP tools',
+                after: '18 MCP tools',
+                why: 'TENET_MCP_TOOL_NAMES has 18 entries.',
+              },
+            ],
             recommendation: 'Fix the docs table.',
             confidence: 'high',
           },
@@ -104,6 +129,9 @@ describe('docs-review repo maintenance tool', () => {
     expect(result.reviewer).toBe('claude');
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].severity).toBe('blocking');
+    expect(result.findings[0].doc_evidence[0].line).toBe(154);
+    expect(result.findings[0].code_evidence_details[0].symbol).toBe('TENET_MCP_TOOL_NAMES');
+    expect(result.findings[0].suggested_changes[0].after).toBe('18 MCP tools');
   });
 
   it('builds cognition-alignment compatible JSON and Markdown', () => {
@@ -120,6 +148,31 @@ describe('docs-review repo maintenance tool', () => {
             code_paths: ['src/core/runtime-config.ts'],
             doc_claim: 'Default is 30 minutes.',
             code_evidence: 'DEFAULT_JOB_TIMEOUT_MINUTES is 120.',
+            doc_evidence: [
+              {
+                path: 'README.md',
+                line: 42,
+                quote: '30 minutes',
+                claim: 'README states the default timeout is 30 minutes.',
+              },
+            ],
+            code_evidence_details: [
+              {
+                path: 'src/core/runtime-config.ts',
+                line: 5,
+                symbol: 'DEFAULT_JOB_TIMEOUT_MINUTES',
+                actual_behavior: 'The default timeout is 120 minutes.',
+              },
+            ],
+            suggested_changes: [
+              {
+                file: 'README.md',
+                line: 42,
+                before: '30 minutes',
+                after: '120 minutes',
+                why: 'DEFAULT_JOB_TIMEOUT_MINUTES is 120.',
+              },
+            ],
             recommendation: 'Fix docs to say 120 minutes.',
             confidence: 'high',
           },
@@ -139,10 +192,17 @@ describe('docs-review repo maintenance tool', () => {
 
     expect(report.version).toBe('1.0');
     expect(report.decisions[0].options.map((option) => option.id)).toEqual(['fix-docs', 'fix-code', 'defer']);
+    expect(report.decisions[0].options[0].changes[0]).toMatchObject({
+      file: 'README.md:42',
+      before: '30 minutes',
+      after: '120 minutes',
+    });
     expect(report.metadata.reviewers[0].reviewer).toBe('claude');
     expect(report.metadata.raw_findings[0].source_id).toBe('claude:timeout');
     expect(report.metadata.merged_issues[0].source_findings).toEqual(['claude:timeout']);
     expect(markdown).toContain('Timeout default claim is stale');
+    expect(markdown).toContain('DEFAULT_JOB_TIMEOUT_MINUTES');
+    expect(markdown).toContain('Suggested changes');
     expect(shouldFail(report, 'blocking')).toBe(false);
     expect(shouldFail(report, 'any')).toBe(true);
   });
@@ -161,6 +221,9 @@ describe('docs-review repo maintenance tool', () => {
             code_paths: ['src/mcp/tools/tool-names.ts'],
             doc_claim: 'README lists 16 tools.',
             code_evidence: 'Code declares 18 tools.',
+            doc_evidence: [{ path: 'README.md', line: 154, quote: '16 tools' }],
+            code_evidence_details: [{ path: 'src/mcp/tools/tool-names.ts', line: 10, symbol: 'TENET_MCP_TOOL_NAMES' }],
+            suggested_changes: [{ file: 'README.md', line: 154, before: '16 tools', after: '18 tools' }],
             recommendation: 'Update README table.',
             confidence: 'high',
           },
@@ -219,6 +282,8 @@ describe('docs-review repo maintenance tool', () => {
     expect(synthesis.merged_issues).toHaveLength(2);
     expect(synthesis.merged_issues[0].reported_by).toEqual(['claude', 'codex']);
     expect(synthesis.merged_issues[0].severity).toBe('warning');
+    expect(synthesis.merged_issues[0].doc_evidence[0].quote).toBe('16 tools');
+    expect(synthesis.merged_issues[0].suggested_changes[0].after).toBe('18 tools');
     expect(synthesis.merged_issues[1].source_findings).toEqual(['codex:phase-count']);
     expect(buildSingletonIssues(rawFindings)).toHaveLength(3);
   });

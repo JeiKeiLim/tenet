@@ -38,6 +38,44 @@ const REVIEWER_OUTPUT_SCHEMA = {
           code_paths: { type: 'array', items: { type: 'string' } },
           doc_claim: { type: 'string' },
           code_evidence: { type: 'string' },
+          doc_evidence: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                line: { type: 'number' },
+                quote: { type: 'string' },
+                claim: { type: 'string' },
+              },
+            },
+          },
+          code_evidence_details: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                line: { type: 'number' },
+                symbol: { type: 'string' },
+                quote: { type: 'string' },
+                actual_behavior: { type: 'string' },
+              },
+            },
+          },
+          suggested_changes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                file: { type: 'string' },
+                line: { type: 'number' },
+                before: { type: 'string' },
+                after: { type: 'string' },
+                why: { type: 'string' },
+              },
+            },
+          },
           recommendation: { type: 'string' },
           confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
@@ -381,7 +419,8 @@ Instructions:
 3. Ignore historical design drift in docs/planning unless scope is "all".
 4. Prefer concrete evidence with file paths. Include line numbers when you can find them.
 5. If a claim is ambiguous but not wrong, use severity "info".
-6. Return ONLY one JSON object. Do not wrap it in Markdown.
+6. Make every finding actionable: identify the stale Markdown text, the exact code symbol/function/schema that contradicts it, and a concrete doc-side replacement when docs should change.
+7. Return ONLY one JSON object. Do not wrap it in Markdown.
 
 Required JSON shape:
 {
@@ -396,6 +435,32 @@ Required JSON shape:
       "code_paths": ["src/mcp/tools/tool-names.ts"],
       "doc_claim": "what the docs say",
       "code_evidence": "what the code says",
+      "doc_evidence": [
+        {
+          "path": "README.md",
+          "line": 154,
+          "quote": "short exact stale snippet",
+          "claim": "specific interpretation of that snippet"
+        }
+      ],
+      "code_evidence_details": [
+        {
+          "path": "src/mcp/tools/tool-names.ts",
+          "line": 10,
+          "symbol": "TENET_MCP_TOOL_NAMES",
+          "quote": "short exact code snippet or identifier",
+          "actual_behavior": "specific implemented behavior"
+        }
+      ],
+      "suggested_changes": [
+        {
+          "file": "README.md",
+          "line": 154,
+          "before": "current stale Markdown text",
+          "after": "replacement Markdown text",
+          "why": "which code evidence this aligns with"
+        }
+      ],
       "recommendation": "what should be changed",
       "confidence": "high|medium|low"
     }
@@ -425,7 +490,8 @@ Rules:
 4. If findings are related but require different fixes, keep them separate.
 5. Use the highest source severity in a group as the merged severity.
 6. Preserve all reviewers in reported_by.
-7. Return ONLY one JSON object. Do not wrap it in Markdown.
+7. Preserve actionability. Do not discard the concrete doc/code evidence or suggested changes when summarizing.
+8. Return ONLY one JSON object. Do not wrap it in Markdown.
 
 Reviewer summaries:
 ${JSON.stringify(reviewers, null, 2)}
@@ -666,6 +732,68 @@ const normalizeStringArray = (value) => {
   return value.map((item) => String(item)).filter(Boolean);
 };
 
+const normalizeLineNumber = (value) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const compactObject = (value) =>
+  Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== '' && entry !== null && entry !== undefined));
+
+const uniqueObjects = (values) => {
+  const seen = new Set();
+  const unique = [];
+  for (const value of values) {
+    const key = JSON.stringify(value);
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(value);
+    }
+  }
+  return unique;
+};
+
+const normalizeDocEvidence = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry) => compactObject({
+      path: asString(entry.path || entry.file),
+      line: normalizeLineNumber(entry.line),
+      quote: asString(entry.quote || entry.before || entry.text),
+      claim: asString(entry.claim || entry.doc_claim),
+    }))
+    .filter((entry) => entry.path || entry.quote || entry.claim);
+};
+
+const normalizeCodeEvidenceDetails = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry) => compactObject({
+      path: asString(entry.path || entry.file),
+      line: normalizeLineNumber(entry.line),
+      symbol: asString(entry.symbol || entry.function || entry.name),
+      quote: asString(entry.quote || entry.code || entry.text),
+      actual_behavior: asString(entry.actual_behavior || entry.behavior || entry.evidence),
+    }))
+    .filter((entry) => entry.path || entry.symbol || entry.quote || entry.actual_behavior);
+};
+
+const normalizeSuggestedChanges = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry) => compactObject({
+      file: asString(entry.file || entry.path),
+      line: normalizeLineNumber(entry.line),
+      before: asString(entry.before),
+      after: asString(entry.after),
+      why: asString(entry.why || entry.reason),
+    }))
+    .filter((entry) => entry.file || entry.before || entry.after || entry.why);
+};
+
 export const normalizeReviewerResult = (value, agent = 'unknown') => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`reviewer ${agent} did not return an object`);
@@ -686,6 +814,9 @@ export const normalizeReviewerResult = (value, agent = 'unknown') => {
         code_paths: normalizeStringArray(finding.code_paths),
         doc_claim: asString(finding.doc_claim),
         code_evidence: asString(finding.code_evidence),
+        doc_evidence: normalizeDocEvidence(finding.doc_evidence),
+        code_evidence_details: normalizeCodeEvidenceDetails(finding.code_evidence_details),
+        suggested_changes: normalizeSuggestedChanges(finding.suggested_changes),
         recommendation: asString(finding.recommendation),
         confidence: ['high', 'medium', 'low'].includes(String(finding.confidence)) ? String(finding.confidence) : 'medium',
         reviewer: agent,
@@ -723,6 +854,15 @@ const slugify = (value, fallback) => {
   return slug || fallback;
 };
 
+const aggregateSourceDetails = (sources) => ({
+  doc_claims: uniqueSorted(sources.map((source) => source.doc_claim)),
+  code_evidence_text: uniqueSorted(sources.map((source) => source.code_evidence)),
+  recommendations: uniqueSorted(sources.map((source) => source.recommendation)),
+  doc_evidence: uniqueObjects(sources.flatMap((source) => source.doc_evidence ?? [])),
+  code_evidence_details: uniqueObjects(sources.flatMap((source) => source.code_evidence_details ?? [])),
+  suggested_changes: uniqueObjects(sources.flatMap((source) => source.suggested_changes ?? [])),
+});
+
 const buildSingletonIssue = (finding, index = 0) => ({
   id: slugify(finding.id || finding.title, `issue-${index + 1}`),
   title: finding.title,
@@ -736,6 +876,7 @@ const buildSingletonIssue = (finding, index = 0) => ({
   source_findings: [finding.source_id],
   merge_confidence: 'high',
   severity_notes: '',
+  ...aggregateSourceDetails([finding]),
 });
 
 export const buildSingletonIssues = (rawFindings) =>
@@ -781,6 +922,7 @@ export const normalizeSynthesisResult = (value, rawFindings) => {
       source_findings: sourceIds,
       merge_confidence: ['high', 'medium', 'low'].includes(String(issue.merge_confidence)) ? String(issue.merge_confidence) : 'medium',
       severity_notes: asString(issue.severity_notes || ''),
+      ...aggregateSourceDetails(sources),
     });
   }
 
@@ -801,6 +943,60 @@ export const parseSynthesisOutput = (rawOutput, rawFindings) => {
   const unwrapped = unwrapCliJson(first);
   const parsed = typeof unwrapped === 'string' ? parseJsonFromText(unwrapped) : unwrapped;
   return normalizeSynthesisResult(parsed, rawFindings);
+};
+
+const withLine = (file, line) => {
+  const pathText = asString(file);
+  if (!pathText) return '';
+  return line ? `${pathText}:${line}` : pathText;
+};
+
+const summarizeCodeEvidence = (issue) => {
+  const details = issue.code_evidence_details ?? [];
+  if (details.length > 0) {
+    return details
+      .slice(0, 3)
+      .map((entry) => {
+        const location = withLine(entry.path, entry.line);
+        const symbol = entry.symbol ? `${entry.symbol}: ` : '';
+        return `${location ? `${location} ` : ''}${symbol}${entry.actual_behavior || entry.quote || ''}`.trim();
+      })
+      .filter(Boolean)
+      .join(' | ');
+  }
+
+  return (issue.code_evidence_text ?? []).slice(0, 3).join(' | ');
+};
+
+const buildFallbackChangeBlocks = (issue) => {
+  const evidence = (issue.doc_evidence?.length ? issue.doc_evidence : issue.doc_paths.map((docPath) => ({ path: docPath }))).slice(0, 5);
+  const codeSummary = summarizeCodeEvidence(issue);
+
+  return evidence
+    .map((entry) => ({
+      file: withLine(entry.path, entry.line),
+      before: entry.quote || entry.claim || issue.doc_claims?.join('\n') || issue.summary,
+      after: issue.recommended_action || 'Update this documentation to match the referenced code behavior.',
+      why: [
+        entry.claim ? `Doc claim: ${entry.claim}` : '',
+        codeSummary ? `Code evidence: ${codeSummary}` : '',
+      ].filter(Boolean).join('\n'),
+    }))
+    .filter((change) => change.file || change.before || change.after || change.why);
+};
+
+const buildDecisionChanges = (issue) => {
+  const codeSummary = summarizeCodeEvidence(issue);
+  const explicit = (issue.suggested_changes ?? [])
+    .map((change) => ({
+      file: withLine(change.file, change.line),
+      before: change.before || issue.doc_claims?.join('\n') || issue.summary,
+      after: change.after || issue.recommended_action || 'Update this documentation to match the referenced code behavior.',
+      why: change.why || (codeSummary ? `Code evidence: ${codeSummary}` : issue.recommended_action),
+    }))
+    .filter((change) => change.file || change.before || change.after || change.why);
+
+  return (explicit.length > 0 ? explicit : buildFallbackChangeBlocks(issue)).slice(0, 8);
 };
 
 const recommendedOption = (finding) => {
@@ -848,6 +1044,7 @@ export const buildDecisionReport = ({
           pros: ['Fastest path when code is source of truth', 'Reduces prompt and runbook drift'],
           cons: ['Does not change runtime behavior'],
           effort: 'low',
+          changes: buildDecisionChanges(issue),
         },
         {
           id: 'fix-code',
@@ -938,6 +1135,62 @@ const findingSort = (a, b) => {
   return a.title.localeCompare(b.title);
 };
 
+const pushTextList = (lines, heading, values) => {
+  const items = (values ?? []).filter(Boolean);
+  if (items.length === 0) return;
+  lines.push(`- ${heading}:`);
+  for (const item of items) {
+    lines.push(`  - ${item}`);
+  }
+};
+
+const pushDocEvidence = (lines, evidence) => {
+  if (!evidence?.length) return;
+  lines.push('- Documentation evidence:');
+  for (const entry of evidence) {
+    const location = withLine(entry.path, entry.line) || '(unspecified)';
+    const detail = [entry.quote ? `quote: ${entry.quote}` : '', entry.claim ? `claim: ${entry.claim}` : ''].filter(Boolean).join('; ');
+    lines.push(`  - ${location}${detail ? ` — ${detail}` : ''}`);
+  }
+};
+
+const pushCodeEvidence = (lines, evidence) => {
+  if (!evidence?.length) return;
+  lines.push('- Code evidence:');
+  for (const entry of evidence) {
+    const location = withLine(entry.path, entry.line) || '(unspecified)';
+    const symbol = entry.symbol ? ` ${entry.symbol}` : '';
+    const detail = [
+      entry.quote ? `quote: ${entry.quote}` : '',
+      entry.actual_behavior ? `actual: ${entry.actual_behavior}` : '',
+    ].filter(Boolean).join('; ');
+    lines.push(`  - ${location}${symbol}${detail ? ` — ${detail}` : ''}`);
+  }
+};
+
+const pushSuggestedChanges = (lines, changes) => {
+  if (!changes?.length) return;
+  lines.push('- Suggested changes:');
+  for (const change of changes) {
+    lines.push(`  - ${withLine(change.file, change.line) || '(unspecified file)'}`);
+    if (change.before) {
+      lines.push('    Before:');
+      lines.push('    ```text');
+      lines.push(...change.before.split(/\r?\n/).map((line) => `    ${line}`));
+      lines.push('    ```');
+    }
+    if (change.after) {
+      lines.push('    After:');
+      lines.push('    ```text');
+      lines.push(...change.after.split(/\r?\n/).map((line) => `    ${line}`));
+      lines.push('    ```');
+    }
+    if (change.why) {
+      lines.push(`    Why: ${change.why}`);
+    }
+  }
+};
+
 export const renderMarkdownReport = (report) => {
   const issues = [...(report.metadata?.merged_issues ?? report.metadata?.findings ?? [])].sort(findingSort);
   const rawFindings = report.metadata?.raw_findings ?? report.metadata?.findings ?? [];
@@ -970,6 +1223,11 @@ export const renderMarkdownReport = (report) => {
       lines.push(`- Summary: ${issue.summary || '(not provided)'}`);
       lines.push(`- Recommendation: ${issue.recommended_action || '(not provided)'}`);
       lines.push(`- Source findings: ${issue.source_findings?.join(', ') || '(not provided)'}`);
+      pushTextList(lines, 'Doc claims', issue.doc_claims);
+      pushTextList(lines, 'Code behavior summaries', issue.code_evidence_text);
+      pushDocEvidence(lines, issue.doc_evidence);
+      pushCodeEvidence(lines, issue.code_evidence_details);
+      pushSuggestedChanges(lines, issue.suggested_changes);
       if (issue.severity_notes) {
         lines.push(`- Severity notes: ${issue.severity_notes}`);
       }
@@ -983,7 +1241,18 @@ export const renderMarkdownReport = (report) => {
     lines.push('No raw reviewer findings reported.');
   } else {
     for (const finding of rawFindings) {
-      lines.push(`- ${finding.source_id || findingSourceId(finding)} (${finding.reviewer}, ${finding.severity}): ${finding.title}`);
+      lines.push(`### ${finding.source_id || findingSourceId(finding)} (${finding.reviewer}, ${finding.severity})`);
+      lines.push('');
+      lines.push(`- Title: ${finding.title}`);
+      lines.push(`- Docs: ${finding.doc_paths?.join(', ') || '(unspecified)'}`);
+      lines.push(`- Code: ${finding.code_paths?.join(', ') || '(unspecified)'}`);
+      lines.push(`- Doc claim: ${finding.doc_claim || '(not provided)'}`);
+      lines.push(`- Code evidence: ${finding.code_evidence || '(not provided)'}`);
+      lines.push(`- Recommendation: ${finding.recommendation || '(not provided)'}`);
+      pushDocEvidence(lines, finding.doc_evidence);
+      pushCodeEvidence(lines, finding.code_evidence_details);
+      pushSuggestedChanges(lines, finding.suggested_changes);
+      lines.push('');
     }
   }
   lines.push('');
