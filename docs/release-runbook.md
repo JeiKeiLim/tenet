@@ -42,7 +42,7 @@ EOF
 Then visit the GitHub Releases page, review the final draft, and click **Publish release**. That click triggers `.github/workflows/publish.yml`:
 1. Checks out the tagged commit.
 2. Verifies `package.json` version matches the tag.
-3. Runs typecheck + tests.
+3. Runs typecheck + tests + build.
 4. Runs `npm publish --provenance` via OIDC.
 
 Total time: ~2-3 minutes after you click Publish.
@@ -112,7 +112,7 @@ Prefer bumping a patch and publishing a fix over unpublishing. Unpublish breaks 
 Original manual flow still works:
 
 ```bash
-make check                  # typecheck + test
+make check                  # clean + build + typecheck + lint + test
 npm publish --access public # you'll need npm login beforehand
 ```
 

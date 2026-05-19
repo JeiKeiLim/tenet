@@ -10,9 +10,9 @@ The pre-execution confirmation gate in `phases/04-decomposition.md` MUST also be
 
 ## Non-Blocking Execution (CRITICAL)
 
-`tenet_job_wait` returns **instantly** with the current job state — it does NOT block or poll. The orchestrator is responsible for scheduling periodic checks via background tasks with exponential backoff: 30s -> 45s -> 67s -> 100s -> 120s cap.
+`tenet_job_wait` returns instantly when `wait_seconds` is omitted or `0`. It can also long-poll for up to 120 seconds when `wait_seconds` is provided. The recommended orchestration pattern is periodic background checks with exponential backoff: 30s -> 45s -> 67s -> 100s -> 120s cap.
 
-**Never** call `tenet_job_wait` in a tight foreground loop. Each call should be a separate background task. Between checks, the orchestrator remains responsive to user interaction.
+**Never** call `tenet_job_wait` in a tight foreground loop. Use a bounded `wait_seconds` or schedule each check as a separate background task. Between checks, the orchestrator remains responsive to user interaction.
 
 ## Mandatory Tool Sequence
 
@@ -28,7 +28,7 @@ Execute this sequence for every job cycle:
     Dispatches the registered job for execution. The MCP server transitions it from pending to running and allocates an agent.
 5.  **Brief User**: Tell the user which job was dispatched and that they can interact while it runs.
 6.  **Background Status Check**: Dispatch `tenet_job_wait(job_id="...")` as a **background task**.
-    The tool returns instantly with the current job state. Use exponential backoff between checks: 30s → 45s → 67s → 100s → 120s (cap).
+    Omit `wait_seconds` for an instant status check, or set a bounded `wait_seconds` for long-polling. Use exponential backoff between checks: 30s → 45s → 67s → 100s → 120s (cap).
     When the background task completes:
     - If `is_terminal` is false: check steer, report progress to user, wait (backoff), dispatch another check with the returned `cursor`.
     - If `is_terminal` is true: proceed to step 7.
@@ -51,7 +51,7 @@ Execute this sequence for every job cycle:
 Dispatch work via `tenet_start_job`. Do not call subagents directly. Do not write implementation code yourself during the execution loop. If `tenet_start_job` returns a failure about missing adapters, tell the user to configure the agent via `tenet config --agent <name>`.
 
 ### Background Status Check Pattern
-`tenet_job_wait` returns **instantly** — it does not block or poll. The orchestrator dispatches it as a background task and waits between checks using exponential backoff: start at 30 seconds, multiply by 1.5× each cycle, cap at 120 seconds. Between checks:
+`tenet_job_wait` returns instantly by default, or long-polls when `wait_seconds` is set. The orchestrator dispatches bounded waits as background tasks and waits between checks using exponential backoff: start at 30 seconds, multiply by 1.5× each cycle, cap at 120 seconds. Between checks:
 - The orchestrator is fully responsive to user interaction
 - Steer messages are processed on each check cycle
 - The user sees progress updates

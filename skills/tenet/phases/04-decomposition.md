@@ -247,7 +247,7 @@ Each slice's DAG follows the same patterns as the autonomous DAG (dev jobs with 
 ...
 ```
 
-This mirrors the spec's slice-headed structure and keeps `tenet_compile_context`'s "latest by date prefix" globbing working unchanged.
+This mirrors the spec's slice-headed structure. Pass the same decomposition file in `artifact_paths.decomposition` when registering each slice so `tenet_compile_context` reads the intended plan instead of relying on filename lookup.
 
 ### 9.4 Acceptance test handling
 

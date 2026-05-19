@@ -64,7 +64,7 @@ sqlite3 .tenet/.state/tenet.db "SELECT substr(json_extract(params, '$.name'), 1,
 Common failure patterns:
 - **"stall detected"** — server restarted while job was running. Check if server_id column exists (migration may be needed). Run `tenet init --upgrade`.
 - **"invocation timed out after Xms"** — adapter timeout too short. Check `tenet config` for timeout setting. Default is 120 minutes.
-- **"Not inside a trusted directory"** — git safe.directory issue. Run: `git config --global --add safe.directory <project-path>`
+- **"Not inside a trusted directory" from Codex** — project trust is missing or marked untrusted in `.codex/config.toml`. Run `tenet init --upgrade` and accept the Codex trust prompt, or edit the project block to set `trust_level = "trusted"`. If Git itself reports "dubious ownership", then add the project to Git's safe directory list with `git config --global --add safe.directory <project-path>`.
 - **"no agent adapter available"** — the configured agent CLI is not installed or not in PATH.
 
 ### 5. Job timeline

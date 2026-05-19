@@ -171,11 +171,12 @@ For browser UI, game/canvas, visual, or other browser-interactive features, the 
 
 #### Layer 2: Exploratory Agent-Driven Testing (Playwright MCP)
 The worker uses Playwright MCP tools to interact with the app like a real user:
-- `playwright_navigate(url)` — go to a page
-- `playwright_click(selector)` — click buttons/links
-- `playwright_fill(selector, value)` — fill form fields
-- `playwright_screenshot()` — capture state visually
-- `playwright_get_visible_text()` — verify text content
+- `browser_navigate(url)` — go to a page
+- `browser_click(selector)` — click buttons/links
+- `browser_type(text)` / `browser_fill_form(...)` — enter text and fill form fields
+- `browser_snapshot()` — inspect the accessibility snapshot and visible text
+- `browser_take_screenshot()` — capture state visually
+- `browser_evaluate(...)` — inspect page state when visible output is insufficient
 
 **For each scenario in scope, the worker:**
 1. Navigates to the entry point

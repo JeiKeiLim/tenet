@@ -20,7 +20,7 @@ Tenet: interviews you, writes the spec, generates visual mockups,
 
 AI coding agents are powerful but short-lived. They lose context, drift off-spec, skip tests, and can't sustain multi-hour development sessions. Tenet solves this:
 
-- **Structured phases** — Interview, Spec, Visuals, Decomposition, Execution, Evaluation. No phase is skippable.
+- **Structured phases** — Brownfield scan, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. No required phase is skippable.
 - **DAG-based job orchestration** — Dependencies are explicit. Parallel jobs run in parallel. Blocked jobs wait.
 - **3-critic evaluation pipeline** — Code critic, Test critic, and Playwright e2e eval. All independent, all with fresh context (no author bias). All findings are blocking.
 - **Crash recovery** — Server-ID-based orphan detection. If the MCP server dies, jobs auto-retry on restart.
@@ -54,7 +54,7 @@ npx @jeikeilim/tenet init --agent claude-code --skip-playwright-check
 
 ## How It Works
 
-### The 7 Phases
+### The 8 Phases
 
 | Phase | What Happens |
 |-------|-------------|
@@ -65,6 +65,7 @@ npx @jeikeilim/tenet init --agent claude-code --skip-playwright-check
 | **4. Decomposition** | Breaks spec into a dependency graph (DAG) of jobs |
 | **5. Execution Loop** | Implements each job, commits, evaluates, retries on failure |
 | **6. Evaluation** | 3 independent critics: code, tests, and Playwright e2e |
+| **7. Agile Checkpoints** | Handles plan/use checkpoints and redirect loops in agile mode |
 
 ### The Evaluation Pipeline
 
@@ -155,8 +156,10 @@ tenet config --timeout 120            # Set job timeout (minutes)
 
 | Tool | Purpose |
 |------|---------|
+| `tenet_init` | Initialize a project from MCP |
 | `tenet_compile_context` | Gather spec, harness, status, and knowledge into a single context |
-| `tenet_validate_clarity` | Score a spec for completeness before decomposition |
+| `tenet_validate_clarity` | Score the interview transcript before spec generation |
+| `tenet_validate_readiness` | Score implementation readiness before decomposition |
 | `tenet_register_jobs` | Load a job DAG with dependencies |
 | `tenet_start_job` | Execute a single job via agent adapter |
 | `tenet_continue` | Get the next actionable job from the DAG |
@@ -202,7 +205,7 @@ your-project/
 
 | Mode | Phases | Use Case |
 |------|--------|----------|
-| **Full** (default) | All 7 phases | New features, major refactors |
+| **Full** (default) | All 8 phases | New features, major refactors |
 | **Standard** | Skip interview (use existing spec) | Spec already written |
 | **Quick** | Skip interview + spec + decomposition | Bug fixes, small changes |
 

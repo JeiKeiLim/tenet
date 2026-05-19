@@ -73,8 +73,9 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
         dagIdToDbId.set(entry.id, job.id);
       }
 
-      // SQLite parent_job_id is single FK; full DAG deps are stored in params.depends_on.
-      // getNextRunnableJob() uses parent_job_id to gate execution order.
+      // SQLite parent_job_id is single FK for event chaining/legacy ordering.
+      // Full DAG deps are stored in params.depends_on; getNextRunnableJob()
+      // gates on every listed dependency before dispatching a job.
       for (const entry of jobs) {
         if (entry.depends_on.length === 0) {
           continue;

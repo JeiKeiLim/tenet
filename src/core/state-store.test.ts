@@ -117,6 +117,47 @@ describe('StateStore', () => {
     expect(second?.id).toBe(child.id);
   });
 
+  it('does not return jobs until all DAG dependencies are completed', () => {
+    const { store } = createStore();
+
+    const rootA = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { dag_id: 'job-a', feature: 'oauth', prompt: 'a' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    const rootB = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { dag_id: 'job-b', feature: 'oauth', prompt: 'b' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    const join = store.createJob({
+      type: 'integration_test',
+      status: 'pending',
+      params: {
+        dag_id: 'e2e-1',
+        feature: 'oauth',
+        depends_on: ['job-a', 'job-b'],
+        prompt: 'join',
+      },
+      retryCount: 0,
+      maxRetries: 1,
+      parentJobId: rootA.id,
+    });
+
+    expect(store.getNextRunnableJob()?.id).toBe(rootA.id);
+
+    store.updateJob(rootA.id, { status: 'completed', completedAt: Date.now() });
+    expect(store.getNextRunnableJob()?.id).toBe(rootB.id);
+    expect(store.getNextRunnableJob()?.id).not.toBe(join.id);
+
+    store.updateJob(rootB.id, { status: 'completed', completedAt: Date.now() });
+    expect(store.getNextRunnableJob()?.id).toBe(join.id);
+  });
+
   it('reads and updates steer messages from SQLite table', () => {
     const { tempDir, store } = createStore();
     const dbPath = path.join(tempDir, '.tenet', '.state', 'tenet.db');

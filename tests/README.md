@@ -66,4 +66,17 @@ Tier 1 can't catch:
 - MCP tool registration regressions at runtime.
 - Long-run emergent bugs.
 
-Those are Tier 2 (nightly E2E) and Tier 3 (replay harness) — not built yet. See the planning doc.
+Those are covered by Tier 2 manual E2E canaries today; Tier 3 replay harnesses are still future work. See the planning doc.
+
+## Tier 2 E2E canaries
+
+Tier 2 canaries are manual because they run real agent CLIs and cost time/money. The Makefile exposes five targets:
+
+- `make e2e-cli` — key-count CLI canary.
+- `make e2e-api` — stateful note-store API canary.
+- `make e2e-web` — click-counter web canary with Playwright eval reporting.
+- `make e2e-agile` — two-slice agile CLI canary.
+- `make e2e-agile-full` — full-pipeline agile canary where the agent produces the agile spec and slice DAGs.
+- `make e2e-all` — runs all five sequentially.
+
+See [`docs/e2e-runbook.md`](../docs/e2e-runbook.md) for setup, cost estimates, and troubleshooting.

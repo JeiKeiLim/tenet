@@ -56,7 +56,7 @@ The system has four layers:
 
 ## Key Types (`src/types/index.ts`)
 
-- **Job**: id, type (`dev|eval|critic_eval|playwright_eval|mechanical_eval|integration_test|compile_context|health_check`), status (`pending|running|completed|failed|cancelled|blocked`), params, agentName
+- **Job**: id, type (`dev|eval|critic_eval|playwright_eval|mechanical_eval|integration_test|compile_context|health_check`), status (`pending|running|completed|failed|cancelled|blocked|blocked_on_finding`), params, agentName
 - **SteerMessage**: class (`context|directive|emergency`), status (`received|acknowledged|acted_on|resolved`)
 - **ContinuationState**: tracks DAG progress — next_job, blocked_jobs, completed/total counts
 - **Config**: explicit agent selection (default and per-type overrides), concurrency limits
@@ -139,7 +139,7 @@ Uses **CalVer** (`YY.MM.PATCH`): e.g., `26.4.0` is the first release in April 20
    Write notes in user-facing language (what changed for the user, not what files moved). Pull structure from any planning doc that motivated the release; skip mechanical commits like `chore: bump`.
 7. Tell the user: "Draft release created with notes at https://github.com/JeiKeiLim/tenet/releases/tag/vYY.MM.PATCH. Review and click 'Publish release' to trigger npm publishing."
 
-The user clicking "Publish release" fires `.github/workflows/publish.yml`, which runs typecheck + tests + `npm publish --provenance` via OIDC. No manual `npm publish` needed.
+The user clicking "Publish release" fires `.github/workflows/publish.yml`, which runs typecheck + tests + build + `npm publish --provenance` via OIDC. No manual `npm publish` needed.
 
 Manual fallback (for automation outages only): `make release` still works locally if the maintainer has `npm login`.
 

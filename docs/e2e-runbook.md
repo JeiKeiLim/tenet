@@ -11,7 +11,9 @@ See `docs/planning/11_auto_testing_plan.md` for the full three-tier strategy.
 | `make e2e-cli` | key-count CLI | readiness with `eval_parallel_safe=true` → parallel critics |
 | `make e2e-api` | note-store API | readiness with `eval_parallel_safe=false` → sequential critics |
 | `make e2e-web` | click-counter HTML | Playwright eval Layer 2 reporting path |
-| `make e2e-all` | all three sequentially | full coverage of the three paths |
+| `make e2e-agile` | 2-slice agile CLI | per-slice registration and slice progress status |
+| `make e2e-agile-full` | agent-driven agile pipeline | planning prompt produces agile spec, decomposition, and slice jobs |
+| `make e2e-all` | all five sequentially | full coverage of the canary paths |
 
 ## Prerequisites
 
@@ -29,7 +31,9 @@ Rough. Actual varies with how much the agent iterates.
 | CLI | 5-10 min | ~5 | $0.30-0.80 | $0.05-0.15 |
 | API | 10-15 min | ~8 | $0.50-1.20 | $0.08-0.25 |
 | Web | 8-12 min | ~6 | $0.40-1.00 | $0.07-0.20 |
-| All | 25-35 min | ~20 | $1.00-2.50 | $0.20-0.50 |
+| Agile CLI | 10-15 min | ~8 | $0.50-1.50 | $0.10-0.30 |
+| Agile full pipeline | 20-30 min | ~12 | $0.50-2.50 | $0.15-0.50 |
+| All | 55-80 min | ~40 | $0.80-6.50 | $0.30-1.70 |
 
 Switch to a cheaper model globally via `tenet config --opencode-args "--model ..."` or your agent's equivalent before running, if cost is a concern.
 
@@ -39,7 +43,9 @@ Switch to a cheaper model globally via `tenet config --opencode-args "--model ..
 make e2e-cli          # quickest smoke
 make e2e-api          # stateful-app path
 make e2e-web          # static + playwright-eval path
-make e2e-all          # all three
+make e2e-agile        # per-slice agile path
+make e2e-agile-full   # agent-driven agile planning path
+make e2e-all          # all five
 ```
 
 ### Choosing a specific agent
@@ -114,6 +120,8 @@ Canary files live in `tests/e2e/canaries/<slug>/`:
 - `spec.md` — what the agent is asked to build.
 - `harness.md` — the project's quality contract.
 - `jobs.json` — the DAG (usually 1 job).
+- `jobs/slice-N.json` — per-slice DAG files for agile canaries.
+- `prompt.md` — raw planning prompt for the full-pipeline agile canary.
 - `verify.ts` — post-run smoke check.
 
 Keep specs tight. If a canary starts taking >15 minutes consistently, the spec has grown too large — split it or simplify.

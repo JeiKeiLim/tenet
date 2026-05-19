@@ -243,27 +243,66 @@ export class StateStore {
   }
 
   getNextRunnableJob(): Job | null {
-    const row = this.db
-      .prepare(
-        `
-        SELECT j.*
-        FROM jobs j
-        WHERE j.status = 'pending'
-          AND (
-            j.parent_job_id IS NULL
-            OR EXISTS (
-              SELECT 1 FROM jobs p
-              WHERE p.id = j.parent_job_id
-                AND p.status = 'completed'
-            )
-          )
-        ORDER BY j.created_at ASC
-        LIMIT 1
-      `,
-      )
-      .get() as JobRow | undefined;
+    const allRows = this.db.prepare('SELECT * FROM jobs ORDER BY created_at ASC').all() as JobRow[];
+    const jobs = allRows.map((row) => this.toJob(row));
+    const byId = new Map(jobs.map((job) => [job.id, job]));
 
-    return row ? this.toJob(row) : null;
+    for (const job of jobs) {
+      if (job.status !== 'pending') {
+        continue;
+      }
+
+      if (!this.parentDependencyCompleted(job, byId)) {
+        continue;
+      }
+
+      if (!this.dagDependenciesCompleted(job, jobs)) {
+        continue;
+      }
+
+      return job;
+    }
+
+    return null;
+  }
+
+  private parentDependencyCompleted(job: Job, byId: Map<string, Job>): boolean {
+    if (!job.parentJobId) {
+      return true;
+    }
+
+    return byId.get(job.parentJobId)?.status === 'completed';
+  }
+
+  private dagDependenciesCompleted(job: Job, jobs: Job[]): boolean {
+    const dependsOn = Array.isArray(job.params.depends_on)
+      ? job.params.depends_on.filter((dep): dep is string => typeof dep === 'string' && dep.length > 0)
+      : [];
+
+    if (dependsOn.length === 0) {
+      return true;
+    }
+
+    const feature = typeof job.params.feature === 'string' ? job.params.feature : undefined;
+
+    return dependsOn.every((dependencyId) => {
+      const candidates = jobs
+        .filter((candidate) => candidate.id !== job.id)
+        .filter((candidate) => candidate.createdAt <= job.createdAt)
+        .filter((candidate) => {
+          const dagId = typeof candidate.params.dag_id === 'string' ? candidate.params.dag_id : undefined;
+          return candidate.id === dependencyId || dagId === dependencyId;
+        });
+
+      const scopedCandidates = feature
+        ? candidates.filter((candidate) => candidate.params.feature === feature)
+        : candidates;
+
+      const candidatePool = scopedCandidates.length > 0 ? scopedCandidates : candidates;
+      const latestCandidate = candidatePool.sort((a, b) => b.createdAt - a.createdAt)[0];
+
+      return latestCandidate?.status === 'completed';
+    });
   }
 
   getCompletedCount(): number {

@@ -39,12 +39,13 @@ allowed-tools:
   - WebSearch
   - WebFetch
   # Playwright MCP tools (used during Stage 5 e2e eval, may not be available)
-  - playwright_navigate
-  - playwright_screenshot
-  - playwright_click
-  - playwright_fill
-  - playwright_evaluate
-  - playwright_get_visible_text
+  - browser_navigate
+  - browser_take_screenshot
+  - browser_click
+  - browser_type
+  - browser_fill_form
+  - browser_snapshot
+  - browser_evaluate
 ---
 
 # Tenet Skill
@@ -160,7 +161,7 @@ Examples:
 ## Gates
 
 - Clarity gate: after interview, call `tenet_validate_clarity()` and wait for the validation job result. Do not self-score.
-- Readiness gate: after spec/harness/scenarios and required visuals, call `tenet_validate_readiness(feature="{feature}")` and resolve blockers before decomposition.
+- Readiness gate: after spec/harness/scenarios and required visuals, call `tenet_validate_readiness` with exact `artifact_paths` and resolve blockers before decomposition.
 - Plan/use checkpoints: in agile mode, block until the user responds with `approve`, `redirect: ...`, `cancel`, or `done` as defined in `phases/07-agile-checkpoints.md`.
 - Pre-execution gate: before dispatching a DAG or slice DAG, summarize mode, job count, key spec decisions, and harness constraints. Ask for confirmation unless the user explicitly asked to start without oversight.
 - Eval gate: after every completed job, call `tenet_start_eval(...)` and wait according to the returned `execution_mode`. All returned eval jobs must pass.
