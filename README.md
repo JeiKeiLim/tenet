@@ -12,7 +12,7 @@
 You: "Add social features — reactions, badges, user profiles, share cards"
 Tenet: interviews you, writes the spec, generates visual mockups,
        decomposes into a dependency graph, implements each job,
-       evaluates with 3 independent critics, commits per job,
+       asks workers to commit per job, evaluates with 3 independent critics,
        and loops for 6+ hours until everything passes.
 ```
 
@@ -63,7 +63,7 @@ npx @jeikeilim/tenet init --agent claude-code --skip-playwright-check
 | **2. Spec & Harness** | Writes formal spec with scenarios + quality contract |
 | **3. Visuals** | Generates architecture diagrams, UI mockups, DESIGN.md |
 | **4. Decomposition** | Breaks spec into a dependency graph (DAG) of jobs |
-| **5. Execution Loop** | Implements each job, commits, evaluates, retries on failure |
+| **5. Execution Loop** | Implements each job, prompts per-job commits, evaluates, retries on failure |
 | **6. Evaluation** | 3 independent critics: code, tests, and Playwright e2e |
 | **7. Agile Checkpoints** | Handles plan/use checkpoints and redirect loops in agile mode |
 

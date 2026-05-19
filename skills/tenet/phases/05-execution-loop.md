@@ -33,7 +33,7 @@ Execute this sequence for every job cycle:
     - If `is_terminal` is false: check steer, report progress to user, wait (backoff), dispatch another check with the returned `cursor`.
     - If `is_terminal` is true: proceed to step 7.
 7.  **Get Result**: `tenet_job_result(job_id="...")`
-    Retrieve the final output and execution metadata.
+    Retrieve the final output and execution metadata. If the project is a git repository, read the worker's final output for the commit SHA. If the worker produced dirty changes but did not commit, make a best-effort fallback commit for the same job before evaluation. If git is unavailable or the fallback commit fails, write a journal note with the reason and continue.
 8.  **Start Evaluation**: `tenet_start_eval(job_id="<original_job_id>", output={...}, feature="<feature>")`
     Dispatches the output to the evaluation pipeline and returns eval job IDs plus `execution_mode`.
 9.  **Background Wait for Eval**: Same pattern as step 6. If `execution_mode` is sequential, later eval jobs may remain pending until parents complete; keep waiting on the returned IDs until all are terminal.
@@ -167,10 +167,18 @@ Create the feature branch BEFORE committing any tenet artifacts. This ensures al
 The branch must exist before any commits. Do NOT commit to main/master and then create a branch.
 
 ### Per-Job Commits
-After each job passes evaluation:
-1. Stage all files changed by the job (use `git add` with specific paths from the job's deliverables, avoid `git add -A`)
-2. Commit with message: `tenet({job-name}): {short description of what was done}`
-3. Do NOT push automatically — the user decides when to push
+Per-job commits are a prompt/process policy in this pass. Do not invent a finalization MCP tool, a commit-only `tenet_start_job`, or a new runtime state.
+
+The worker is the primary committer. Before a dev job exits, it should:
+1. Stage all files it changed with specific paths, including relevant `.tenet` documents it created or edited. Avoid `git add -A`.
+2. Commit with message: `tenet({job-name}): {short description of what was done}`.
+3. Include the commit SHA in its final output.
+4. Do NOT push automatically — the user decides when to push.
+
+The orchestrator performs only a best-effort process check after `tenet_job_result`:
+1. If the worker reported a commit SHA and the tree is clean enough to continue, proceed to evaluation.
+2. If useful dirty changes remain because the worker did not commit, make a fallback commit for the same job using the same message style.
+3. If git is unavailable, commit identity is missing, or the fallback commit fails, write a journal note with `tenet_update_knowledge(type="journal")` and continue. Do not stop the run for ordinary git hygiene issues.
 
 ### On Completion
 After all jobs are done:
@@ -179,6 +187,6 @@ After all jobs are done:
 
 ### Conflict Handling
 If a commit fails due to conflicts (e.g., parallel jobs touched the same file):
-1. Do NOT force-resolve — report the conflict to the user
-2. Create a steer message with the conflict details
-3. The user can resolve manually or provide guidance via steer
+1. Do NOT force-resolve.
+2. Write a journal note with the conflict details and continue the pipeline where possible.
+3. Surface the conflict in the next user-facing status summary so the user can resolve manually or provide guidance via steer.
