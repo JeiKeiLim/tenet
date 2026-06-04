@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { StateStore, type DbHealthReport } from '../core/state-store.js';
+import { StateStore, type DbHealthReport, type RestoreDatabaseOptions } from '../core/state-store.js';
 
 const timestamp = (): string =>
   new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
@@ -79,4 +79,38 @@ export const runDbBackup = (projectPath: string, destination?: string): string =
   StateStore.backupDatabase(projectPath, backupPath);
   console.log(`Backup created: ${backupPath}`);
   return backupPath;
+};
+
+const defaultSnapshotPath = (projectPath: string): string =>
+  path.join(projectPath, '.tenet', 'state-snapshot', 'tenet.db');
+
+export const runDbSnapshot = (projectPath: string, destination?: string): string => {
+  const snapshotPath = destination ? path.resolve(destination) : defaultSnapshotPath(projectPath);
+  const snapshotDir = path.dirname(snapshotPath);
+  fs.mkdirSync(snapshotDir, { recursive: true });
+  const tempPath = path.join(snapshotDir, `tenet.db.tmp-${process.pid}-${Date.now()}`);
+
+  try {
+    StateStore.backupDatabase(projectPath, tempPath);
+    fs.renameSync(tempPath, snapshotPath);
+  } catch (error) {
+    if (fs.existsSync(tempPath)) {
+      fs.rmSync(tempPath, { force: true });
+    }
+    throw error;
+  }
+
+  console.log(`Snapshot created: ${snapshotPath}`);
+  return snapshotPath;
+};
+
+export const runDbRestoreSnapshot = (
+  projectPath: string,
+  source?: string,
+  options?: RestoreDatabaseOptions,
+): string => {
+  const snapshotPath = source ? path.resolve(source) : defaultSnapshotPath(projectPath);
+  StateStore.restoreDatabase(projectPath, snapshotPath, options);
+  console.log(`Snapshot restored: ${snapshotPath}`);
+  return snapshotPath;
 };

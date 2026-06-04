@@ -79,13 +79,14 @@ Do not invent tool calls or runtime state. If a named Tenet MCP tool is missing,
 3. Generation and validation are separate contexts.
 4. Eval is a hard blocking gate. A failed eval must be retried, remediated, or blocked before dependent work proceeds.
 5. Harness enforcement applies in all modes.
-6. Human-readable project memory lives under `.tenet/`; runtime state lives in MCP SQLite.
+6. Human-readable project memory lives under `.tenet/`; live runtime state lives in MCP SQLite under `.tenet/.state/`.
 7. Status files are generated from MCP state. Do not manually edit `.tenet/status/status.md` or `.tenet/status/job-queue.md` to advance runtime.
 8. Use server-side continuation; do not reconstruct job IDs or dependency state manually.
 9. Wrong turns and failed attempts must remain visible to the active retry context.
 10. Purpose alignment outranks narrow checkbox compliance.
 11. Knowledge writes need confidence tags.
 12. Never assume yolo mode. It only activates when the user explicitly says "yolo", "skip questions", "decide everything", "don't ask me questions", or equivalent.
+13. Never commit live `.tenet/.state/tenet.db`, `.tenet/.state/tenet.db-wal`, or `.tenet/.state/tenet.db-shm`. If portable Tenet state should be tracked, run `tenet db snapshot` and commit `.tenet/state-snapshot/tenet.db` instead.
 
 ## Boot Sequence
 

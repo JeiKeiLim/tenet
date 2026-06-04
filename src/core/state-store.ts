@@ -92,6 +92,10 @@ export type DbHealthReport = {
   errors: string[];
 };
 
+export type RestoreDatabaseOptions = {
+  force?: boolean;
+};
+
 export class DbHealthError extends Error {
   constructor(public readonly report: DbHealthReport) {
     const details = [
@@ -139,6 +143,14 @@ const statePaths = (projectPath: string): { stateDir: string; dbPath: string; wa
     walPath: `${dbPath}-wal`,
     shmPath: `${dbPath}-shm`,
   };
+};
+
+const fileSize = (filePath: string): number | null => {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return null;
+  }
 };
 
 const sqliteString = (value: string): string => `'${value.replace(/'/g, "''")}'`;
@@ -315,6 +327,49 @@ export class StateStore {
     }
 
     return report;
+  }
+
+  static restoreDatabase(projectPath: string, sourcePath: string, options?: RestoreDatabaseOptions): void {
+    const resolvedSourcePath = path.resolve(sourcePath);
+    const { stateDir, dbPath, walPath, shmPath } = statePaths(projectPath);
+    if (!fs.existsSync(resolvedSourcePath)) {
+      throw new Error(`snapshot does not exist: ${resolvedSourcePath}`);
+    }
+
+    StateStore.assertStandaloneDatabaseHealthy(resolvedSourcePath, 'snapshot');
+
+    const sidecars = [walPath, shmPath]
+      .map((filePath) => ({ filePath, size: fileSize(filePath) }))
+      .filter((entry): entry is { filePath: string; size: number } => entry.size !== null && entry.size > 0);
+    if (sidecars.length > 0 && options?.force !== true) {
+      throw new Error(
+        [
+          'Refusing to restore while SQLite WAL/SHM sidecar files exist.',
+          'These files can mean Tenet is still running or has uncheckpointed runtime state.',
+          ...sidecars.map((entry) => `- ${entry.filePath} (${entry.size} bytes)`),
+          'Stop Tenet processes first, then rerun with --force if you intentionally want the snapshot to replace live state.',
+        ].join('\n'),
+      );
+    }
+
+    fs.mkdirSync(stateDir, { recursive: true });
+    const tempPath = path.join(stateDir, `tenet.db.restore-${process.pid}-${Date.now()}.tmp`);
+    try {
+      fs.copyFileSync(resolvedSourcePath, tempPath);
+      StateStore.assertStandaloneDatabaseHealthy(tempPath, 'restore copy');
+      for (const sidecarPath of [walPath, shmPath]) {
+        if (fs.existsSync(sidecarPath)) {
+          fs.rmSync(sidecarPath, { force: true });
+        }
+      }
+      fs.renameSync(tempPath, dbPath);
+      StateStore.assertHealthy(projectPath);
+    } catch (error) {
+      if (fs.existsSync(tempPath)) {
+        fs.rmSync(tempPath, { force: true });
+      }
+      throw error;
+    }
   }
 
   createJob(job: Omit<Job, 'id' | 'createdAt'>): Job {
@@ -796,6 +851,20 @@ export class StateStore {
     }
 
     this.initSchema();
+  }
+
+  private static assertStandaloneDatabaseHealthy(dbPath: string, label: string): void {
+    let db: Database.Database | undefined;
+    try {
+      db = new Database(dbPath, { readonly: true, fileMustExist: true, timeout: 10_000 });
+      db.pragma('busy_timeout = 10000');
+      const integrity = pragmaTextRows(db, 'integrity_check');
+      if (!integrity.every((line) => line === 'ok')) {
+        throw new Error(`${label} integrity_check failed: ${integrity.join('; ')}`);
+      }
+    } finally {
+      db?.close();
+    }
   }
 
   private static checkCoreIndexConsistency(db: Database.Database): DbIndexConsistencyCheck[] {

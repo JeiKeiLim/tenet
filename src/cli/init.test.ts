@@ -51,6 +51,7 @@ describe('initProject', () => {
       'steer',
       'bootstrap',
       'visuals',
+      'state-snapshot',
       '.state',
     ];
 
@@ -66,6 +67,8 @@ describe('initProject', () => {
       'steer/processed.md',
       'harness/current.md',
       'bootstrap/compiler.md',
+      'state-snapshot/README.md',
+      '.gitignore',
     ];
 
     for (const file of expectedFiles) {
@@ -75,6 +78,10 @@ describe('initProject', () => {
     const statusContent = fs.readFileSync(path.join(tenetRoot, 'status/status.md'), 'utf8');
     expect(statusContent).toContain('# Status');
     expect(statusContent).toContain('- mode: unset');
+
+    const gitignore = fs.readFileSync(path.join(tenetRoot, '.gitignore'), 'utf8');
+    expect(gitignore).toContain('.state/');
+    expect(gitignore).toContain('!state-snapshot/');
   });
 
   it('copies SKILL.md into .claude/skills/tenet', () => {
@@ -287,6 +294,21 @@ describe('initProject', () => {
     expect(content.model).toBe('claude-sonnet');
     expect(content.mcp.github).toBeDefined();
     expect(content.mcp.tenet).toBeDefined();
+  });
+
+  it('adds portable state gitignore rules during upgrade without overwriting custom rules', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+    fs.writeFileSync(path.join(tenetRoot, '.gitignore'), 'custom-rule\n', 'utf8');
+
+    initProject(projectPath, { upgrade: true });
+
+    const gitignore = fs.readFileSync(path.join(tenetRoot, '.gitignore'), 'utf8');
+    expect(gitignore).toContain('custom-rule');
+    expect(gitignore).toContain('.state/');
+    expect(gitignore).toContain('!state-snapshot/');
+    expect(fs.existsSync(path.join(tenetRoot, 'state-snapshot', 'README.md'))).toBe(true);
   });
 });
 

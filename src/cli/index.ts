@@ -26,7 +26,7 @@ import {
   parseTimeoutMinutes,
   UNLIMITED_RETRIES,
 } from '../core/runtime-config.js';
-import { runDbBackup, runDbCheck } from './db.js';
+import { runDbBackup, runDbCheck, runDbRestoreSnapshot, runDbSnapshot } from './db.js';
 import { showStatus } from './status.js';
 
 const resolveProjectPath = (project?: string): string => path.resolve(project ?? process.cwd());
@@ -310,6 +310,41 @@ const run = async (): Promise<void> => {
       const projectPath = resolveProjectPath(options.project);
       try {
         runDbBackup(projectPath, options.output);
+      } catch (error) {
+        if (error instanceof Error) {
+          console.error(error.message);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  dbCommand
+    .command('snapshot')
+    .description('Write a Git-safe portable SQLite snapshot')
+    .option('--project <path>', 'Project path', '.')
+    .option('--output <path>', 'Snapshot destination path')
+    .action((options: { project: string; output?: string }) => {
+      const projectPath = resolveProjectPath(options.project);
+      try {
+        runDbSnapshot(projectPath, options.output);
+      } catch (error) {
+        if (error instanceof Error) {
+          console.error(error.message);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  dbCommand
+    .command('restore-snapshot')
+    .description('Restore live SQLite state from a portable snapshot')
+    .option('--project <path>', 'Project path', '.')
+    .option('--input <path>', 'Snapshot source path')
+    .option('--force', 'Replace live state after removing WAL/SHM sidecars')
+    .action((options: { project: string; input?: string; force?: boolean }) => {
+      const projectPath = resolveProjectPath(options.project);
+      try {
+        runDbRestoreSnapshot(projectPath, options.input, { force: options.force === true });
       } catch (error) {
         if (error instanceof Error) {
           console.error(error.message);

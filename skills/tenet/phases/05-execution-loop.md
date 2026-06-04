@@ -169,6 +169,8 @@ The branch must exist before any commits. Do NOT commit to main/master and then 
 ### Per-Job Commits
 Per-job commits are a prompt/process policy in this pass. Do not invent a finalization MCP tool, a commit-only `tenet_start_job`, or a new runtime state.
 
+Live SQLite files are not commit artifacts. Never stage or force-add `.tenet/.state/tenet.db`, `.tenet/.state/tenet.db-wal`, or `.tenet/.state/tenet.db-shm`. When the run should preserve portable Tenet state in Git, run `tenet db snapshot` after the relevant state change and stage `.tenet/state-snapshot/tenet.db` instead.
+
 The worker is the primary committer. Before a dev job exits, it should:
 1. Stage all files it changed with specific paths, including relevant `.tenet` documents it created or edited. Avoid `git add -A`.
 2. Commit with message: `tenet({job-name}): {short description of what was done}`.

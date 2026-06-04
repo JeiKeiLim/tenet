@@ -17,6 +17,7 @@ const REQUIRED_DIRS = [
   'steer',
   'bootstrap',
   'visuals',
+  'state-snapshot',
 ];
 
 const VALID_AGENTS = ['claude-code', 'opencode', 'codex'] as const;
@@ -25,6 +26,15 @@ type InitOptions = {
   agent?: string;
   upgrade?: boolean;
 };
+
+const PORTABLE_STATE_README = `# Tenet State Snapshot
+
+This directory is for portable Tenet SQLite snapshots that are safe to track in Git.
+
+- Run \`tenet db snapshot\` to write \`state-snapshot/tenet.db\`.
+- Run \`tenet db restore-snapshot\` to restore live runtime state from the snapshot.
+- Do not track \`.tenet/.state/\`; it is the live SQLite WAL database.
+`;
 
 const TEMPLATE_FILES: Record<string, string> = {
   'status/status.md': `# Status
@@ -68,12 +78,57 @@ test_framework: (configure per project)
 - (add invariants that must always hold)
 `,
   'bootstrap/compiler.md': '# Bootstrap Compiler Configuration\n\n',
+  'state-snapshot/README.md': PORTABLE_STATE_README,
 };
+
+const REQUIRED_TENET_GITIGNORE_LINES = [
+  '.state/',
+  '!state-snapshot/',
+  '!state-snapshot/**',
+  'state-snapshot/*.tmp-*',
+];
+
+const TENET_GITIGNORE_TEMPLATE = `# Live SQLite runtime state. Do not track this in Git.
+.state/
+
+# Portable snapshots created by \`tenet db snapshot\` are safe to track.
+!state-snapshot/
+!state-snapshot/**
+state-snapshot/*.tmp-*
+`;
 
 const ensureFile = (filePath: string, content: string): void => {
   if (!fs.existsSync(filePath)) {
     fs.writeFileSync(filePath, content, 'utf8');
   }
+};
+
+const ensureTenetGitignore = (tenetRoot: string): void => {
+  const gitignorePath = path.join(tenetRoot, '.gitignore');
+  if (!fs.existsSync(gitignorePath)) {
+    fs.writeFileSync(gitignorePath, TENET_GITIGNORE_TEMPLATE, 'utf8');
+    return;
+  }
+
+  const existing = fs.readFileSync(gitignorePath, 'utf8');
+  const existingLines = new Set(existing.split(/\r?\n/).map((line) => line.trim()));
+  const missingLines = REQUIRED_TENET_GITIGNORE_LINES.filter((line) => !existingLines.has(line));
+  if (missingLines.length === 0) {
+    return;
+  }
+
+  const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+  fs.appendFileSync(
+    gitignorePath,
+    `${separator}# Tenet live SQLite runtime state and portable snapshots.\n${missingLines.join('\n')}\n`,
+    'utf8',
+  );
+};
+
+const ensurePortableStateFiles = (tenetRoot: string): void => {
+  fs.mkdirSync(path.join(tenetRoot, 'state-snapshot'), { recursive: true });
+  ensureFile(path.join(tenetRoot, 'state-snapshot', 'README.md'), PORTABLE_STATE_README);
+  ensureTenetGitignore(tenetRoot);
 };
 
 type StateConfig = {
@@ -250,6 +305,7 @@ export function initProject(projectPath: string, options?: InitOptions): void {
   for (const [relativePath, content] of Object.entries(TEMPLATE_FILES)) {
     ensureFile(path.join(tenetRoot, relativePath), content);
   }
+  ensurePortableStateFiles(tenetRoot);
 
   if (options?.agent) {
     writeStateConfig(tenetRoot, { default_agent: options.agent });
@@ -274,6 +330,7 @@ function upgradeProject(projectPath: string): void {
     fs.mkdirSync(path.join(tenetRoot, dir), { recursive: true });
   }
   fs.mkdirSync(path.join(tenetRoot, '.state'), { recursive: true });
+  ensurePortableStateFiles(tenetRoot);
 
   backupStateDb(tenetRoot);
   const stateStore = new StateStore(projectPath, { migrate: true });
