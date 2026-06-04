@@ -52,6 +52,72 @@ type SteerRow = {
 
 type EventRecord = { id: string; jobId: string; event: string; data: unknown; timestamp: number };
 
+export type StateStoreOptions = {
+  migrate?: boolean;
+  readonly?: boolean;
+  loadFileConfig?: boolean;
+  healthCheck?: boolean;
+};
+
+type CountRow = {
+  count: number;
+};
+
+type StatusCountRow = {
+  status: string;
+  count: number;
+};
+
+export type DbIndexConsistencyCheck = {
+  name: string;
+  ok: boolean;
+  indexed: Record<string, number>;
+  tableScan: Record<string, number>;
+};
+
+export type DbHealthReport = {
+  ok: boolean;
+  dbPath: string;
+  walPath: string;
+  shmPath: string;
+  walExists: boolean;
+  shmExists: boolean;
+  journalMode?: string;
+  pageSize?: number;
+  pageCount?: number;
+  freelistCount?: number;
+  quickCheck: string[];
+  integrityCheck: string[];
+  indexConsistency: DbIndexConsistencyCheck[];
+  errors: string[];
+};
+
+export class DbHealthError extends Error {
+  constructor(public readonly report: DbHealthReport) {
+    const details = [
+      ...report.errors,
+      ...report.quickCheck.filter((line) => line !== 'ok'),
+      ...report.integrityCheck.filter((line) => line !== 'ok'),
+      ...report.indexConsistency
+        .filter((check) => !check.ok)
+        .map((check) => `${check.name} indexed counts do not match table scan counts`),
+    ];
+    super(
+      [
+        'Tenet DB health check failed. Refusing to start to avoid making SQLite state worse.',
+        `Database: ${report.dbPath}`,
+        report.walExists ? `WAL: ${report.walPath}` : undefined,
+        report.shmExists ? `SHM: ${report.shmPath}` : undefined,
+        ...details.slice(0, 8).map((detail) => `- ${detail}`),
+        'Run `tenet db check` for diagnostics and use a verified backup before recovery.',
+      ]
+        .filter((line): line is string => typeof line === 'string')
+        .join('\n'),
+    );
+    this.name = 'DbHealthError';
+  }
+}
+
 const parseJson = <T>(value: string | null, fallback: T): T => {
   if (value == null) {
     return fallback;
@@ -64,28 +130,191 @@ const parseJson = <T>(value: string | null, fallback: T): T => {
   }
 };
 
+const statePaths = (projectPath: string): { stateDir: string; dbPath: string; walPath: string; shmPath: string } => {
+  const stateDir = path.join(projectPath, '.tenet', '.state');
+  const dbPath = path.join(stateDir, 'tenet.db');
+  return {
+    stateDir,
+    dbPath,
+    walPath: `${dbPath}-wal`,
+    shmPath: `${dbPath}-shm`,
+  };
+};
+
+const sqliteString = (value: string): string => `'${value.replace(/'/g, "''")}'`;
+
+const pragmaTextRows = (db: Database.Database, pragma: string): string[] => {
+  const result = db.pragma(pragma) as unknown;
+  if (!Array.isArray(result)) {
+    return [String(result)];
+  }
+
+  return result.map((row) => {
+    if (row && typeof row === 'object') {
+      const firstValue = Object.values(row as Record<string, unknown>)[0];
+      return String(firstValue);
+    }
+    return String(row);
+  });
+};
+
+const simpleNumberPragma = (db: Database.Database, pragma: string): number | undefined => {
+  const value = db.pragma(pragma, { simple: true }) as unknown;
+  return typeof value === 'number' ? value : undefined;
+};
+
+const simpleStringPragma = (db: Database.Database, pragma: string): string | undefined => {
+  const value = db.pragma(pragma, { simple: true }) as unknown;
+  return typeof value === 'string' ? value : undefined;
+};
+
+const mapStatusRows = (rows: StatusCountRow[]): Record<string, number> =>
+  Object.fromEntries(rows.map((row) => [row.status, row.count]));
+
+const mapsEqual = (a: Record<string, number>, b: Record<string, number>): boolean => {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if ((a[key] ?? 0) !== (b[key] ?? 0)) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export class StateStore {
   public readonly projectPath: string;
   private readonly db: Database.Database;
+  private readonly readonlyMode: boolean;
 
-  constructor(projectPath: string, options?: { migrate?: boolean }) {
+  constructor(projectPath: string, options?: StateStoreOptions) {
     this.projectPath = projectPath;
-    const stateDir = path.join(projectPath, '.tenet', '.state');
-    fs.mkdirSync(stateDir, { recursive: true });
+    const readonlyMode = options?.readonly === true;
+    this.readonlyMode = readonlyMode;
+    const { stateDir, dbPath } = statePaths(projectPath);
 
-    const dbPath = path.join(stateDir, 'tenet.db');
+    if (!readonlyMode) {
+      fs.mkdirSync(stateDir, { recursive: true });
+    }
+
     const dbExisted = fs.existsSync(dbPath);
-    this.db = new Database(dbPath);
+    if (!readonlyMode && dbExisted && options?.healthCheck === true) {
+      StateStore.assertHealthy(projectPath);
+    }
+
+    this.db = readonlyMode
+      ? new Database(dbPath, { readonly: true, fileMustExist: true, timeout: 10_000 })
+      : new Database(dbPath, { timeout: 10_000 });
 
     try {
-      this.openSchema(dbExisted, options?.migrate === true);
-      this.db.pragma('journal_mode = WAL');
+      if (readonlyMode) {
+        this.openReadonlySchema();
+      } else {
+        this.openSchema(dbExisted, options?.migrate === true);
+        this.configureWritablePragmas();
+      }
     } catch (error) {
       this.db.close();
       throw error;
     }
 
-    this.loadFileConfig(stateDir);
+    if (!readonlyMode && options?.loadFileConfig !== false) {
+      this.loadFileConfig(stateDir);
+    }
+  }
+
+  static openReadonly(projectPath: string): StateStore {
+    return new StateStore(projectPath, { readonly: true, loadFileConfig: false });
+  }
+
+  static checkDatabase(projectPath: string, options?: { integrityCheck?: boolean; indexConsistency?: boolean }): DbHealthReport {
+    const { dbPath, walPath, shmPath } = statePaths(projectPath);
+    const report: DbHealthReport = {
+      ok: false,
+      dbPath,
+      walPath,
+      shmPath,
+      walExists: fs.existsSync(walPath),
+      shmExists: fs.existsSync(shmPath),
+      quickCheck: [],
+      integrityCheck: [],
+      indexConsistency: [],
+      errors: [],
+    };
+
+    if (!fs.existsSync(dbPath)) {
+      report.errors.push('tenet.db does not exist');
+      return report;
+    }
+
+    let db: Database.Database | undefined;
+    try {
+      db = new Database(dbPath, { readonly: true, fileMustExist: true, timeout: 10_000 });
+      db.pragma('busy_timeout = 10000');
+      report.journalMode = simpleStringPragma(db, 'journal_mode');
+      report.pageSize = simpleNumberPragma(db, 'page_size');
+      report.pageCount = simpleNumberPragma(db, 'page_count');
+      report.freelistCount = simpleNumberPragma(db, 'freelist_count');
+      report.quickCheck = pragmaTextRows(db, 'quick_check');
+      if (options?.integrityCheck !== false) {
+        report.integrityCheck = pragmaTextRows(db, 'integrity_check');
+      }
+      if (options?.indexConsistency !== false) {
+        report.indexConsistency = StateStore.checkCoreIndexConsistency(db);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      report.errors.push(message);
+    } finally {
+      db?.close();
+    }
+
+    report.ok =
+      report.errors.length === 0 &&
+      (report.quickCheck.length === 0 || report.quickCheck.every((line) => line === 'ok')) &&
+      (report.integrityCheck.length === 0 || report.integrityCheck.every((line) => line === 'ok')) &&
+      report.indexConsistency.every((check) => check.ok);
+
+    return report;
+  }
+
+  static assertHealthy(projectPath: string): DbHealthReport {
+    const report = StateStore.checkDatabase(projectPath, {
+      integrityCheck: true,
+      indexConsistency: true,
+    });
+    if (!report.ok) {
+      throw new DbHealthError(report);
+    }
+    return report;
+  }
+
+  static backupDatabase(projectPath: string, destinationPath: string): DbHealthReport {
+    const report = StateStore.assertHealthy(projectPath);
+    const { dbPath } = statePaths(projectPath);
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    if (fs.existsSync(destinationPath)) {
+      throw new Error(`backup destination already exists: ${destinationPath}`);
+    }
+
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true, timeout: 10_000 });
+    try {
+      db.pragma('busy_timeout = 10000');
+      db.exec(`VACUUM INTO ${sqliteString(destinationPath)}`);
+    } finally {
+      db.close();
+    }
+
+    const backupDb = new Database(destinationPath, { readonly: true, fileMustExist: true, timeout: 10_000 });
+    try {
+      const integrity = pragmaTextRows(backupDb, 'integrity_check');
+      if (!integrity.every((line) => line === 'ok')) {
+        throw new Error(`backup integrity_check failed: ${integrity.join('; ')}`);
+      }
+    } finally {
+      backupDb.close();
+    }
+
+    return report;
   }
 
   createJob(job: Omit<Job, 'id' | 'createdAt'>): Job {
@@ -426,6 +655,13 @@ export class StateStore {
     });
   }
 
+  checkpoint(mode: 'PASSIVE' | 'FULL' | 'RESTART' | 'TRUNCATE' = 'TRUNCATE'): void {
+    if (this.readonlyMode) {
+      throw new Error('cannot checkpoint a read-only StateStore');
+    }
+    this.db.pragma(`wal_checkpoint(${mode})`);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -514,6 +750,25 @@ export class StateStore {
     `);
   }
 
+  private configureWritablePragmas(): void {
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('synchronous = FULL');
+    this.db.pragma('busy_timeout = 10000');
+    this.db.pragma('wal_autocheckpoint = 1000');
+    this.db.pragma('foreign_keys = ON');
+  }
+
+  private openReadonlySchema(): void {
+    const schemaVersion = this.readSchemaVersion();
+    if (schemaVersion === null || schemaVersion < CURRENT_DB_SCHEMA_VERSION) {
+      throw new UpgradeRequiredError(this.projectPath, schemaVersion, CURRENT_DB_SCHEMA_VERSION);
+    }
+
+    if (schemaVersion > CURRENT_DB_SCHEMA_VERSION) {
+      throw new UnsupportedDbVersionError(this.projectPath, schemaVersion, CURRENT_DB_SCHEMA_VERSION);
+    }
+  }
+
   private openSchema(dbExisted: boolean, migrate: boolean): void {
     if (!dbExisted) {
       this.initSchema();
@@ -541,6 +796,48 @@ export class StateStore {
     }
 
     this.initSchema();
+  }
+
+  private static checkCoreIndexConsistency(db: Database.Database): DbIndexConsistencyCheck[] {
+    const jobsTable = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'")
+      .get() as { name: string } | undefined;
+    if (!jobsTable) {
+      return [];
+    }
+
+    const checks: DbIndexConsistencyCheck[] = [];
+    const indexedStatus = mapStatusRows(
+      db
+        .prepare('SELECT status, COUNT(*) AS count FROM jobs GROUP BY status ORDER BY status')
+        .all() as StatusCountRow[],
+    );
+    const tableScanStatus = mapStatusRows(
+      db
+        .prepare('SELECT status, COUNT(*) AS count FROM jobs NOT INDEXED GROUP BY status ORDER BY status')
+        .all() as StatusCountRow[],
+    );
+    checks.push({
+      name: 'jobs.status',
+      ok: mapsEqual(indexedStatus, tableScanStatus),
+      indexed: indexedStatus,
+      tableScan: tableScanStatus,
+    });
+
+    const indexedParentNull = db
+      .prepare('SELECT COUNT(*) AS count FROM jobs WHERE parent_job_id IS NULL')
+      .get() as CountRow;
+    const tableScanParentNull = db
+      .prepare('SELECT COUNT(*) AS count FROM jobs NOT INDEXED WHERE parent_job_id IS NULL')
+      .get() as CountRow;
+    checks.push({
+      name: 'jobs.parent_job_id_null',
+      ok: indexedParentNull.count === tableScanParentNull.count,
+      indexed: { null_parent: indexedParentNull.count },
+      tableScan: { null_parent: tableScanParentNull.count },
+    });
+
+    return checks;
   }
 
   private readSchemaVersion(): number | null {

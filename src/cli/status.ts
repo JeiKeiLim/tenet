@@ -109,7 +109,16 @@ export function showStatus(projectPath: string, options?: StatusOptions): void {
       return;
     }
 
-    const stateStore = new StateStore(projectPath);
+    const health = StateStore.checkDatabase(projectPath, {
+      integrityCheck: false,
+      indexConsistency: false,
+    });
+    if (!health.ok) {
+      console.log('DB health: quick_check failed (run `tenet db check` for details)');
+      console.log('');
+    }
+
+    const stateStore = StateStore.openReadonly(projectPath);
     storeOpened = true;
 
     try {

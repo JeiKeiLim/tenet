@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server';
 import { registerAllTools } from './tools/index.js';
 import { JobManager } from '../core/job-manager.js';
 import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
+import { DbHealthError } from '../core/state-store.js';
 import { StateStore } from '../core/state-store.js';
 import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
 import { getPackageVersion } from '../cli/version.js';
@@ -38,16 +40,21 @@ const server = new McpServer(
 );
 
 let stateStore: StateStore;
+const serverId = crypto.randomUUID();
 try {
-  stateStore = new StateStore(PROJECT_PATH);
+  stateStore = new StateStore(PROJECT_PATH, { healthCheck: true });
 } catch (error) {
-  if (error instanceof UpgradeRequiredError || error instanceof UnsupportedDbVersionError) {
+  if (
+    error instanceof UpgradeRequiredError ||
+    error instanceof UnsupportedDbVersionError ||
+    error instanceof DbHealthError
+  ) {
     console.error(error.message);
   }
   throw error;
 }
 const adapterRegistry = new AdapterRegistry(loadAdapterExtraArgs(PROJECT_PATH));
-const jobManager = new JobManager(stateStore, adapterRegistry);
+const jobManager = new JobManager(stateStore, adapterRegistry, { serverId });
 
 registerAllTools(server, jobManager, stateStore);
 
@@ -56,7 +63,7 @@ await server.connect(transport);
 
 const gracefulShutdown = async () => {
   await jobManager.shutdown();
-  await stateStore.close();
+  stateStore.close();
   await server.close();
   process.exit(0);
 };

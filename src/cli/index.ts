@@ -26,6 +26,7 @@ import {
   parseTimeoutMinutes,
   UNLIMITED_RETRIES,
 } from '../core/runtime-config.js';
+import { runDbBackup, runDbCheck } from './db.js';
 import { showStatus } from './status.js';
 
 const resolveProjectPath = (project?: string): string => path.resolve(project ?? process.cwd());
@@ -282,6 +283,39 @@ const run = async (): Promise<void> => {
     .action((options: { project: string; all?: boolean }) => {
       const projectPath = resolveProjectPath(options.project);
       showStatus(projectPath, { all: options.all });
+    });
+
+  const dbCommand = program
+    .command('db')
+    .description('Inspect and maintain Tenet SQLite state');
+
+  dbCommand
+    .command('check')
+    .description('Run read-only SQLite health checks')
+    .option('--project <path>', 'Project path', '.')
+    .action((options: { project: string }) => {
+      const projectPath = resolveProjectPath(options.project);
+      const ok = runDbCheck(projectPath);
+      if (!ok) {
+        process.exitCode = 1;
+      }
+    });
+
+  dbCommand
+    .command('backup')
+    .description('Create a verified SQLite-safe backup')
+    .option('--project <path>', 'Project path', '.')
+    .option('--output <path>', 'Backup destination path')
+    .action((options: { project: string; output?: string }) => {
+      const projectPath = resolveProjectPath(options.project);
+      try {
+        runDbBackup(projectPath, options.output);
+      } catch (error) {
+        if (error instanceof Error) {
+          console.error(error.message);
+        }
+        process.exitCode = 1;
+      }
     });
 
   program

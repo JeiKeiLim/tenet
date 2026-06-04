@@ -15,6 +15,7 @@ type JobManagerConfig = {
   maxParallelAgents?: number;
   heartbeatTimeoutMs?: number;
   defaultJobTimeoutMs?: number;
+  serverId?: string;
 };
 
 const TERMINAL_STATUSES = new Set<Job['status']>(['completed', 'failed', 'cancelled']);
@@ -80,7 +81,7 @@ export class JobManager {
     this.maxParallelAgents = config?.maxParallelAgents ?? 4;
     this.heartbeatTimeoutMs = config?.heartbeatTimeoutMs ?? 30 * 60 * 1000;
     this.defaultJobTimeoutMs = config?.defaultJobTimeoutMs ?? 30_000;
-    this.serverId = crypto.randomUUID();
+    this.serverId = config?.serverId ?? crypto.randomUUID();
 
     // Reset only stale jobs left "running" by a previous server instance.
     // A different server_id alone is not enough: nested MCP clients can start

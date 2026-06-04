@@ -271,4 +271,88 @@ describe('StateStore', () => {
     expect(store.getTotalCount()).toBe(5);
     expect(store.getBlockedJobs()).toHaveLength(1);
   });
+
+  it('opens read-only without syncing JSON config into SQLite', () => {
+    const { tempDir, store } = createStore();
+    store.close();
+    stores.pop();
+
+    const stateDir = path.join(tempDir, '.tenet', '.state');
+    fs.writeFileSync(
+      path.join(stateDir, 'config.json'),
+      JSON.stringify({ max_retries: 7 }),
+      'utf8',
+    );
+
+    const readonlyStore = StateStore.openReadonly(tempDir);
+    stores.push(readonlyStore);
+
+    expect(readonlyStore.getConfig('max_retries')).toBeNull();
+  });
+
+  it('runs health checks on a valid WAL database', () => {
+    const { tempDir, store } = createStore();
+    store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'done' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+
+    const report = StateStore.checkDatabase(tempDir);
+
+    expect(report.ok).toBe(true);
+    expect(report.quickCheck).toEqual(['ok']);
+    expect(report.integrityCheck).toEqual(['ok']);
+    expect(report.indexConsistency.every((check) => check.ok)).toBe(true);
+  });
+
+  it('allows nested MCP-style stores to open the same project database', () => {
+    const { tempDir, store } = createStore();
+    const nestedStore = new StateStore(tempDir, { healthCheck: true });
+    stores.push(nestedStore);
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { name: 'parent-server-job' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    nestedStore.appendEvent(job.id, 'nested_server_seen');
+
+    expect(nestedStore.getJob(job.id)?.id).toBe(job.id);
+    expect(nestedStore.getEventsForJob(job.id).some((event) => event.event === 'nested_server_seen')).toBe(true);
+  });
+
+  it('creates a SQLite-safe backup that includes WAL state while the store is open', () => {
+    const { tempDir, store } = createStore();
+    const job = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'from-wal', payload: 'x'.repeat(10_000) },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    const backupPath = path.join(tempDir, '.tenet', '.state', 'backups', 'backup.db');
+
+    StateStore.backupDatabase(tempDir, backupPath);
+
+    const backupDb = new Database(backupPath, { readonly: true, fileMustExist: true });
+    try {
+      const integrity = backupDb.pragma('integrity_check') as Array<{ integrity_check: string }>;
+      expect(integrity.map((row) => row.integrity_check)).toEqual(['ok']);
+      const row = backupDb.prepare('SELECT params FROM jobs WHERE id = ?').get(job.id) as { params: string } | undefined;
+      expect(row ? JSON.parse(row.params) : null).toMatchObject({ name: 'from-wal' });
+    } finally {
+      backupDb.close();
+    }
+  });
+
+  it('can checkpoint writable WAL state', () => {
+    const { store } = createStore();
+
+    expect(() => store.checkpoint('PASSIVE')).not.toThrow();
+  });
 });

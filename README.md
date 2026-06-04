@@ -144,6 +144,10 @@ tenet serve --background
 tenet status
 tenet status --all  # Include completed/failed jobs
 
+# SQLite state maintenance
+tenet db check      # Read-only integrity/index diagnostics
+tenet db backup     # Verified SQLite-safe backup
+
 # Configure
 tenet config                          # View current config
 tenet config --agent claude-code      # Set default agent
@@ -218,7 +222,7 @@ Tenet is designed for long autonomous runs where crashes are expected:
 - **Heartbeat monitoring**: Detects truly stuck jobs within a session
 - **MCP disconnect**: Skill instructs agents to attempt server restart, halt if unrecoverable
 - **Update checks**: Health/status can surface newer npm versions with manual upgrade guidance; Tenet does not auto-update during an active run
-- **DB upgrades**: Normal startup refuses old/newer DB schemas with guidance. Close the agent, run `tenet init --upgrade`, then restart; upgrade backs up `.tenet/.state/tenet.db` first.
+- **DB upgrades**: Normal startup refuses old/newer DB schemas with guidance. Close the agent, run `tenet init --upgrade`, then restart; upgrade creates a verified SQLite-safe DB backup first.
 
 ## Diagnostics
 

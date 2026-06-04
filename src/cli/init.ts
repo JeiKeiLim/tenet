@@ -301,7 +301,7 @@ const backupStateDb = (tenetRoot: string): string | null => {
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupPath = path.join(stateDir, `tenet.db.bak-${stamp}`);
-  fs.copyFileSync(dbPath, backupPath);
+  StateStore.backupDatabase(path.dirname(tenetRoot), backupPath);
   return backupPath;
 };
 

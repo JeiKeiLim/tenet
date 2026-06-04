@@ -22,6 +22,17 @@ You are a tenet diagnostic expert. You know tenet's internals: SQLite schema, jo
 
 Run these diagnostic queries to get a full picture:
 
+Before mutating anything, preserve evidence and prefer read-only checks. If the
+installed Tenet has DB maintenance commands, start with:
+
+```bash
+tenet db check --project .
+```
+
+If that reports `unsafe`, do not run manual `UPDATE`, `VACUUM`, checkpoint, or
+restore commands against the live DB. First archive the current `.tenet/.state`
+files and coordinate with the user.
+
 ### 1. Project structure check
 
 ```bash
@@ -35,14 +46,46 @@ Expected: `interview/`, `spec/`, `harness/`, `status/`, `knowledge/`, `journal/`
 ### 2. Database health
 
 ```bash
-# Check DB exists and is readable
+# Check DB exists and is readable. Use Tenet's command when available.
+tenet db check --project .
+
+# Fallback: SQLite checks
 sqlite3 .tenet/.state/tenet.db "PRAGMA integrity_check"
+sqlite3 .tenet/.state/tenet.db "PRAGMA quick_check"
 
 # Schema version check — verify all expected columns exist
 sqlite3 .tenet/.state/tenet.db "PRAGMA table_info(jobs)"
 ```
 
 Expected columns: `id, type, status, params, agent_name, created_at, started_at, completed_at, last_heartbeat, retry_count, max_retries, parent_job_id, error, output, server_id`
+
+### 2a. WAL/base mismatch checks
+
+If `.tenet/.state/tenet.db-wal` exists, the normal SQLite view includes WAL
+frames. Compare the normal WAL-backed view with the immutable base DB view:
+
+```bash
+ls -la .tenet/.state/tenet.db*
+
+# Normal view: tenet.db plus WAL
+sqlite3 .tenet/.state/tenet.db "PRAGMA integrity_check"
+
+# Base DB only: ignores WAL
+sqlite3 'file:.tenet/.state/tenet.db?immutable=1' "PRAGMA integrity_check"
+
+# Compare indexed counts vs forced table scans
+sqlite3 .tenet/.state/tenet.db "SELECT status, COUNT(*) FROM jobs GROUP BY status ORDER BY status"
+sqlite3 .tenet/.state/tenet.db "SELECT status, COUNT(*) FROM jobs NOT INDEXED GROUP BY status ORDER BY status"
+sqlite3 .tenet/.state/tenet.db "SELECT COUNT(*) FROM jobs WHERE parent_job_id IS NULL"
+sqlite3 .tenet/.state/tenet.db "SELECT COUNT(*) FROM jobs NOT INDEXED WHERE parent_job_id IS NULL"
+```
+
+Interpretation:
+- Normal view fails but immutable base is `ok`: suspect WAL/base mismatch. Do
+  not checkpoint. Preserve `tenet.db`, `tenet.db-wal`, and `tenet.db-shm`.
+- Indexed and `NOT INDEXED` counts differ: indexes are unsafe even if some
+  status queries still appear to work.
+- Both normal and immutable views fail: the main DB image is already malformed.
 
 ### 3. Job status overview
 
@@ -135,7 +178,10 @@ tenet serve --project .
 ## Common Issues and Fixes
 
 ### Jobs stuck as "running" after server restart
-The server_id mechanism should auto-recover these on restart. If it doesn't:
+The server_id mechanism should auto-recover these on restart. First run
+`tenet db check --project .` or the read-only integrity checks above. Only if
+the DB is healthy should you consider manual state repair:
+
 ```bash
 # Manual fix: reset stuck running jobs to pending
 sqlite3 .tenet/.state/tenet.db "UPDATE jobs SET status='pending', started_at=NULL, last_heartbeat=NULL, server_id=NULL WHERE status='running'"
@@ -161,6 +207,23 @@ Tenet uses WAL mode for concurrent reads. If you see "database locked":
 ```bash
 # Check for other processes holding the DB
 fuser .tenet/.state/tenet.db 2>/dev/null || lsof .tenet/.state/tenet.db
+lsof .tenet/.state/tenet.db-wal 2>/dev/null
+lsof .tenet/.state/tenet.db-shm 2>/dev/null
+```
+
+### Creating a safe DB backup
+
+Do not copy only `.tenet/.state/tenet.db` while WAL files may exist. Prefer:
+
+```bash
+tenet db backup --project .
+```
+
+Fallback if the command is unavailable and the DB is healthy:
+
+```bash
+sqlite3 .tenet/.state/tenet.db "VACUUM INTO '.tenet/.state/tenet-backup.db'"
+sqlite3 .tenet/.state/tenet-backup.db "PRAGMA integrity_check"
 ```
 
 ### Playwright MCP not working
