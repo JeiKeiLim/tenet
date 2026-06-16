@@ -42,6 +42,10 @@ describe('initProject', () => {
 
     const tenetRoot = path.join(projectPath, '.tenet');
     const expectedDirs = [
+      'project',
+      'project/design-components',
+      'runs',
+      'archive',
       'interview',
       'spec',
       'harness',
@@ -60,6 +64,11 @@ describe('initProject', () => {
     }
 
     const expectedFiles = [
+      'project/overview.md',
+      'project/architecture.md',
+      'project/product.md',
+      'project/testing.md',
+      'project/design.md',
       'status/status.md',
       'status/job-queue.md',
       'status/backlog.md',
@@ -108,6 +117,7 @@ describe('initProject', () => {
     expect(fs.existsSync(phasesDir)).toBe(true);
 
     const expectedPhases = [
+      '00-context-bootstrap.md',
       '01-interview.md',
       '02-spec-and-harness.md',
       '03-visuals.md',
@@ -119,6 +129,7 @@ describe('initProject', () => {
     for (const phase of expectedPhases) {
       expect(fs.existsSync(path.join(phasesDir, phase))).toBe(true);
     }
+    expect(fs.existsSync(path.join(phasesDir, '00-brownfield-scan.md'))).toBe(false);
   });
 
   it('throws when .tenet already exists', () => {
@@ -128,14 +139,18 @@ describe('initProject', () => {
     expect(() => initProject(projectPath)).toThrowError(/\.tenet already exists.*--upgrade/);
   });
 
-  it('creates harness template with expected sections', () => {
+  it('creates lifecycle project templates and a legacy harness compatibility file', () => {
     const projectPath = createTempDir();
     initProject(projectPath);
+
+    const projectDoc = fs.readFileSync(path.join(projectPath, '.tenet', 'project', 'overview.md'), 'utf8');
+    expect(projectDoc).toContain('Bootstrap placeholder');
 
     const harnessPath = path.join(projectPath, '.tenet', 'harness', 'current.md');
     const harness = fs.readFileSync(harnessPath, 'utf8');
 
-    expect(harness).toContain('# Harness: Quality Contract');
+    expect(harness).toContain('# Legacy Harness Compatibility');
+    expect(harness).toContain('New runs must write .tenet/runs/<run-slug>/harness.md');
     expect(harness).toContain('## Formatting & Linting');
     expect(harness).toContain('## Testing Requirements');
     expect(harness).toContain('## Architecture Rules');
@@ -309,6 +324,24 @@ describe('initProject', () => {
     expect(gitignore).toContain('.state/');
     expect(gitignore).toContain('!state-snapshot/');
     expect(fs.existsSync(path.join(tenetRoot, 'state-snapshot', 'README.md'))).toBe(true);
+  });
+
+  it('creates lifecycle docs during upgrade without overwriting existing project docs', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(path.join(tenetRoot, 'project'), { recursive: true });
+    fs.writeFileSync(path.join(tenetRoot, 'project', 'overview.md'), '# Custom Overview\n', 'utf8');
+
+    initProject(projectPath, { upgrade: true });
+
+    expect(fs.readFileSync(path.join(tenetRoot, 'project', 'overview.md'), 'utf8')).toBe('# Custom Overview\n');
+    expect(fs.existsSync(path.join(tenetRoot, 'project', 'architecture.md'))).toBe(true);
+    expect(fs.existsSync(path.join(tenetRoot, 'project', 'product.md'))).toBe(true);
+    expect(fs.existsSync(path.join(tenetRoot, 'project', 'testing.md'))).toBe(true);
+    expect(fs.existsSync(path.join(tenetRoot, 'project', 'design.md'))).toBe(true);
+    expect(fs.existsSync(path.join(tenetRoot, 'project', 'design-components'))).toBe(true);
+    expect(fs.existsSync(path.join(tenetRoot, 'runs'))).toBe(true);
+    expect(fs.existsSync(path.join(tenetRoot, 'archive'))).toBe(true);
   });
 });
 

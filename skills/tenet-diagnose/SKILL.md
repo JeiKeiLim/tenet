@@ -41,7 +41,7 @@ ls -la .tenet/
 ls -la .tenet/.state/
 ```
 
-Expected: `interview/`, `spec/`, `harness/`, `status/`, `knowledge/`, `journal/`, `steer/`, `bootstrap/`, `visuals/`, `.state/` directories. `.state/` should contain `tenet.db` and optionally `config.json`.
+Expected lifecycle directories: `project/`, `project/design-components/`, `runs/`, `archive/`, `knowledge/`, `status/`, `state-snapshot/`, and `.state/`. Stage A compatibility projects may also have legacy lanes: `interview/`, `spec/`, `harness/`, `journal/`, `steer/`, `bootstrap/`, and `visuals/`. `.state/` should contain `tenet.db` and optionally `config.json`.
 
 ### 2. Database health
 

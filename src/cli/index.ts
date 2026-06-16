@@ -252,7 +252,7 @@ const run = async (): Promise<void> => {
       console.log(`\nInitialized Tenet scaffold at ${path.join(projectPath, '.tenet')}`);
       console.log(`Default agent: ${agent ?? '(unset — run `tenet config --agent <name>`)'}`);
       console.log('\nNext steps:');
-      console.log('- Review .tenet/harness/current.md and set project-specific constraints');
+      console.log('- Run Tenet context bootstrap to replace .tenet/project/*.md placeholders with current project doctrine');
       console.log(`- Start ${agent ?? 'your agent'} in this directory`);
       console.log('- To change agent later: tenet config --agent <name>');
     });

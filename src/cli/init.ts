@@ -8,6 +8,10 @@ import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 import { getPackageVersion } from './version.js';
 
 const REQUIRED_DIRS = [
+  'project',
+  'project/design-components',
+  'runs',
+  'archive',
   'interview',
   'spec',
   'harness',
@@ -37,6 +41,26 @@ This directory is for portable Tenet SQLite snapshots that are safe to track in 
 `;
 
 const TEMPLATE_FILES: Record<string, string> = {
+  'project/overview.md': `# Project Overview
+
+Bootstrap placeholder. Run Tenet context bootstrap to synthesize this from the live project before normal Tenet work.
+`,
+  'project/architecture.md': `# Project Architecture
+
+Bootstrap placeholder. Run Tenet context bootstrap to synthesize current architecture, data flow, persistence, and integration contracts.
+`,
+  'project/product.md': `# Project Product
+
+Bootstrap placeholder. Run Tenet context bootstrap to synthesize current user-facing behavior, stable requirements, non-goals, and product boundaries.
+`,
+  'project/testing.md': `# Project Testing
+
+Bootstrap placeholder. Run Tenet context bootstrap to synthesize authoritative commands, fixtures, quality gates, and verification gaps.
+`,
+  'project/design.md': `# Project Design
+
+Bootstrap placeholder. Run Tenet context bootstrap to synthesize the current user-facing experience, interaction surfaces, language, feedback, accessibility, responsiveness, and visual doctrine.
+`,
   'status/status.md': `# Status
 
 ## Summary
@@ -52,7 +76,10 @@ const TEMPLATE_FILES: Record<string, string> = {
   'status/backlog.md': '# Backlog\n\n',
   'steer/inbox.md': '# Steer Inbox\n\n',
   'steer/processed.md': '# Steer Processed\n\n',
-  'harness/current.md': `# Harness: Quality Contract
+  'harness/current.md': `# Legacy Harness Compatibility
+
+This file is preserved for legacy jobs that reference .tenet/harness/current.md through exact artifact_paths.
+New runs must write .tenet/runs/<run-slug>/harness.md and use .tenet/project/testing.md for durable testing doctrine.
 
 ## Formatting & Linting
 formatter: (configure per project)
@@ -129,6 +156,12 @@ const ensurePortableStateFiles = (tenetRoot: string): void => {
   fs.mkdirSync(path.join(tenetRoot, 'state-snapshot'), { recursive: true });
   ensureFile(path.join(tenetRoot, 'state-snapshot', 'README.md'), PORTABLE_STATE_README);
   ensureTenetGitignore(tenetRoot);
+};
+
+const ensureTemplateFiles = (tenetRoot: string): void => {
+  for (const [relativePath, content] of Object.entries(TEMPLATE_FILES)) {
+    ensureFile(path.join(tenetRoot, relativePath), content);
+  }
 };
 
 type StateConfig = {
@@ -302,9 +335,7 @@ export function initProject(projectPath: string, options?: InitOptions): void {
 
   fs.mkdirSync(path.join(tenetRoot, '.state'), { recursive: true });
 
-  for (const [relativePath, content] of Object.entries(TEMPLATE_FILES)) {
-    ensureFile(path.join(tenetRoot, relativePath), content);
-  }
+  ensureTemplateFiles(tenetRoot);
   ensurePortableStateFiles(tenetRoot);
 
   if (options?.agent) {
@@ -330,6 +361,7 @@ function upgradeProject(projectPath: string): void {
     fs.mkdirSync(path.join(tenetRoot, dir), { recursive: true });
   }
   fs.mkdirSync(path.join(tenetRoot, '.state'), { recursive: true });
+  ensureTemplateFiles(tenetRoot);
   ensurePortableStateFiles(tenetRoot);
 
   backupStateDb(tenetRoot);
@@ -345,7 +377,7 @@ function upgradeProject(projectPath: string): void {
   mergeOpenCodeConfig(projectPath);
   writeCodexConfig(projectPath);
 
-  // Do NOT overwrite: harness, spec, interview, knowledge, journal, status, steer, bootstrap
+  // Do NOT overwrite: project, harness, spec, interview, knowledge, journal, status, steer, bootstrap
   // Do NOT overwrite: .state/config.json
 }
 

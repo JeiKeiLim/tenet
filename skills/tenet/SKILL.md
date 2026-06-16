@@ -87,6 +87,8 @@ Do not invent tool calls or runtime state. If a named Tenet MCP tool is missing,
 11. Knowledge writes need confidence tags.
 12. Never assume yolo mode. It only activates when the user explicitly says "yolo", "skip questions", "decide everything", "don't ask me questions", or equivalent.
 13. Never commit live `.tenet/.state/tenet.db`, `.tenet/.state/tenet.db-wal`, or `.tenet/.state/tenet.db-shm`. If portable Tenet state should be tracked, run `tenet db snapshot` and commit `.tenet/state-snapshot/tenet.db` instead.
+14. Durable project doctrine lives in `.tenet/project/**`; normal implementation jobs must not edit it.
+15. New feature/run artifacts live under `.tenet/runs/<run-slug>/`. Legacy top-level artifact directories are compatibility lanes only.
 
 ## Boot Sequence
 
@@ -98,9 +100,13 @@ Run this before mode selection or execution:
 4. If health fails because the MCP server is unreachable, tell the user: "Tenet MCP server is not running. Run `npx tenet init` in the project root, then restart your agent." Do not self-start the server; host config manages MCP lifecycle.
 5. Call `tenet_get_status()`.
 6. If either call returns `update_available`, tell the user the current version, latest version, and `update_command`. Do not auto-update during an active run; instruct the user to close the agent, install the update, run `tenet init --upgrade`, then restart.
-7. If `.tenet/` was just created and the project has existing source code, read and execute `phases/00-brownfield-scan.md` before mode selection.
-8. Detect whether `.git/` exists. Git behavior is defined in `phases/05-execution-loop.md`.
-9. Probe Playwright MCP availability if possible. If unavailable, warn once. This is only non-blocking when the harness/spec marks browser exploration optional, skipped with reason, or not applicable; required browser/visual Layer 2 cannot pass without it.
+7. Run the context bootstrap gate before mode selection:
+   - Required docs: `.tenet/project/overview.md`, `.tenet/project/architecture.md`, `.tenet/project/product.md`, `.tenet/project/testing.md`, `.tenet/project/design.md`.
+   - Pass only when all required docs exist and are not empty placeholders or obvious templates.
+   - Do not judge "thin", "stale", or "needs improvement"; the gate is pass/fail only.
+8. If the bootstrap gate fails, read and execute `phases/00-context-bootstrap.md`. Stop normal work until the gate passes.
+9. Detect whether `.git/` exists. Git behavior is defined in `phases/05-execution-loop.md`.
+10. Probe Playwright MCP availability if possible. If unavailable, warn once. This is only non-blocking when the run-local harness/spec marks browser exploration optional, skipped with reason, or not applicable; required browser/visual Layer 2 cannot pass without it.
 
 Do not enter execution while health is bad.
 
@@ -127,7 +133,7 @@ Default to `autonomous` only after the user has seen both options and responds w
 
 Read the relevant phase file before executing that phase. The phrase "read" means opening the file contents in the current session, not assuming prior knowledge.
 
-1. Brownfield scan: `phases/00-brownfield-scan.md`
+1. Context bootstrap: `phases/00-context-bootstrap.md`
 2. Interview and clarity gate: `phases/01-interview.md`
 3. Pre-spec research, spec, harness, readiness gate: `phases/02-spec-and-harness.md`
 4. Visual artifacts and prototypes: `phases/03-visuals.md`
@@ -196,7 +202,7 @@ User steers outrank agent steers. Emergency steer cancels active jobs via `tenet
 Use `tenet_update_knowledge` for both reusable knowledge and session journal entries:
 
 - `type="knowledge"` for facts future jobs or future features can reuse.
-- `type="journal"` for job/session history and failure attempts.
+- `type="journal"` for job/session history and failure attempts. Current jobs with `run_path` route journals to `.tenet/runs/<run-slug>/journal/`; legacy jobs without `run_path` may still write `.tenet/journal/`.
 
 Use confidence tags such as `[implemented-and-tested]`, `[implemented-not-tested]`, `[decision-only]`, `[scanned-not-verified]`, `[research-verified]`, or `[research-inconclusive]`.
 

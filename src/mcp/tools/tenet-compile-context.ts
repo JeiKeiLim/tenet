@@ -6,6 +6,7 @@ import {
   readArtifactFile,
   resolveLatestFeatureDoc,
   resolveLatestScenariosDoc,
+  toProjectRelativePath,
   type ArtifactPaths,
 } from './artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
@@ -27,7 +28,25 @@ const listFiles = (dir: string, prefix: string): string => {
     return '';
   }
 
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).sort();
+  const files: string[] = [];
+  const walk = (currentDir: string, relativePrefix = ''): void => {
+    const entries = fs
+      .readdirSync(currentDir, { withFileTypes: true })
+      .filter((entry) => !entry.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+      const relativeName = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath, relativeName);
+      } else if (entry.isFile()) {
+        files.push(relativeName);
+      }
+    }
+  };
+
+  walk(dir);
   if (files.length === 0) {
     return '';
   }
@@ -51,6 +70,30 @@ const getArtifactPaths = (value: unknown): ArtifactPaths | undefined => {
   }
 
   return value as ArtifactPaths;
+};
+
+const normalizeOptionalProjectRelativePath = (
+  projectPath: string,
+  value: unknown,
+  label: string,
+): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  try {
+    return toProjectRelativePath(projectPath, value, label);
+  } catch {
+    return undefined;
+  }
+};
+
+const archiveHasEvidence = (archivePath: string): boolean => {
+  if (!fs.existsSync(archivePath)) {
+    return false;
+  }
+
+  return fs.readdirSync(archivePath).some((entry) => !entry.startsWith('.'));
 };
 
 const readArtifactOrFallback = (
@@ -97,6 +140,8 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
 
       const tenetPath = path.join(stateStore.projectPath, '.tenet');
       const feature = typeof job.params.feature === 'string' ? job.params.feature : undefined;
+      const runSlug = typeof job.params.run_slug === 'string' ? job.params.run_slug : undefined;
+      const runPath = normalizeOptionalProjectRelativePath(stateStore.projectPath, job.params.run_path, 'job.params.run_path');
       const artifactPaths = getArtifactPaths(job.params.artifact_paths);
 
       // Resolve spec: feature-scoped with fallback to old singleton
@@ -144,7 +189,7 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
             : readIfExists(path.join(tenetPath, 'spec', 'scenarios.md')),
       );
 
-      // Project-wide documents (always singular)
+      // Run-local harness (or legacy project-wide harness fallback)
       const harnessMd = readArtifactOrFallback(
         stateStore.projectPath,
         artifactPaths,
@@ -152,14 +197,39 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         'artifact_paths.harness',
         () => readIfExists(path.join(tenetPath, 'harness', 'current.md')),
       );
-      const statusMd = readIfExists(path.join(tenetPath, 'status', 'status.md'));
-      // Steer messages now live in SQLite via tenet_add_steer, but keep reading inbox.md for backward compatibility
-      const steerInbox = readIfExists(path.join(tenetPath, 'steer', 'inbox.md'));
-      const codebaseScanMd = readIfExists(path.join(tenetPath, 'bootstrap', 'codebase-scan.md'));
 
-      // Knowledge and journal file listings (filenames only — agents read selectively)
+      const projectDocs = [
+        ['Project Overview', 'project/overview.md'],
+        ['Project Architecture', 'project/architecture.md'],
+        ['Project Product', 'project/product.md'],
+        ['Project Testing', 'project/testing.md'],
+        ['Project Design', 'project/design.md'],
+      ]
+        .map(([heading, relativePath]) => {
+          const content = readIfExists(path.join(tenetPath, relativePath));
+          return content ? ['', `## ${heading}`, content] : [];
+        })
+        .flat();
+
+      // Knowledge and evidence listings (filenames only — agents read selectively)
       const knowledgeListing = listFiles(path.join(tenetPath, 'knowledge'), '.tenet/knowledge/');
-      const journalListing = listFiles(path.join(tenetPath, 'journal'), '.tenet/journal/');
+      const designComponentListing = listFiles(
+        path.join(tenetPath, 'project', 'design-components'),
+        '.tenet/project/design-components/',
+      );
+      const runJournalListing = runPath
+        ? listFiles(path.join(stateStore.projectPath, runPath, 'journal'), `${runPath}/journal/`)
+        : '';
+      const runResearchListing = runPath
+        ? listFiles(path.join(stateStore.projectPath, runPath, 'research'), `${runPath}/research/`)
+        : '';
+      const runVisualsListing = runPath
+        ? listFiles(path.join(stateStore.projectPath, runPath, 'visuals'), `${runPath}/visuals/`)
+        : '';
+      const legacyJournalListing = !runPath
+        ? listFiles(path.join(tenetPath, 'journal'), '.tenet/journal/')
+        : '';
+      const hasArchive = archiveHasEvidence(path.join(tenetPath, 'archive'));
 
       const jobName = typeof job.params.name === 'string' ? job.params.name : 'unnamed';
       const jobPrompt = typeof job.params.prompt === 'string' ? job.params.prompt : '';
@@ -191,12 +261,15 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         `job_type: ${job.type}`,
         `job_name: ${jobName}`,
         ...(feature ? [`feature: ${feature}`] : []),
+        ...(runSlug ? [`run_slug: ${runSlug}`] : []),
+        ...(runPath ? [`run_path: ${runPath}`] : []),
         ...(artifactPaths ? [`artifact_paths: ${JSON.stringify(artifactPaths)}`] : []),
         `job_dependencies: ${jobDeps}`,
         ...(reportOnly ? ['report_only: true'] : []),
         reportOnlyPreamble,
         '## Job Assignment',
         jobPrompt,
+        ...projectDocs,
         '',
         '## Spec',
         specMd,
@@ -209,14 +282,21 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         '## Harness',
         harnessMd,
         ...(knowledgeListing ? ['', '## Available Knowledge Files', 'Read any relevant files below before starting work:', knowledgeListing] : []),
-        ...(journalListing ? ['', '## Session Journal', 'Activity log from this session:', journalListing] : []),
-        '',
-        '## Status',
-        statusMd,
-        '',
-        '## Steer Inbox',
-        steerInbox,
-        ...(codebaseScanMd ? ['', '## Codebase Scan', codebaseScanMd] : []),
+        ...(designComponentListing
+          ? ['', '## Project Design Component Files', 'Read relevant accepted examples before changing user-facing surfaces:', designComponentListing]
+          : []),
+        ...(runJournalListing ? ['', '## Run Journal Files', 'Read selectively for current-run history:', runJournalListing] : []),
+        ...(runResearchListing ? ['', '## Run Research Files', 'Read selectively for current-run research:', runResearchListing] : []),
+        ...(runVisualsListing ? ['', '## Run Visual Files', 'Inspect selectively for current-run visual direction:', runVisualsListing] : []),
+        ...(legacyJournalListing
+          ? ['', '## Legacy Session Journal Files', 'Compatibility listing for jobs without run_path:', legacyJournalListing]
+          : []),
+        ...(hasArchive
+          ? ['', '## Archived Legacy Evidence', 'Archived legacy Tenet evidence exists under `.tenet/archive/`. It is not inlined by default; inspect it only for explicit history, migration, or provenance work.']
+          : []),
+        ...(!artifactPaths
+          ? ['', '## Compatibility Notice', 'This job did not carry exact artifact_paths. Tenet used strict legacy feature filename fallback where possible; new runs should register exact run-local artifact_paths.']
+          : []),
       ].join('\n');
 
       return jsonResult({ context: compiled });

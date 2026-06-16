@@ -13,7 +13,7 @@ Every critic finding (code critic, test critic) MUST include a `category` so the
 | `harness_bug` | Build/lint/test harness itself is broken | Retry or remediate with scope limited to build/CI/scripts |
 | `evidence_mismatch` | Report numbers don't match fresh command output | Re-run the source job's verification commands, refresh report |
 | `contention` | Failure looks like sibling eval stepping on shared state | Re-run after siblings complete, or switch to sequential mode |
-| `scope_conflict` | Job edited files outside its declared scope (e.g. report-only job touched code) | Trigger the blocking finding escape hatch (see 05-execution-loop.md) |
+| `scope_conflict` | Job edited files outside its declared scope (e.g. report-only job touched code, or a normal job edited `.tenet/project/**`) | Trigger the blocking finding escape hatch (see 05-execution-loop.md) |
 
 The critic emits findings as objects: `{"category": "...", "detail": "..."}`. Orchestrators MUST read the category to pick the right response — plain retry loops waste cycles on bugs that aren't product bugs.
 
@@ -82,6 +82,7 @@ The code critic checks:
 - Does the implementation match the spec's intent?
 - Are any anti-scenarios violated?
 - Are there obvious gaps or missing edge cases?
+- Did the job edit `.tenet/project/**` without explicit context-bootstrap, doctrine-maintenance, or direct user authorization? If yes, fail with `category: "scope_conflict"`.
 
 **Zero-findings rule**: If the critic finds nothing, it must re-analyze using an alternate attack vector like security, performance, or concurrency. Zero findings trigger a mandatory second pass.
 
@@ -159,7 +160,7 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 
 ### Stage 5: Interaction E2E (Independent Job)
 
-Dispatched as a separate `playwright_eval` job by `tenet_start_eval` alongside code critic and test critic. The job type remains `playwright_eval` for compatibility, but the worker first reads the spec/harness and classifies the declared e2e surface: browser UI, visual/canvas/game, CLI, API, library, or not applicable. The worker has independent context — does NOT see implementation code or author reasoning. Receives only the spec, harness, scenarios, and the running public surface.
+Dispatched as a separate `playwright_eval` job by `tenet_start_eval` alongside code critic and test critic. The job type remains `playwright_eval` for compatibility, but the worker first reads the exact run artifacts and project doctrine supplied through compiled context or `artifact_paths`, then classifies the declared e2e surface: browser UI, visual/canvas/game, CLI, API, library, or not applicable. The worker has independent context — does NOT see implementation code or author reasoning. Receives only the exact run artifacts, project doctrine, scenarios, and the running public surface.
 
 For browser UI, game/canvas, visual, or other browser-interactive features, the worker MUST do BOTH layers unless the harness/spec explicitly marks Layer 2 optional or skipped with reason:
 
