@@ -16,13 +16,14 @@ For Full mode runs with an interview transcript, verify the spec front-matter `d
 Before decomposition, verify required visual artifacts exist when the feature has a user-facing or interactive surface (UI, game/canvas, visual app, TUI, CLI workflow, API workflow, or similar). If required visuals are missing, stop and run `phases/03-visuals.md` before writing the DAG.
 
 ## 2. File Structure (STRICT)
-- **DECOMPOSITION**: `.tenet/decomposition/{date}-{feature}.md` (e.g. `.tenet/decomposition/2026-04-08-oauth.md`)
+- **RUN PATH**: `.tenet/runs/{run_slug}/`
+- **DECOMPOSITION**: `.tenet/runs/{run_slug}/decomposition.md`
 - **ACCEPTANCE TESTS**: `tests/acceptance/` directory with test files generated from scenarios
 - **JOB QUEUE**:     `.tenet/status/job-queue.md` (auto-generated from DB)
 - **BACKLOG**:       `.tenet/status/backlog.md`
 - **STATUS**:        `.tenet/status/status.md` (auto-generated from DB)
 
-Use the same `{feature}` slug established during the interview phase. `{date}` is today's ISO date (YYYY-MM-DD).
+Use the same `{feature}` slug established during the interview phase. `{date}` is today's ISO date (YYYY-MM-DD), and `run_slug` is `{date}-{feature}`.
 
 ## 3. Acceptance Test Generation (BEFORE decomposing into jobs)
 
@@ -30,7 +31,7 @@ Before writing the DAG, generate executable acceptance tests from the spec scena
 
 ### Rules:
 - Write tests BEFORE any implementation exists — they will fail initially, and that's expected
-- Each scenario from `.tenet/spec/scenarios-{date}-{feature}.md` becomes at least one test
+- Each scenario from `.tenet/runs/{run_slug}/scenarios.md` becomes at least one test
 - Anti-scenarios become tests that verify the bad behavior does NOT happen
 - Tests must be runnable with a single command
 
@@ -76,7 +77,7 @@ test('login flow', async ({ page }) => {
 ### Brownfield Feature Discovery
 
 For brownfield projects, do NOT only test features mentioned in the spec. Before writing tests:
-1. Read the brownfield scan (`.tenet/bootstrap/codebase-scan.md`) if it exists
+1. Read `.tenet/project/product.md`, `.tenet/project/architecture.md`, and `.tenet/project/testing.md`
 2. Search the codebase for routes, pages, API endpoints, and interactive elements
 3. List ALL discoverable features and generate tests for each
 4. The user cannot be expected to enumerate every existing feature during the interview
@@ -158,12 +159,14 @@ Call `tenet_register_jobs` with all jobs including integration checkpoints and t
 ```
 tenet_register_jobs({
   feature: "oauth",
+  run_slug: "2026-04-08-oauth",
+  run_path: ".tenet/runs/2026-04-08-oauth",
   artifact_paths: {
-    spec: ".tenet/spec/2026-04-08-oauth.md",
-    harness: ".tenet/harness/current.md",
-    scenarios: ".tenet/spec/scenarios-2026-04-08-oauth.md",
-    interview: ".tenet/interview/2026-04-08-oauth.md",
-    decomposition: ".tenet/decomposition/2026-04-08-oauth.md"
+    spec: ".tenet/runs/2026-04-08-oauth/spec.md",
+    harness: ".tenet/runs/2026-04-08-oauth/harness.md",
+    scenarios: ".tenet/runs/2026-04-08-oauth/scenarios.md",
+    interview: ".tenet/runs/2026-04-08-oauth/interview.md",
+    decomposition: ".tenet/runs/2026-04-08-oauth/decomposition.md"
   },
   jobs: [
     { id: "job-1", name: "Core API", type: "dev", depends_on: [], prompt: "..." },
@@ -176,7 +179,7 @@ tenet_register_jobs({
 })
 ```
 
-Do not rely on feature-only document lookup for new runs. The registered jobs carry `artifact_paths` into `tenet_compile_context`, so implementation workers read the same spec/harness/scenarios/interview/decomposition that passed the readiness gate.
+Do not rely on feature-only document lookup for new runs. The registered jobs carry `run_slug`, `run_path`, and exact `artifact_paths` into `tenet_compile_context`, so implementation workers read the same spec/harness/scenarios/interview/decomposition that passed the readiness gate.
 
 ## 7. Execution Protocol (CRITICAL)
 1. **Write Acceptance Tests First**: Generate test stubs from scenarios before writing the DAG.
@@ -199,7 +202,7 @@ Do not rely on feature-only document lookup for new runs. The registered jobs ca
 - [ ] Acceptance test files exist in `tests/acceptance/` (or equivalent)
 - [ ] DAG includes at least one `integration_test` checkpoint
 - [ ] Final job in DAG is an `integration_test` that runs all acceptance tests
-- [ ] All jobs are registered via `tenet_register_jobs`
+- [ ] All jobs are registered via `tenet_register_jobs` with `run_slug`, `run_path`, and exact run-local `artifact_paths`
 - [ ] Pre-execution summary was presented and the user explicitly confirmed after seeing it
 - [ ] In agile mode: only the current slice's jobs are registered; the decomposition file has a `## Slice N: ...` heading for this fire
 
@@ -233,7 +236,7 @@ Each slice's DAG follows the same patterns as the autonomous DAG (dev jobs with 
 
 ### 9.3 File accumulation (single doc, slice-headed sections)
 
-`.tenet/decomposition/{date}-{feature}.md` is **appended**, not rewritten, on each slice fire. Use slice-headed sections so the whole feature's decomposition lives in one file:
+`.tenet/runs/{run_slug}/decomposition.md` is **appended**, not rewritten, on each slice fire. Use slice-headed sections so the whole feature's decomposition lives in one file:
 
 ```markdown
 # Decomposition for {feature}
@@ -273,6 +276,15 @@ Example registration (slice 1 of an SNS app):
 ```js
 tenet_register_jobs({
   feature: "sns-app",
+  run_slug: "2026-04-08-sns-app",
+  run_path: ".tenet/runs/2026-04-08-sns-app",
+  artifact_paths: {
+    spec: ".tenet/runs/2026-04-08-sns-app/spec.md",
+    harness: ".tenet/runs/2026-04-08-sns-app/harness.md",
+    scenarios: ".tenet/runs/2026-04-08-sns-app/scenarios.md",
+    interview: ".tenet/runs/2026-04-08-sns-app/interview.md",
+    decomposition: ".tenet/runs/2026-04-08-sns-app/decomposition.md"
+  },
   jobs: [
     { id: "slice-1-auth-api", name: "Auth API", type: "dev", depends_on: [], prompt: "..." },
     { id: "slice-1-signup-ui", name: "Signup UI", type: "dev", depends_on: ["slice-1-auth-api"], prompt: "..." },

@@ -20,7 +20,7 @@ Tenet: interviews you, writes the spec, generates visual mockups,
 
 AI coding agents are powerful but short-lived. They lose context, drift off-spec, skip tests, and can't sustain multi-hour development sessions. Tenet solves this:
 
-- **Structured phases** — Brownfield scan, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. No required phase is skippable.
+- **Structured phases** — Context bootstrap, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. Full mode runs all of them; Standard skips the interview and Quick skips interview/spec/decomposition (see Execution Modes).
 - **DAG-based job orchestration** — Dependencies are explicit. Parallel jobs run in parallel. Blocked jobs wait.
 - **3-critic evaluation pipeline** — Code critic, Test critic, and Playwright e2e eval. All independent, all with fresh context (no author bias). All findings are blocking.
 - **Crash recovery** — Server-ID-based orphan detection. If the MCP server dies, jobs auto-retry on restart.
@@ -58,7 +58,7 @@ npx @jeikeilim/tenet init --agent claude-code --skip-playwright-check
 
 | Phase | What Happens |
 |-------|-------------|
-| **0. Brownfield Scan** | Detects existing code, frameworks, and prior tenet work |
+| **0. Context Bootstrap** | Establishes durable project doctrine — live-scans existing code (brownfield) or defers to the interview (greenfield) |
 | **1. Interview** | Agent asks clarifying questions, researches technologies |
 | **2. Spec & Harness** | Writes formal spec with scenarios + quality contract |
 | **3. Visuals** | Generates architecture diagrams, UI mockups, DESIGN.md |
@@ -134,7 +134,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 # Initialize project (interactive agent selection + optional Playwright MCP install)
 tenet init [path]
 tenet init --agent claude-code --skip-playwright-check
-tenet init --upgrade  # Update DB, skills/configs, preserve your docs
+tenet init --upgrade  # Update DB, skills/configs; MIGRATES legacy docs (see note below)
 
 # Start MCP server
 tenet serve
@@ -145,8 +145,10 @@ tenet status
 tenet status --all  # Include completed/failed jobs
 
 # SQLite state maintenance
-tenet db check      # Read-only integrity/index diagnostics
-tenet db backup     # Verified SQLite-safe backup
+tenet db check              # Read-only integrity/index diagnostics
+tenet db backup             # Verified SQLite-safe backup
+tenet db snapshot           # Git-safe portable snapshot to .tenet/state-snapshot/
+tenet db restore-snapshot   # Restore live SQLite state from a portable snapshot
 
 # Configure
 tenet config                          # View current config
@@ -155,6 +157,25 @@ tenet config --max-retries unlimited  # Default: no fixed retry cap
 tenet config --max-retries 5          # Optional finite retry limit
 tenet config --timeout 120            # Set job timeout (minutes)
 ```
+
+### Upgrading from ≤ 26.6.0
+
+Versions after 26.6.0 introduce the Tenet **document lifecycle**. Running
+`tenet init --upgrade` on an existing project now performs a one-time,
+**breaking** migration of your `.tenet/` layout:
+
+- **Moves** legacy document directories — `spec/`, `interview/`,
+  `decomposition/`, `harness/`, `journal/`, `visuals/`, `bootstrap/`,
+  `steer/`, `knowledge/`, and `DESIGN.md` — into `.tenet/archive/legacy-v1/`.
+  Context bootstrap later curates durable facts from the archived `knowledge/`
+  back into a fresh top-level `.tenet/knowledge/`.
+
+This is one-way. **Do not upgrade while a Tenet run is in progress.** Jobs
+registered before the upgrade store exact paths to the old top-level
+locations, and moving those files breaks `tenet_compile_context` and
+`tenet_retry_job` for pre-upgrade jobs (their paths dangle). Finish or cancel
+active runs first. The migration runs once (subsequent upgrades skip it), and
+upgrades warn at runtime if pending/running jobs are present.
 
 ## MCP Tools
 
@@ -186,21 +207,21 @@ After `tenet init`, your project gets:
 ```
 your-project/
   .tenet/
-    interview/      # Interview transcripts (dated per feature)
-    spec/           # Formal specifications
-    harness/        # Quality contracts (linting, testing, architecture rules)
-    status/         # Auto-generated status files
-    knowledge/      # Reusable technical knowledge
-    journal/        # Dev activity logs
-    steer/          # Steer message inbox/processed
-    visuals/        # Architecture diagrams, UI mockups
-    bootstrap/      # Compiler/build configuration
+    project/          # Durable doctrine: overview.md, architecture.md, product.md,
+                      #   testing.md, design.md (+ design-components/)
+    runs/<run-slug>/  # Per-run artifacts for YYYY-MM-DD-feature:
+                      #   interview.md, spec.md, harness.md, scenarios.md,
+                      #   decomposition.md, research/, journal/, visuals/
+    archive/legacy-v1/  # One-time migration target for pre-lifecycle layouts (populated by `tenet init --upgrade`)
+    knowledge/        # Curated, reusable technical knowledge
+    status/           # status.md + job-queue.md are auto-generated from DB; backlog.md is a static scaffold
+    state-snapshot/   # Git-safe portable SQLite snapshots (`tenet db snapshot`)
     .state/
-      tenet.db      # Versioned SQLite state (jobs, events, steer, config)
-      config.json   # Project configuration
-  .mcp.json         # Claude Code MCP server configuration (auto-generated)
-  .codex/config.toml # Codex MCP server configuration and project trust
-  opencode.json     # OpenCode MCP server configuration and permissions
+      tenet.db        # Versioned SQLite state (jobs, events, steer, config)
+      config.json     # Project configuration
+  .mcp.json           # Claude Code MCP server configuration (auto-generated)
+  .codex/config.toml  # Codex MCP server configuration and project trust
+  opencode.json       # OpenCode MCP server configuration and permissions
   .claude/skills/tenet/  # Generated skill files for Claude Code, with Tenet version metadata
   .agents/skills/tenet/  # Generated skill files for Codex, with Tenet version metadata
 ```

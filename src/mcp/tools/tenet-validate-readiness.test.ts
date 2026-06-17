@@ -332,6 +332,80 @@ describe('tenet_validate_readiness', () => {
     await manager.waitForJob(parsed.job_id as string, null, 5_000);
   });
 
+  it('accepts exact run-local artifact paths', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(projectPath, '.tenet/runs/2026-06-12-oauth/spec.md', '# Run Spec');
+    writeFile(projectPath, '.tenet/runs/2026-06-12-oauth/harness.md', '# Run Harness');
+    writeFile(projectPath, '.tenet/runs/2026-06-12-oauth/scenarios.md', '# Run Scenarios');
+    writeFile(projectPath, '.tenet/runs/2026-06-12-oauth/interview.md', '# Run Interview');
+    writeFile(projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Stale legacy spec');
+
+    const result = await handler({
+      feature: 'oauth',
+      artifact_paths: {
+        spec: '.tenet/runs/2026-06-12-oauth/spec.md',
+        harness: '.tenet/runs/2026-06-12-oauth/harness.md',
+        scenarios: '.tenet/runs/2026-06-12-oauth/scenarios.md',
+        interview: '.tenet/runs/2026-06-12-oauth/interview.md',
+      },
+    });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const prompt = job?.params.prompt as string;
+
+    expect(parsed.warning).toBeUndefined();
+    expect(parsed.artifact_paths).toEqual({
+      spec: '.tenet/runs/2026-06-12-oauth/spec.md',
+      harness: '.tenet/runs/2026-06-12-oauth/harness.md',
+      scenarios: '.tenet/runs/2026-06-12-oauth/scenarios.md',
+      interview: '.tenet/runs/2026-06-12-oauth/interview.md',
+    });
+    expect(job?.params.artifact_paths).toEqual(parsed.artifact_paths);
+    expect(prompt).toContain('Run Spec');
+    expect(prompt).toContain('Run Harness');
+    expect(prompt).toContain('Run Scenarios');
+    expect(prompt).toContain('Run Interview');
+    expect(prompt).not.toContain('Stale legacy spec');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
+  it('includes run-local artifact paths in deterministic preflight failure jobs', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-12-oauth/spec.md',
+      ['---', 'delivery_mode: agile', '---', '', '# Spec without slice plan'].join('\n'),
+    );
+    writeFile(projectPath, '.tenet/runs/2026-06-12-oauth/harness.md', '# Harness');
+
+    const result = await handler({
+      feature: 'oauth',
+      artifact_paths: {
+        spec: '.tenet/runs/2026-06-12-oauth/spec.md',
+        harness: '.tenet/runs/2026-06-12-oauth/harness.md',
+        scenarios: null,
+        interview: null,
+      },
+    });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const output = manager.getJobResult(parsed.job_id as string).output as {
+      passed: boolean;
+      blockers: string[];
+    };
+
+    expect(job?.status).toBe('completed');
+    expect(job?.params.artifact_paths).toEqual({
+      spec: '.tenet/runs/2026-06-12-oauth/spec.md',
+      harness: '.tenet/runs/2026-06-12-oauth/harness.md',
+      scenarios: null,
+      interview: null,
+    });
+    expect(output.passed).toBe(false);
+    expect(output.blockers.join('\n')).toContain('missing ## Slice plan');
+  });
+
   it('warns but does not select scenarios as the spec in feature-only fallback', async () => {
     const { handler, projectPath, store, manager } = createHarness();
     writeFile(projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Real spec');

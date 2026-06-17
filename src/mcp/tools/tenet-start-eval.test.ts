@@ -76,11 +76,15 @@ const parseResult = (result: CallToolResult): Record<string, unknown> => {
   return JSON.parse(first.text);
 };
 
-const createSourceJob = (store: StateStore, feature?: string): string =>
+const createSourceJob = (
+  store: StateStore,
+  feature?: string,
+  extraParams: Record<string, unknown> = {},
+): string =>
   store.createJob({
     type: 'dev',
     status: 'completed',
-    params: { name: 'source', dag_id: 'job-1', prompt: 'build it', ...(feature ? { feature } : {}) },
+    params: { name: 'source', dag_id: 'job-1', prompt: 'build it', ...(feature ? { feature } : {}), ...extraParams },
     retryCount: 0,
     maxRetries: 3,
   }).id;
@@ -200,6 +204,52 @@ describe('tenet_start_eval eval mode resolution', () => {
     const parsed = parseResult(result);
 
     expect(parsed.eval_parallel_safe).toBe(true);
+
+    await manager.waitForJob(parsed.code_critic_job_id as string, null, 5_000);
+    await manager.waitForJob(parsed.test_critic_job_id as string, null, 5_000);
+    await manager.waitForJob(parsed.playwright_eval_job_id as string, null, 5_000);
+  });
+
+  it('code critic prompt treats unauthorized project doctrine edits as scope_conflict', async () => {
+    const { store, manager, handler } = createHarness();
+    const sourceId = createSourceJob(store, 'oauth', {
+      run_slug: '2026-06-12-oauth',
+      run_path: '.tenet/runs/2026-06-12-oauth',
+      artifact_paths: {
+        spec: '.tenet/runs/2026-06-12-oauth/spec.md',
+        harness: '.tenet/runs/2026-06-12-oauth/harness.md',
+      },
+    });
+
+    const result = await handler({ job_id: sourceId, output: { summary: 'ok' } });
+    const parsed = parseResult(result);
+    const codeCritic = store.getJob(parsed.code_critic_job_id as string);
+    const prompt = codeCritic?.params.prompt as string;
+
+    expect(prompt).toContain('Project doctrine edits authorized**: no');
+    expect(prompt).toContain('any change under `.tenet/project/**` is OUT OF SCOPE');
+    expect(prompt).toContain('Also use "scope_conflict" when project doctrine edits are not authorized');
+    expect(prompt).toContain('**Run path**: .tenet/runs/2026-06-12-oauth');
+    expect(prompt).toContain('**Artifact paths**');
+
+    await manager.waitForJob(parsed.code_critic_job_id as string, null, 5_000);
+    await manager.waitForJob(parsed.test_critic_job_id as string, null, 5_000);
+    await manager.waitForJob(parsed.playwright_eval_job_id as string, null, 5_000);
+  });
+
+  it('playwright eval prompt uses exact artifacts and project docs instead of legacy harness path', async () => {
+    const { store, manager, handler } = createHarness();
+    const sourceId = createSourceJob(store, 'oauth');
+
+    const result = await handler({ job_id: sourceId, output: { summary: 'ok' } });
+    const parsed = parseResult(result);
+    const playwright = store.getJob(parsed.playwright_eval_job_id as string);
+    const prompt = playwright?.params.prompt as string;
+
+    expect(prompt).toContain('Use exact artifact_paths when provided');
+    expect(prompt).toContain('.tenet/project/testing.md');
+    expect(prompt).toContain('.tenet/project/design.md');
+    expect(prompt).not.toContain('.tenet/harness/current.md');
 
     await manager.waitForJob(parsed.code_critic_job_id as string, null, 5_000);
     await manager.waitForJob(parsed.test_critic_job_id as string, null, 5_000);

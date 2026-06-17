@@ -12,15 +12,26 @@ const buildJobScopeSection = (stateStore: StateStore, jobId: string): string => 
   const name = typeof job.params.name === 'string' ? job.params.name : 'unknown';
   const dagId = typeof job.params.dag_id === 'string' ? job.params.dag_id : '';
   const prompt = typeof job.params.prompt === 'string' ? job.params.prompt : '';
+  const runSlug = typeof job.params.run_slug === 'string' ? job.params.run_slug : undefined;
+  const runPath = typeof job.params.run_path === 'string' ? job.params.run_path : undefined;
+  const artifactPaths = job.params.artifact_paths && typeof job.params.artifact_paths === 'object'
+    ? JSON.stringify(job.params.artifact_paths)
+    : undefined;
+  const doctrineAuthorized = job.params.allow_project_doctrine_edits === true;
 
   return [
     '## Job Scope (evaluate ONLY against this scope)',
     '',
     `**Job**: ${dagId ? `${dagId} — ` : ''}${name}`,
     `**Deliverables**: ${prompt}`,
+    ...(runSlug ? [`**Run slug**: ${runSlug}`] : []),
+    ...(runPath ? [`**Run path**: ${runPath}`] : []),
+    ...(artifactPaths ? [`**Artifact paths**: ${artifactPaths}`] : []),
+    `**Project doctrine edits authorized**: ${doctrineAuthorized ? 'yes' : 'no'}`,
     '',
     'CRITICAL: Only evaluate work that falls within THIS job\'s scope above.',
     'Features, tests, or capabilities assigned to OTHER jobs in the DAG are OUT OF SCOPE.',
+    'If project doctrine edits are not authorized, any change under `.tenet/project/**` is OUT OF SCOPE and must be reported as `scope_conflict`.',
     'Do NOT fail this job for missing functionality that belongs to a later job.',
     '',
   ].join('\n');
@@ -61,6 +72,7 @@ const CODE_CRITIC_PREAMBLE = [
   '- "evidence_mismatch": report claims numbers that fresh commands contradict',
   '- "contention": failure looks like sibling eval stepping on shared state',
   '- "scope_conflict": work violates declared job scope (e.g. report-only job edited files)',
+  '  Also use "scope_conflict" when project doctrine edits are not authorized and the job changed `.tenet/project/**`.',
   '',
   'End with: {"passed": true/false, "stage": "code_critic", "findings": [{"category": "product_bug", "detail": "..."}, ...]}',
   '',
@@ -73,7 +85,7 @@ const PLAYWRIGHT_EVAL_PREAMBLE = [
   'You verify the project ACTUALLY WORKS through the public user-facing surface declared in the spec/harness.',
   '',
   '### First: classify the project surface',
-  'Read `.tenet/harness/current.md`, the latest feature spec, and the scenarios file.',
+  'Read the source job scope above. Use exact artifact_paths when provided, the run-local spec/harness/scenarios, and `.tenet/project/testing.md` / `.tenet/project/design.md` as the authoritative context.',
   'Determine whether this job needs web/browser UI, game/canvas/visual, CLI, API, library, or no e2e surface.',
   'Do NOT force Playwright for CLI/API/library work unless the harness explicitly requires browser verification.',
   '',

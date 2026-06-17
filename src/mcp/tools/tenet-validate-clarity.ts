@@ -124,6 +124,19 @@ const createCompletedClarityFailureJob = (
   return job;
 };
 
+const RUN_SLUG_FEATURE_PATTERN = /^\d{4}-\d{2}-\d{2}-(.+)$/;
+
+/**
+ * Extract the feature slug from a run directory name shaped `{date}-{feature}`.
+ * Returns undefined for anything that is not a dated run slug, so unrelated
+ * directories are never matched by feature. Exact comparison avoids the suffix
+ * ambiguity where feature "auth" would match a run slug ending in "-oauth".
+ */
+const runSlugFeature = (dirName: string): string | undefined => {
+  const match = dirName.match(RUN_SLUG_FEATURE_PATTERN);
+  return match ? match[1] : undefined;
+};
+
 export const registerTenetValidateClarityTool = (
   registerTool: RegisterTool,
   jobManager: JobManager,
@@ -142,12 +155,44 @@ export const registerTenetValidateClarityTool = (
     },
     async ({ feature }) => {
       const tenetPath = path.join(stateStore.projectPath, '.tenet');
+      const runsDir = path.join(tenetPath, 'runs');
       const interviewDir = path.join(tenetPath, 'interview');
 
       let transcriptPath: string | undefined;
 
-      // Try feature-scoped first, then latest file in dir, then singleton fallback
-      if (feature && fs.existsSync(interviewDir)) {
+      // With a feature, only feature-matched transcripts are ever selected:
+      //   run-local {date}-{feature}/interview.md, then legacy interview/*-{feature}.md.
+      // Without a feature, fall back to the latest run interview, then the latest
+      // legacy file. The generic interview.md singleton is the final fallback.
+      // We never silently validate one feature's transcript for a different feature.
+      if (feature && fs.existsSync(runsDir)) {
+        const matches = fs
+          .readdirSync(runsDir, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory() && runSlugFeature(entry.name) === feature)
+          .map((entry) => entry.name)
+          .sort();
+        for (const runSlug of matches.slice().reverse()) {
+          const candidate = path.join(runsDir, runSlug, 'interview.md');
+          if (fs.existsSync(candidate)) {
+            transcriptPath = candidate;
+            break;
+          }
+        }
+      }
+
+      if (!transcriptPath && !feature && fs.existsSync(runsDir)) {
+        const candidates = fs
+          .readdirSync(runsDir, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => path.join(runsDir, entry.name, 'interview.md'))
+          .filter((candidate) => fs.existsSync(candidate))
+          .sort();
+        if (candidates.length > 0) {
+          transcriptPath = candidates[candidates.length - 1];
+        }
+      }
+
+      if (!transcriptPath && feature && fs.existsSync(interviewDir)) {
         const suffix = `-${feature}.md`;
         const matches = fs.readdirSync(interviewDir).filter((f) => f.endsWith(suffix)).sort();
         if (matches.length > 0) {
@@ -155,7 +200,7 @@ export const registerTenetValidateClarityTool = (
         }
       }
 
-      if (!transcriptPath && fs.existsSync(interviewDir)) {
+      if (!transcriptPath && !feature && fs.existsSync(interviewDir)) {
         const allMd = fs.readdirSync(interviewDir).filter((f) => f.endsWith('.md')).sort();
         if (allMd.length > 0) {
           transcriptPath = path.join(interviewDir, allMd[allMd.length - 1]);
@@ -167,7 +212,7 @@ export const registerTenetValidateClarityTool = (
       }
 
       if (!fs.existsSync(transcriptPath)) {
-        throw new Error('Interview transcript not found — write it to .tenet/interview/{date}-{feature}.md before validating');
+        throw new Error('Interview transcript not found — write it to .tenet/runs/<run-slug>/interview.md before validating. Legacy .tenet/interview/{date}-{feature}.md remains a compatibility fallback.');
       }
 
       const transcript = fs.readFileSync(transcriptPath, 'utf8');

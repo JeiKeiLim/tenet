@@ -206,7 +206,7 @@ const run = async (): Promise<void> => {
         try {
           initProject(projectPath, { upgrade: true });
           console.log('Upgraded tenet DB, skills, and MCP configs.');
-          console.log('User documents (spec, harness, interview, etc.) preserved.');
+          console.log('Legacy document directories migrated to .tenet/archive/legacy-v1/; project/ docs and runtime state preserved.');
         } catch (error) {
           if (error instanceof Error) {
             console.error(error.message);
@@ -252,7 +252,7 @@ const run = async (): Promise<void> => {
       console.log(`\nInitialized Tenet scaffold at ${path.join(projectPath, '.tenet')}`);
       console.log(`Default agent: ${agent ?? '(unset — run `tenet config --agent <name>`)'}`);
       console.log('\nNext steps:');
-      console.log('- Review .tenet/harness/current.md and set project-specific constraints');
+      console.log('- Run Tenet context bootstrap to replace .tenet/project/*.md placeholders with current project doctrine');
       console.log(`- Start ${agent ?? 'your agent'} in this directory`);
       console.log('- To change agent later: tenet config --agent <name>');
     });

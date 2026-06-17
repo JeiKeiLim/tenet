@@ -682,11 +682,14 @@ export class JobManager {
   private withDevPreamble(prompt: string, job: Job): string {
     const feature = typeof job.params.feature === 'string' ? job.params.feature : '';
     const jobName = typeof job.params.name === 'string' ? job.params.name : job.id.slice(0, 8);
+    const runPath = typeof job.params.run_path === 'string' ? job.params.run_path : undefined;
+    const journalPath = runPath ? `${runPath}/journal/` : '.tenet/journal/';
+    const projectDoctrineAuthorized = job.params.allow_project_doctrine_edits === true;
     const retryNote = job.retryCount > 0
       ? [
           '',
           `This is retry #${job.retryCount}. The previous attempt failed.`,
-          'BEFORE starting work, check .tenet/journal/ for failure logs matching this job.',
+          `BEFORE starting work, check ${journalPath} for failure logs matching this job.`,
           `Look for files like: *-${jobName.toLowerCase().replace(/\s+/g, '-')}*trial*.md`,
           feature ? `Or search for: *-${feature}*trial*.md` : '',
           'Read them to understand what was tried and why it failed. Do NOT repeat the same approach.',
@@ -706,6 +709,9 @@ export class JobManager {
       '- Do NOT write tests that only check absence of errors or internal state — a separate test critic will reject them',
       '- Every new endpoint, page, or feature MUST have at least one test that verifies it works correctly',
       '- Do NOT just explore, research, or describe what could be done — actually implement it',
+      projectDoctrineAuthorized
+        ? '- This job is explicitly authorized to edit `.tenet/project/**` project doctrine.'
+        : '- Do NOT edit `.tenet/project/**`; write proposed doctrine updates to the run-local journal or final report instead.',
       '',
       '## Smoke Check (mandatory before exiting)',
       '- If this is a server/API feature: start the server, verify your endpoints respond (non-5xx)',

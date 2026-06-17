@@ -23,7 +23,7 @@ Execute this sequence for every job cycle:
 2.  **Get Next Job**: `tenet_continue()`
     Retrieves the next pending job from the runtime queue. The response includes `next_job` with its runtime `id`.
 3.  **Compile Context**: `tenet_compile_context(job_id="<next_job.id>")`
-    Gathers specifications, harness, decomposition, and relevant knowledge into a single string. For current runs, this reads the exact `artifact_paths` stored on the job during `tenet_register_jobs`; feature-only filename lookup is a compatibility fallback.
+    Gathers project doctrine, run-local specifications, harness, decomposition, and relevant knowledge listings into a single string. For current runs, this reads the exact `artifact_paths`, `run_slug`, and `run_path` stored on the job during `tenet_register_jobs`; feature-only filename lookup is a compatibility fallback.
 4.  **Start Job**: `tenet_start_job(job_id="<next_job.id>")`
     Dispatches the registered job for execution. The MCP server transitions it from pending to running and allocates an agent.
 5.  **Brief User**: Tell the user which job was dispatched and that they can interact while it runs.
@@ -50,6 +50,11 @@ Execute this sequence for every job cycle:
 ### Use MCP Tools, Not Subagents
 Dispatch work via `tenet_start_job`. Do not call subagents directly. Do not write implementation code yourself during the execution loop. If `tenet_start_job` returns a failure about missing adapters, tell the user to configure the agent via `tenet config --agent <name>`.
 
+### Project Doctrine Write Boundary
+Normal implementation, integration, eval, spec, decomposition, harness, and visual jobs must not edit `.tenet/project/**`. They may read project doctrine and write run-local evidence under `.tenet/runs/<run-slug>/**`.
+
+If a normal job discovers that project doctrine is missing, stale, or wrong, it should write the proposed update to the run-local journal or design/spec notes and mention it in the final report. Only explicit context-bootstrap, migration/bootstrap synthesis, document lifecycle cleanup, or direct user-requested doctrine jobs may edit `.tenet/project/**`.
+
 ### Background Status Check Pattern
 `tenet_job_wait` returns instantly by default, or long-polls when `wait_seconds` is set. The orchestrator dispatches bounded waits as background tasks and waits between checks using exponential backoff: start at 30 seconds, multiply by 1.5× each cycle, cap at 120 seconds. Between checks:
 - The orchestrator is fully responsive to user interaction
@@ -71,7 +76,7 @@ If `tenet_*` tools are missing, do not fall back to manual execution. Tell the u
 ### State Synchronization
 After every job:
 - Let MCP update `.tenet/status/job-queue.md` and `.tenet/status/status.md` from SQLite state.
-- Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion.
+- Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion. Journals write to `.tenet/runs/<run-slug>/journal/`.
 - If the job produced reusable technical insight, also write a knowledge entry via `tenet_update_knowledge(type="knowledge")` with appropriate confidence tag.
 
 ## Report-Only Jobs (blocking finding escape hatch)
@@ -180,7 +185,7 @@ The worker is the primary committer. Before a dev job exits, it should:
 The orchestrator performs only a best-effort process check after `tenet_job_result`:
 1. If the worker reported a commit SHA and the tree is clean enough to continue, proceed to evaluation.
 2. If useful dirty changes remain because the worker did not commit, make a fallback commit for the same job using the same message style.
-3. If git is unavailable, commit identity is missing, or the fallback commit fails, write a journal note with `tenet_update_knowledge(type="journal")` and continue. Do not stop the run for ordinary git hygiene issues.
+3. If git is unavailable, commit identity is missing, or the fallback commit fails, write a journal note with `tenet_update_knowledge(type="journal")` and continue. For jobs with `run_path`, this lands under `.tenet/runs/<run-slug>/journal/`. Do not stop the run for ordinary git hygiene issues.
 
 ### On Completion
 After all jobs are done:

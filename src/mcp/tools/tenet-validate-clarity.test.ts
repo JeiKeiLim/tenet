@@ -160,4 +160,157 @@ describe('tenet_validate_clarity', () => {
 
     await manager.waitForJob(parsed.job_id as string, null, 5_000);
   });
+
+  it('prefers run-local interview transcripts over legacy feature transcripts', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/interview/2026-05-06-tetris.md',
+      '# Legacy Interview\n\nMode: Full\n',
+    );
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-12-tetris/interview.md',
+      [
+        '# Interview: Tetris',
+        '',
+        'Date: 2026-06-12',
+        'Mode: Full',
+        'Rounds: 1',
+        '',
+        '## Delivery Mode Decision',
+        '- Prompt shown: Choose autonomous or agile.',
+        '- User response: autonomous',
+        '- Selected delivery_mode: autonomous',
+        '- Selection basis: explicit_user_choice',
+      ].join('\n'),
+    );
+
+    const result = await handler({ feature: 'tetris' });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const prompt = job?.params.prompt as string;
+
+    expect(job?.status).toBe('running');
+    expect(prompt).toContain('Date: 2026-06-12');
+    expect(prompt).toContain('Selected delivery_mode: autonomous');
+    expect(prompt).not.toContain('# Legacy Interview');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
+  it('prefers a feature-matched legacy transcript over a different feature run', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-12-payments/interview.md',
+      [
+        '# Interview: Payments',
+        '',
+        'PAYMENTS-MARKER',
+        'Mode: Full',
+        '',
+        '## Delivery Mode Decision',
+        '- Prompt shown: Choose autonomous or agile.',
+        '- User response: autonomous',
+        '- Selected delivery_mode: autonomous',
+        '- Selection basis: explicit_user_choice',
+      ].join('\n'),
+    );
+    writeFile(
+      projectPath,
+      '.tenet/interview/2026-05-01-oauth.md',
+      [
+        '# Interview: Oauth',
+        '',
+        'OAUTH-MARKER',
+        'Mode: Full',
+        '',
+        '## Delivery Mode Decision',
+        '- Prompt shown: Choose autonomous or agile.',
+        '- User response: autonomous',
+        '- Selected delivery_mode: autonomous',
+        '- Selection basis: explicit_user_choice',
+      ].join('\n'),
+    );
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const prompt = job?.params.prompt as string;
+
+    expect(prompt).toContain('OAUTH-MARKER');
+    expect(prompt).not.toContain('PAYMENTS-MARKER');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+
+  it('rejects instead of selecting a different feature run when no feature match exists', async () => {
+    const { handler, projectPath } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-12-payments/interview.md',
+      '# Interview: Payments\n\nMode: Full\n',
+    );
+
+    await expect(handler({ feature: 'oauth' })).rejects.toThrow(/Interview transcript not found/);
+  });
+
+  it('matches run directories by exact feature slug, not suffix', async () => {
+    const { handler, projectPath } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-12-oauth/interview.md',
+      '# Interview: Oauth\n\nMode: Full\n',
+    );
+
+    // 'auth' must not match a run whose feature slug is 'oauth'.
+    await expect(handler({ feature: 'auth' })).rejects.toThrow(/Interview transcript not found/);
+  });
+
+  it('uses the latest run interview when feature is omitted', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-10-foo/interview.md',
+      [
+        '# Interview: Foo',
+        '',
+        'FOO-MARKER',
+        'Mode: Full',
+        '',
+        '## Delivery Mode Decision',
+        '- Prompt shown: Choose autonomous or agile.',
+        '- User response: autonomous',
+        '- Selected delivery_mode: autonomous',
+        '- Selection basis: explicit_user_choice',
+      ].join('\n'),
+    );
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-12-bar/interview.md',
+      [
+        '# Interview: Bar',
+        '',
+        'BAR-MARKER',
+        'Mode: Full',
+        '',
+        '## Delivery Mode Decision',
+        '- Prompt shown: Choose autonomous or agile.',
+        '- User response: autonomous',
+        '- Selected delivery_mode: autonomous',
+        '- Selection basis: explicit_user_choice',
+      ].join('\n'),
+    );
+
+    const result = await handler({});
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const prompt = job?.params.prompt as string;
+
+    expect(prompt).toContain('BAR-MARKER');
+    expect(prompt).not.toContain('FOO-MARKER');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
 });
