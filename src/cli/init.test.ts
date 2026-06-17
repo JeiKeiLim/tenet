@@ -46,21 +46,19 @@ describe('initProject', () => {
       'project/design-components',
       'runs',
       'archive',
-      'interview',
-      'spec',
-      'harness',
-      'status',
       'knowledge',
-      'journal',
-      'steer',
-      'bootstrap',
-      'visuals',
+      'status',
       'state-snapshot',
       '.state',
     ];
 
     for (const dir of expectedDirs) {
       expect(fs.existsSync(path.join(tenetRoot, dir))).toBe(true);
+    }
+
+    // Fresh init must NOT scaffold legacy directories — they only appear via migration.
+    for (const legacyDir of ['interview', 'spec', 'harness', 'journal', 'steer', 'bootstrap', 'visuals']) {
+      expect(fs.existsSync(path.join(tenetRoot, legacyDir))).toBe(false);
     }
 
     const expectedFiles = [
@@ -72,10 +70,6 @@ describe('initProject', () => {
       'status/status.md',
       'status/job-queue.md',
       'status/backlog.md',
-      'steer/inbox.md',
-      'steer/processed.md',
-      'harness/current.md',
-      'bootstrap/compiler.md',
       'state-snapshot/README.md',
       '.gitignore',
     ];
@@ -139,24 +133,15 @@ describe('initProject', () => {
     expect(() => initProject(projectPath)).toThrowError(/\.tenet already exists.*--upgrade/);
   });
 
-  it('creates lifecycle project templates and a legacy harness compatibility file', () => {
+  it('creates lifecycle project templates and no legacy harness file', () => {
     const projectPath = createTempDir();
     initProject(projectPath);
 
     const projectDoc = fs.readFileSync(path.join(projectPath, '.tenet', 'project', 'overview.md'), 'utf8');
     expect(projectDoc).toContain('Bootstrap placeholder');
 
-    const harnessPath = path.join(projectPath, '.tenet', 'harness', 'current.md');
-    const harness = fs.readFileSync(harnessPath, 'utf8');
-
-    expect(harness).toContain('# Legacy Harness Compatibility');
-    expect(harness).toContain('New runs must write .tenet/runs/<run-slug>/harness.md');
-    expect(harness).toContain('## Formatting & Linting');
-    expect(harness).toContain('## Testing Requirements');
-    expect(harness).toContain('## Architecture Rules');
-    expect(harness).toContain('## Code Principles');
-    expect(harness).toContain('## Danger Zones (do not modify)');
-    expect(harness).toContain('## Iron Laws');
+    // Fresh init creates only the lifecycle layout — no legacy harness/current.md.
+    expect(fs.existsSync(path.join(projectPath, '.tenet', 'harness'))).toBe(false);
   });
 
   it('writes .mcp.json for Claude Code auto-discovery', () => {

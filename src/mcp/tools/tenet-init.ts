@@ -8,15 +8,8 @@ const REQUIRED_DIRS = [
   'project/design-components',
   'runs',
   'archive',
-  'interview',
-  'spec',
-  'harness',
-  'status',
   'knowledge',
-  'journal',
-  'steer',
-  'bootstrap',
-  'visuals',
+  'status',
   'state-snapshot',
 ];
 
@@ -29,11 +22,6 @@ const TEMPLATE_FILES: Record<string, string> = {
   'status/status.md': '# Status\n',
   'status/job-queue.md': '# Job Queue\n\n',
   'status/backlog.md': '# Backlog\n\n',
-  'steer/inbox.md': '# Steer Inbox\n',
-  'steer/processed.md': '# Steer Processed\n\n',
-  'harness/current.md':
-    '# Legacy Harness Compatibility\n\nThis file is preserved for legacy jobs that reference .tenet/harness/current.md through exact artifact_paths. New runs write .tenet/runs/<run-slug>/harness.md.\n',
-  'bootstrap/compiler.md': '# Bootstrap Compiler Configuration\n\n',
   'state-snapshot/README.md':
     '# Tenet State Snapshot\n\nPortable Tenet SQLite snapshots created by `tenet db snapshot` live here.\n',
 };

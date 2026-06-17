@@ -12,7 +12,12 @@
   fresh top-level knowledge/), accepting that pre-migration jobs' `artifact_paths`
   dangle. See README "Upgrading from ≤ 26.6.0". The "no silent migration on
   init/upgrade" lines below (Critical Reading Notes, Source Requirements,
-  job-3, e2e-2, Completion Audit) are superseded by this update.
+  job-3, e2e-2, Completion Audit) are superseded by this update. Stage A is
+  also superseded (Stage B): fresh `tenet init` now scaffolds ONLY the lifecycle
+  layout (`project/`, `runs/`, `archive/`, `knowledge/`, `status/`,
+  `state-snapshot/`); legacy directories are no longer pre-created and only ever
+  appear via migration of an existing legacy project. The job-3 "keep legacy
+  dirs in Stage A" bullet is superseded.
 **Primary source**: `docs/planning/16_document_lifecycle.md`
 **Second source**: `skills/tenet/SKILL.md` and `skills/tenet/phases/*.md`
 

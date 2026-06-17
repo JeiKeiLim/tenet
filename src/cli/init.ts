@@ -12,15 +12,8 @@ const REQUIRED_DIRS = [
   'project/design-components',
   'runs',
   'archive',
-  'interview',
-  'spec',
-  'harness',
-  'status',
   'knowledge',
-  'journal',
-  'steer',
-  'bootstrap',
-  'visuals',
+  'status',
   'state-snapshot',
 ];
 
@@ -97,37 +90,6 @@ Bootstrap placeholder. Run Tenet context bootstrap to synthesize the current use
 `,
   'status/job-queue.md': '# Job Queue\n\n',
   'status/backlog.md': '# Backlog\n\n',
-  'steer/inbox.md': '# Steer Inbox\n\n',
-  'steer/processed.md': '# Steer Processed\n\n',
-  'harness/current.md': `# Legacy Harness Compatibility
-
-This file is preserved for legacy jobs that reference .tenet/harness/current.md through exact artifact_paths.
-New runs must write .tenet/runs/<run-slug>/harness.md and use .tenet/project/testing.md for durable testing doctrine.
-
-## Formatting & Linting
-formatter: (configure per project)
-linter: (configure per project)
-enforcement: pre-commit + eval gate
-
-## Testing Requirements
-unit_test_coverage: >= 80% for new code
-test_framework: (configure per project)
-
-## Architecture Rules
-- (add project-specific rules)
-
-## Code Principles
-- Prefer composition over inheritance
-- Explicit over implicit
-- Functions do one thing
-
-## Danger Zones (do not modify)
-- (add paths that should never be touched)
-
-## Iron Laws
-- (add invariants that must always hold)
-`,
-  'bootstrap/compiler.md': '# Bootstrap Compiler Configuration\n\n',
   'state-snapshot/README.md': PORTABLE_STATE_README,
 };
 

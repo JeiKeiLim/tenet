@@ -49,17 +49,15 @@ describe('tenet_init MCP tool', () => {
       'knowledge',
       'status',
       'state-snapshot',
-      'interview',
-      'spec',
-      'harness',
-      'journal',
-      'steer',
-      'bootstrap',
-      'visuals',
     ];
 
     for (const dir of expectedDirs) {
       expect(fs.existsSync(path.join(tenetRoot, dir))).toBe(true);
+    }
+
+    // Fresh init must NOT scaffold legacy directories — they only appear via migration.
+    for (const legacyDir of ['interview', 'spec', 'harness', 'journal', 'steer', 'bootstrap', 'visuals']) {
+      expect(fs.existsSync(path.join(tenetRoot, legacyDir))).toBe(false);
     }
 
     for (const file of [
@@ -68,7 +66,6 @@ describe('tenet_init MCP tool', () => {
       'project/product.md',
       'project/testing.md',
       'project/design.md',
-      'harness/current.md',
       'status/status.md',
       'state-snapshot/README.md',
     ]) {
@@ -77,9 +74,6 @@ describe('tenet_init MCP tool', () => {
 
     expect(fs.readFileSync(path.join(tenetRoot, 'project', 'overview.md'), 'utf8')).toContain(
       'Bootstrap placeholder',
-    );
-    expect(fs.readFileSync(path.join(tenetRoot, 'harness', 'current.md'), 'utf8')).toContain(
-      'Legacy Harness Compatibility',
     );
   });
 });
