@@ -82,7 +82,7 @@ Dev-type jobs get a "Deliverable Requirements" preamble prepended to their promp
 
 - ESM throughout (`"type": "module"` in package.json, `NodeNext` module resolution)
 - MCP tool pattern: one file per tool in `src/mcp/tools/`, exports a registration function taking the server and dependencies, uses `registerTool()` with Zod schema
-- Tests use `MockAdapter` to avoid spawning real agent CLIs
+- Tests use non-spawning test doubles to avoid real agent CLIs: inline `MockAdapter` for unit tests and `FakeAdapter` (`src/adapters/fake-adapter.ts`) for the Tier-1 integration harness
 - Tool handlers return `jsonResult({...})` on success or `asToolError(error)` on failure
 - The `.tenet/` directory is a per-project artifact created by `tenet init`, not part of this repo's own state
 - DB schema changes belong in `src/core/migrations.ts`. Do not hide semantic migrations inside normal `StateStore` startup; normal startup should detect incompatibility and tell the user to close the agent, run `tenet init --upgrade`, and restart.
