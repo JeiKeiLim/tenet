@@ -20,7 +20,7 @@ Tenet: interviews you, writes the spec, generates visual mockups,
 
 AI coding agents are powerful but short-lived. They lose context, drift off-spec, skip tests, and can't sustain multi-hour development sessions. Tenet solves this:
 
-- **Structured phases** — Context bootstrap, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. No required phase is skippable.
+- **Structured phases** — Context bootstrap, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. Full mode runs all of them; Standard skips the interview and Quick skips interview/spec/decomposition (see Execution Modes).
 - **DAG-based job orchestration** — Dependencies are explicit. Parallel jobs run in parallel. Blocked jobs wait.
 - **3-critic evaluation pipeline** — Code critic, Test critic, and Playwright e2e eval. All independent, all with fresh context (no author bias). All findings are blocking.
 - **Crash recovery** — Server-ID-based orphan detection. If the MCP server dies, jobs auto-retry on restart.
@@ -214,7 +214,7 @@ your-project/
                       #   decomposition.md, research/, journal/, visuals/
     archive/legacy-v1/  # One-time migration target for pre-lifecycle layouts (populated by `tenet init --upgrade`)
     knowledge/        # Curated, reusable technical knowledge
-    status/           # Auto-generated status files (status.md, job-queue.md, backlog.md)
+    status/           # status.md + job-queue.md are auto-generated from DB; backlog.md is a static scaffold
     state-snapshot/   # Git-safe portable SQLite snapshots (`tenet db snapshot`)
     .state/
       tenet.db        # Versioned SQLite state (jobs, events, steer, config)
