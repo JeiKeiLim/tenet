@@ -86,7 +86,7 @@ The test prints the full `CanaryResult` JSON on failure. First things to check:
 
 1. **`failures[]`** — the harness-level reason. Could be "dev job did not complete", "not all critics completed", or "verify failed: <details>".
 2. **Inspect the workdir** — rerun with the `keepWorkdir` option. Easiest way: set it temporarily in `tests/e2e/canary-*.e2e.test.ts` and rerun. Then `cd` into the printed path and look at:
-   - `.tenet/journal/` — failure journals from the agent.
+   - `.tenet/runs/<run-slug>/journal/` — failure journals from the agent.
    - `.tenet/.state/tenet.db` — `sqlite3 ... "SELECT id, type, status, error FROM jobs"`.
    - Actual source files the agent produced (or didn't).
 3. **Common real-bug signals:**

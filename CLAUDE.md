@@ -52,7 +52,7 @@ The system has four layers:
 
 3. **MCP Server** (`src/mcp/`) — Exposes 18 tools via `@modelcontextprotocol/server`. Entry point at `src/mcp/index.ts`. Each tool in `src/mcp/tools/` registers itself with a Zod input schema and handler. Key tools: `tenet_start_job`, `tenet_continue` (server-side continuation), `tenet_compile_context`, `tenet_register_jobs` (loads job DAG, requires `feature` slug), `tenet_retry_job` (resets completed/failed jobs to pending), `tenet_report_blocking_finding` (report-only escalation), `tenet_validate_clarity`, `tenet_add_steer` (creates steer messages in SQLite), `tenet_start_eval` (dispatches code critic + test critic + playwright eval), `tenet_init` (initialize project from MCP). Agent selection is CLI-only via `tenet config --agent <name>`.
 
-4. **CLI** (`src/cli/`) — Commander.js program with `init`, `serve`, `status`, `config`, and `db` maintenance commands. `tenet init` scaffolds a `.tenet/` directory structure and copies skill files to `.claude/skills/tenet/` and `.agents/skills/tenet/` with generated package-version metadata in each installed `SKILL.md`. `tenet init --upgrade` creates a verified SQLite-safe backup, runs pending DB migrations, and refreshes generated skills/MCP configs while preserving user docs. `tenet db check` runs read-only integrity/index diagnostics, and `tenet db backup` creates a verified standalone SQLite backup.
+4. **CLI** (`src/cli/`) — Commander.js program with `init`, `serve`, `status`, `config`, and `db` maintenance commands. `tenet init` scaffolds a `.tenet/` directory structure and copies skill files to `.claude/skills/tenet/` and `.agents/skills/tenet/` with generated package-version metadata in each installed `SKILL.md`. `tenet init --upgrade` creates a verified SQLite-safe backup, runs pending DB migrations, migrates legacy document dirs into `.tenet/archive/legacy-v1/`, and refreshes generated skills/MCP configs. `tenet db check` runs read-only integrity/index diagnostics, `tenet db backup` creates a verified standalone SQLite backup, and `tenet db snapshot`/`restore-snapshot` write and restore Git-safe portable snapshots under `.tenet/state-snapshot/`.
 
 ## Key Types (`src/types/index.ts`)
 
@@ -63,18 +63,16 @@ The system has four layers:
 
 ## .tenet/ Document Conventions
 
-Feature-scoped documents use `$date-$feature.md` naming to accumulate across runs:
-- `spec/2026-04-08-oauth.md`, `spec/2026-04-15-payments.md`
-- `decomposition/2026-04-08-oauth.md` (own directory, not under spec/)
-- `interview/2026-04-08-oauth.md`
+Tenet uses a document lifecycle layout. `tenet init` scaffolds only this layout; legacy top-level artifact directories only appear via migration (see `src/cli/init.ts` → `migrateLegacyDocuments`).
 
-Project-wide documents stay singular:
-- `harness/current.md`, `steer/inbox.md`
+- **Durable doctrine** — `.tenet/project/` (`overview.md`, `architecture.md`, `product.md`, `testing.md`, `design.md`, `design-components/`). Authored by the context-bootstrap phase (brownfield) or post-interview crystallization (greenfield); normal implementation jobs must not edit it.
+- **Per-run artifacts** — `.tenet/runs/<run-slug>/` where `<run-slug>` = `YYYY-MM-DD-<feature>`. Holds `interview.md`, `spec.md`, `harness.md`, `scenarios.md`, `decomposition.md`, plus `research/`, `journal/`, and `visuals/` subdirs.
+- **Curated knowledge** — `.tenet/knowledge/` (durable, concern-oriented facts promoted via `tenet_update_knowledge`).
+- **Legacy evidence** — `.tenet/archive/legacy-v1/` (one-time migration target for pre-lifecycle top-level dirs: `spec/`, `interview/`, `harness/`, `decomposition/`, `journal/`, `visuals/`, `bootstrap/`, `steer/`, `knowledge/`, `DESIGN.md`). Reference-only, not active doctrine.
+- **Auto-generated from DB** — `.tenet/status/` (`status.md`, `job-queue.md`).
+- **Portable snapshots** — `.tenet/state-snapshot/` (Git-safe snapshots from `tenet db snapshot`).
 
-Auto-generated from DB:
-- `status/status.md`, `status/job-queue.md`
-
-Current-run document identity should flow through `artifact_paths`: `tenet_validate_readiness` validates exact spec/harness/scenarios/interview paths, `tenet_register_jobs` stores those plus decomposition on every job, and `tenet_compile_context` reads the stored paths. Feature-only filename lookup is a compatibility fallback only; it uses strict dated document patterns rather than loose `*-{feature}.md` matching.
+Current-run document identity flows through `artifact_paths`: `tenet_validate_readiness` validates exact spec/harness/scenarios/interview paths, `tenet_register_jobs` stores those plus `decomposition` (and `run_path`/`run_slug`) on every job, and `tenet_compile_context` reads the stored paths. Feature-only filename lookup is a compatibility fallback only; it uses strict dated document patterns rather than loose `*-{feature}.md` matching.
 
 `tenet_register_jobs` requires a `feature` slug that propagates to all jobs in the DAG, and current runs should also pass `artifact_paths` so job context cannot drift to stale documents.
 

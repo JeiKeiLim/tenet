@@ -20,7 +20,7 @@ Tenet: interviews you, writes the spec, generates visual mockups,
 
 AI coding agents are powerful but short-lived. They lose context, drift off-spec, skip tests, and can't sustain multi-hour development sessions. Tenet solves this:
 
-- **Structured phases** — Brownfield scan, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. No required phase is skippable.
+- **Structured phases** — Context bootstrap, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. No required phase is skippable.
 - **DAG-based job orchestration** — Dependencies are explicit. Parallel jobs run in parallel. Blocked jobs wait.
 - **3-critic evaluation pipeline** — Code critic, Test critic, and Playwright e2e eval. All independent, all with fresh context (no author bias). All findings are blocking.
 - **Crash recovery** — Server-ID-based orphan detection. If the MCP server dies, jobs auto-retry on restart.
@@ -58,7 +58,7 @@ npx @jeikeilim/tenet init --agent claude-code --skip-playwright-check
 
 | Phase | What Happens |
 |-------|-------------|
-| **0. Brownfield Scan** | Detects existing code, frameworks, and prior tenet work |
+| **0. Context Bootstrap** | Establishes durable project doctrine — live-scans existing code (brownfield) or defers to the interview (greenfield) |
 | **1. Interview** | Agent asks clarifying questions, researches technologies |
 | **2. Spec & Harness** | Writes formal spec with scenarios + quality contract |
 | **3. Visuals** | Generates architecture diagrams, UI mockups, DESIGN.md |
@@ -145,8 +145,10 @@ tenet status
 tenet status --all  # Include completed/failed jobs
 
 # SQLite state maintenance
-tenet db check      # Read-only integrity/index diagnostics
-tenet db backup     # Verified SQLite-safe backup
+tenet db check              # Read-only integrity/index diagnostics
+tenet db backup             # Verified SQLite-safe backup
+tenet db snapshot           # Git-safe portable snapshot to .tenet/state-snapshot/
+tenet db restore-snapshot   # Restore live SQLite state from a portable snapshot
 
 # Configure
 tenet config                          # View current config
@@ -205,21 +207,21 @@ After `tenet init`, your project gets:
 ```
 your-project/
   .tenet/
-    interview/      # Interview transcripts (dated per feature)
-    spec/           # Formal specifications
-    harness/        # Quality contracts (linting, testing, architecture rules)
-    status/         # Auto-generated status files
-    knowledge/      # Reusable technical knowledge
-    journal/        # Dev activity logs
-    steer/          # Steer message inbox/processed
-    visuals/        # Architecture diagrams, UI mockups
-    bootstrap/      # Compiler/build configuration
+    project/          # Durable doctrine: overview.md, architecture.md, product.md,
+                      #   testing.md, design.md (+ design-components/)
+    runs/<run-slug>/  # Per-run artifacts for YYYY-MM-DD-feature:
+                      #   interview.md, spec.md, harness.md, scenarios.md,
+                      #   decomposition.md, research/, journal/, visuals/
+    archive/legacy-v1/  # One-time migration target for pre-lifecycle layouts (populated by `tenet init --upgrade`)
+    knowledge/        # Curated, reusable technical knowledge
+    status/           # Auto-generated status files (status.md, job-queue.md, backlog.md)
+    state-snapshot/   # Git-safe portable SQLite snapshots (`tenet db snapshot`)
     .state/
-      tenet.db      # Versioned SQLite state (jobs, events, steer, config)
-      config.json   # Project configuration
-  .mcp.json         # Claude Code MCP server configuration (auto-generated)
-  .codex/config.toml # Codex MCP server configuration and project trust
-  opencode.json     # OpenCode MCP server configuration and permissions
+      tenet.db        # Versioned SQLite state (jobs, events, steer, config)
+      config.json     # Project configuration
+  .mcp.json           # Claude Code MCP server configuration (auto-generated)
+  .codex/config.toml  # Codex MCP server configuration and project trust
+  opencode.json       # OpenCode MCP server configuration and permissions
   .claude/skills/tenet/  # Generated skill files for Claude Code, with Tenet version metadata
   .agents/skills/tenet/  # Generated skill files for Codex, with Tenet version metadata
 ```
