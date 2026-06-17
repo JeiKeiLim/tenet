@@ -76,7 +76,7 @@ If `tenet_*` tools are missing, do not fall back to manual execution. Tell the u
 ### State Synchronization
 After every job:
 - Let MCP update `.tenet/status/job-queue.md` and `.tenet/status/status.md` from SQLite state.
-- Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion. Current jobs with `run_path` write to `.tenet/runs/<run-slug>/journal/`; legacy jobs without `run_path` may still write `.tenet/journal/`.
+- Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion. Journals write to `.tenet/runs/<run-slug>/journal/`.
 - If the job produced reusable technical insight, also write a knowledge entry via `tenet_update_knowledge(type="knowledge")` with appropriate confidence tag.
 
 ## Report-Only Jobs (blocking finding escape hatch)

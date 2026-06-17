@@ -102,9 +102,11 @@ Run this before mode selection or execution:
 6. If either call returns `update_available`, tell the user the current version, latest version, and `update_command`. Do not auto-update during an active run; instruct the user to close the agent, install the update, run `tenet init --upgrade`, then restart.
 7. Run the context bootstrap gate before mode selection:
    - Required docs: `.tenet/project/overview.md`, `.tenet/project/architecture.md`, `.tenet/project/product.md`, `.tenet/project/testing.md`, `.tenet/project/design.md`.
-   - Pass only when all required docs exist and are not empty placeholders or obvious templates.
-   - Do not judge "thin", "stale", or "needs improvement"; the gate is pass/fail only.
-8. If the bootstrap gate fails, read and execute `phases/00-context-bootstrap.md`. Stop normal work until the gate passes.
+   - Pass when all required docs exist and are real (not empty placeholders or obvious templates). Do not judge "thin", "stale", or "needs improvement"; the gate is pass/fail only.
+   - If any required doc is a placeholder, classify the project:
+     - **Brownfield** (real implementation exists in the repo — non-trivial source outside `.tenet/`, agent config, and scaffolding): the gate fails. Read and execute `phases/00-context-bootstrap.md` to live-scan and synthesize doctrine. Stop normal work until the gate passes.
+     - **Greenfield** (no real implementation to scan yet): defer. Do NOT run the bootstrap synthesis and do NOT write status-style "greenfield/TBD" doctrine into `project/`. Leave the placeholders in place — initial project doctrine is authored from the interview output in `phases/01-interview.md` once the interview is done.
+8. In the greenfield deferred state, proceed to mode selection and the interview. The bootstrap gate is satisfied post-interview once `phases/01-interview.md` § 11 has written real `project/**` doctrine from interview decisions.
 9. Detect whether `.git/` exists. Git behavior is defined in `phases/05-execution-loop.md`.
 10. Probe Playwright MCP availability if possible. If unavailable, warn once. This is only non-blocking when the run-local harness/spec marks browser exploration optional, skipped with reason, or not applicable; required browser/visual Layer 2 cannot pass without it.
 
@@ -202,7 +204,7 @@ User steers outrank agent steers. Emergency steer cancels active jobs via `tenet
 Use `tenet_update_knowledge` for both reusable knowledge and session journal entries:
 
 - `type="knowledge"` for facts future jobs or future features can reuse.
-- `type="journal"` for job/session history and failure attempts. Current jobs with `run_path` route journals to `.tenet/runs/<run-slug>/journal/`; legacy jobs without `run_path` may still write `.tenet/journal/`.
+- `type="journal"` for job/session history and failure attempts. Journals route to `.tenet/runs/<run-slug>/journal/`.
 
 Use confidence tags such as `[implemented-and-tested]`, `[implemented-not-tested]`, `[decision-only]`, `[scanned-not-verified]`, `[research-verified]`, or `[research-inconclusive]`.
 

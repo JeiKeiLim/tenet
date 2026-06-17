@@ -59,7 +59,7 @@ Each sub-agent report must include:
 - uncertainty or contradiction,
 - suggested destination: `project/overview.md`, `project/architecture.md`, `project/product.md`, `project/testing.md`, `project/design.md`, `project/design-components/`, or `knowledge/*`.
 
-If sub-agents are unavailable, stop and ask the user before using degraded main-agent-only mode. In degraded mode, first write the lane plan, then persist intermediate lane findings under `.tenet/runs/<run>/research/` or `.tenet/bootstrap/` before each lane so work survives context compaction or restart.
+If sub-agents are unavailable, stop and ask the user before using degraded main-agent-only mode. In degraded mode, first write the lane plan, then persist intermediate lane findings under `.tenet/runs/<run>/research/` before each lane so work survives context compaction or restart.
 
 ## Synthesis Outputs
 
@@ -85,8 +85,8 @@ Bootstrap may also curate durable reusable facts into top-level `.tenet/knowledg
 - Do not include migration commentary, provenance sections, or unresolved legacy conflict analysis in final project docs.
 - If an important ambiguity cannot be resolved from evidence, ask the user or record a follow-up instead of encoding a guess as doctrine.
 - Do not reconstruct historical top-level specs or decompositions as fake runs.
-- Do not keep `.tenet/harness/current.md` or `.tenet/DESIGN.md` as active doctrine; they are legacy evidence only.
-- Do not include `.tenet/status/` or `.tenet/steer/` in project doctrine.
+- Do not keep archived legacy evidence under `.tenet/archive/legacy-v1/` (harness/DESIGN/spec/interview) as active doctrine; it is reference-only.
+- Do not include `.tenet/status/` in project doctrine. Steer messages live in the MCP SQLite store, not files.
 
 ## Handoff To Normal Work
 

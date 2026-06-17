@@ -35,7 +35,7 @@ Before writing the spec, conduct comprehensive research on the technologies, API
 **Do NOT skip this step.** Writing a spec without researching the technologies leads to specs that can't be implemented, or implementations that use the wrong patterns.
 
 ## 1. Exact File Paths
-CRITICAL: New runs write run-local artifacts. Do NOT write active run artifacts to legacy top-level `.tenet/spec/`, `.tenet/harness/`, `.tenet/interview/`, or `.tenet/decomposition/`.
+CRITICAL: Write all run-local artifacts under `.tenet/runs/{run_slug}/` (paths below). Run artifacts do not live anywhere else.
 
 Use the same `{feature}` slug established during the interview phase. `{date}` is today's ISO date (YYYY-MM-DD), and `run_slug` is `{date}-{feature}`.
 
@@ -47,8 +47,6 @@ Use the same `{feature}` slug established during the interview phase. `{date}` i
 - **RESEARCH**: `.tenet/runs/{run_slug}/research/`
 
 Read `.tenet/project/overview.md`, `.tenet/project/architecture.md`, `.tenet/project/product.md`, `.tenet/project/testing.md`, and `.tenet/project/design.md` before writing run-local artifacts. Normal spec/harness work may suggest project doctrine updates in the run journal, but it must not directly edit `.tenet/project/**`.
-
-Legacy paths such as `.tenet/spec/{date}-{feature}.md` and `.tenet/harness/current.md` remain valid only when supplied through exact `artifact_paths` for old jobs.
 
 ## 2. Spec Requirements (`.tenet/runs/{run_slug}/spec.md`)
 

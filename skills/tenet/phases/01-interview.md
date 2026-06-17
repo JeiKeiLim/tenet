@@ -12,7 +12,6 @@ The interview transcript MUST be saved before proceeding to the next phase:
 - Create `.tenet/runs/{date}-{feature}/research/`, `.tenet/runs/{date}-{feature}/journal/`, and `.tenet/runs/{date}-{feature}/visuals/` before writing run artifacts.
 - For subsequent rounds in the same session: append to the same `interview.md` file (add a new `## Round N` section).
 - For a new session on the same feature: create a new run directory with today's date. Feature-only lookup exists only as a legacy compatibility fallback.
-- Legacy transcripts under `.tenet/interview/{date}-{feature}.md` remain readable when referenced by exact `artifact_paths`, but new runs must not write there.
 
 ## 2. Mandatory Question Categories
 Ask at least one question from each category in the first round.
@@ -178,3 +177,22 @@ When the user's requirements involve unfamiliar technologies, complex integratio
 - **Greenfield project:** 2-3 rounds, 8-15 questions total.
 - **Brownfield/known scope:** 1-2 rounds, 5-8 questions total.
 - **Standard mode (quick clarification):** 1 round, 3-5 questions total.
+
+## 11. Crystallize Project Doctrine (greenfield only)
+
+When the project is **greenfield** — i.e. the context bootstrap gate deferred `.tenet/project/**` because there was no implementation to scan — author the initial project doctrine here, from the interview decisions. This is the counterpart to the brownfield bootstrap synthesis: brownfield gets doctrine by scanning code, greenfield gets it from the interview.
+
+Skip this section entirely for **brownfield** projects — bootstrap already synthesized `project/` from the live codebase, and this section would just overwrite it.
+
+Run this after the clarity gate (§ 4) passes and the transcript is written:
+
+1. Confirm the run directory exists with its subdirectories (§ 1): `.tenet/runs/{run_slug}/` with `research/`, `journal/`, `visuals/`.
+2. Write each required project doc from the interview record — concrete decisions, never "TBD" / "determined later" placeholders:
+   - `.tenet/project/overview.md` — purpose, user personas, success metrics, current status (greenfield; implementation pending).
+   - `.tenet/project/product.md` — user-facing behavior agreed in the interview.
+   - `.tenet/project/architecture.md` — tech stack and runtime/architecture decisions confirmed in the interview.
+   - `.tenet/project/testing.md` — testing strategy and quality approach agreed in the interview.
+   - `.tenet/project/design.md` — interaction-surface and design conventions agreed in the interview (language, feedback, accessibility, visual system when relevant).
+3. These are the initial durable baseline. Later phases may refine them, but they must capture real interview decisions now so downstream jobs (`tenet_compile_context`, eval) read trustworthy doctrine instead of placeholders.
+
+After this, the greenfield bootstrap deferral is satisfied on real doctrine. Do not edit `.tenet/project/**` during normal implementation jobs; suggest doctrine updates via the run journal instead.

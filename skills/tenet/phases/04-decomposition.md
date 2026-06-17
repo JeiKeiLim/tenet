@@ -25,8 +25,6 @@ Before decomposition, verify required visual artifacts exist when the feature ha
 
 Use the same `{feature}` slug established during the interview phase. `{date}` is today's ISO date (YYYY-MM-DD), and `run_slug` is `{date}-{feature}`.
 
-Legacy decomposition files under `.tenet/decomposition/` remain readable only when old jobs reference them via exact `artifact_paths`.
-
 ## 3. Acceptance Test Generation (BEFORE decomposing into jobs)
 
 Before writing the DAG, generate executable acceptance tests from the spec scenarios. These tests define "done" — they must pass for the project to be complete.
@@ -79,7 +77,7 @@ test('login flow', async ({ page }) => {
 ### Brownfield Feature Discovery
 
 For brownfield projects, do NOT only test features mentioned in the spec. Before writing tests:
-1. Read `.tenet/project/product.md`, `.tenet/project/architecture.md`, and `.tenet/project/testing.md`; if legacy `.tenet/bootstrap/codebase-scan.md` exists, treat it as secondary compatibility evidence
+1. Read `.tenet/project/product.md`, `.tenet/project/architecture.md`, and `.tenet/project/testing.md`
 2. Search the codebase for routes, pages, API endpoints, and interactive elements
 3. List ALL discoverable features and generate tests for each
 4. The user cannot be expected to enumerate every existing feature during the interview
