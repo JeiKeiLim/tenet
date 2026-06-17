@@ -4,6 +4,12 @@
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@printf '\n\033[1mdocs-review\033[0m flags — pass via \033[36mDOCS_REVIEW_ARGS="..."\033[0m (full list: \033[36m--help\033[0m)\n'
+	@printf '  \033[36m%-28s\033[0m reviewers: claude,codex,opencode (default: claude)\n' '--agents <list>'
+	@printf '  \033[36m%-28s\033[0m merge duplicate findings (default: claude; none skips it)\n' '--synthesizer <agent|none>'
+	@printf '  \033[36m%-28s\033[0m current = authoritative docs, all = every .md (default: current)\n' '--scope current|all'
+	@printf '  \033[36m%-28s\033[0m exit-nonzero threshold (default: blocking)\n' '--fail-on blocking|any|never'
+	@printf '  Example: \033[33mmake docs-review DOCS_REVIEW_ARGS="--agents claude,codex --fail-on never"\033[0m\n'
 
 # Build
 build: ## Compile TypeScript
@@ -30,7 +36,11 @@ typecheck: ## Type-check without emitting
 
 check: clean build typecheck lint test ## Run all checks (pre-publish gate)
 
-docs-review: ## AI doc/code consistency review (Claude by default)
+# docs-review — read-only AI check that authoritative Markdown still matches code
+# behavior. Spawns real agent CLIs (costs time/money). Flags: see `make help`
+# (concise) or pass `--help` (full). Pass them as:
+#   make docs-review DOCS_REVIEW_ARGS="--agents claude,codex"
+docs-review: ## AI doc/code consistency review; flags via DOCS_REVIEW_ARGS (see make help)
 	node scripts/docs-review.mjs $(DOCS_REVIEW_ARGS)
 
 docs-review-e2e: ## E2E: run docs-review against real Claude+Codex subprocesses
