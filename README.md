@@ -134,7 +134,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 # Initialize project (interactive agent selection + optional Playwright MCP install)
 tenet init [path]
 tenet init --agent claude-code --skip-playwright-check
-tenet init --upgrade  # Update DB, skills/configs, preserve your docs
+tenet init --upgrade  # Update DB, skills/configs; MIGRATES legacy docs (see note below)
 
 # Start MCP server
 tenet serve
@@ -155,6 +155,25 @@ tenet config --max-retries unlimited  # Default: no fixed retry cap
 tenet config --max-retries 5          # Optional finite retry limit
 tenet config --timeout 120            # Set job timeout (minutes)
 ```
+
+### Upgrading from ≤ 26.6.0
+
+Versions after 26.6.0 introduce the Tenet **document lifecycle**. Running
+`tenet init --upgrade` on an existing project now performs a one-time,
+**breaking** migration of your `.tenet/` layout:
+
+- **Moves** legacy document directories — `spec/`, `interview/`,
+  `decomposition/`, `harness/`, `journal/`, `visuals/`, `bootstrap/`,
+  `steer/`, `knowledge/`, and `DESIGN.md` — into `.tenet/archive/legacy-v1/`.
+  Context bootstrap later curates durable facts from the archived `knowledge/`
+  back into a fresh top-level `.tenet/knowledge/`.
+
+This is one-way. **Do not upgrade while a Tenet run is in progress.** Jobs
+registered before the upgrade store exact paths to the old top-level
+locations, and moving those files breaks `tenet_compile_context` and
+`tenet_retry_job` for pre-upgrade jobs (their paths dangle). Finish or cancel
+active runs first. The migration runs once (subsequent upgrades skip it), and
+upgrades warn at runtime if pending/running jobs are present.
 
 ## MCP Tools
 

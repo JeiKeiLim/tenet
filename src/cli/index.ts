@@ -206,7 +206,7 @@ const run = async (): Promise<void> => {
         try {
           initProject(projectPath, { upgrade: true });
           console.log('Upgraded tenet DB, skills, and MCP configs.');
-          console.log('User documents (spec, harness, interview, etc.) preserved.');
+          console.log('Legacy document directories migrated to .tenet/archive/legacy-v1/; project/ docs and runtime state preserved.');
         } catch (error) {
           if (error instanceof Error) {
             console.error(error.message);

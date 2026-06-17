@@ -25,7 +25,7 @@ Bootstrap is live-scan-first. Synthesize final `project/**` docs from evidence i
 1. Current repository implementation and directory structure.
 2. Current tests, package scripts, config, CI, and runtime behavior.
 3. Recent explicit user/project decisions.
-4. Archived legacy Tenet evidence, only when it clarifies intent or durable lessons that still match the live project.
+4. Archived legacy Tenet evidence under `.tenet/archive/legacy-v1/` (populated by `tenet init --upgrade` on existing projects), only when it clarifies intent or durable lessons that still match the live project.
 
 Legacy evidence is secondary. Do not copy migration commentary, old conflict notes, or "legacy said X but code says Y" analysis into final `project/**` docs. Final project docs describe the current baseline only.
 
@@ -47,7 +47,7 @@ The main agent is the orchestrator and synthesizer. Use bounded parallel sub-age
 | Legacy design | What accepted visual/design decisions can be recovered from archived design and visual artifacts? |
 | Legacy knowledge | What durable facts in archived knowledge should be curated forward? |
 
-Skip legacy lanes when `.tenet/archive/` is absent or empty.
+Skip legacy lanes when `.tenet/archive/legacy-v1/` is absent or empty.
 
 Each sub-agent report must include:
 

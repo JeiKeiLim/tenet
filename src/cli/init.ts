@@ -24,6 +24,29 @@ const REQUIRED_DIRS = [
   'state-snapshot',
 ];
 
+/**
+ * Legacy top-level document directories MOVED into archive/legacy-v1/ by the
+ * one-time upgrade migration. knowledge/ is included: context bootstrap's
+ * legacy lane reads the archived copy and curates durable facts back into a
+ * fresh top-level .tenet/knowledge/. Active runtime lanes (status/,
+ * state-snapshot/, .state/, runs/, project/) are never moved.
+ */
+const LEGACY_DOC_DIRS = [
+  'spec',
+  'interview',
+  'decomposition',
+  'harness',
+  'journal',
+  'visuals',
+  'bootstrap',
+  'steer',
+  'knowledge',
+];
+
+const LEGACY_FILES = ['DESIGN.md'];
+
+const ARCHIVE_LEGACY_ROOT = path.join('archive', 'legacy-v1');
+
 const VALID_AGENTS = ['claude-code', 'opencode', 'codex'] as const;
 
 type InitOptions = {
@@ -271,6 +294,28 @@ const copySkillMarkdownFile = (sourcePath: string, targetPath: string, relativeS
 };
 
 /**
+ * Remove markdown files in the target skill copy that no longer exist in the
+ * source skill dir (recursively, including subdirs like phases/). Tenet-owned
+ * skill copies are regenerated each upgrade, so deleted phase files
+ * (e.g. 00-brownfield-scan.md) must not linger across versions.
+ */
+const pruneDeletedSkillFiles = (sourceDir: string, targetDir: string): void => {
+  if (!fs.existsSync(targetDir)) {
+    return;
+  }
+  const sourceEntries = fs.existsSync(sourceDir) ? new Set(fs.readdirSync(sourceDir)) : new Set<string>();
+  for (const entry of fs.readdirSync(targetDir)) {
+    const targetEntry = path.join(targetDir, entry);
+    const stat = fs.statSync(targetEntry);
+    if (stat.isDirectory()) {
+      pruneDeletedSkillFiles(path.join(sourceDir, entry), targetEntry);
+    } else if (entry.endsWith('.md') && !sourceEntries.has(entry)) {
+      fs.rmSync(targetEntry, { force: true });
+    }
+  }
+};
+
+/**
  * Copy all skill directories (tenet, tenet-diagnose, etc.) to .claude/skills/.
  * Each skill directory gets its own subdirectory with SKILL.md.
  */
@@ -309,6 +354,8 @@ const copySkillDirs = (projectPath: string): void => {
         }
       }
     }
+
+    pruneDeletedSkillFiles(sourceDir, targetDir);
   }
 };
 
@@ -366,7 +413,10 @@ function upgradeProject(projectPath: string): void {
 
   backupStateDb(tenetRoot);
   const stateStore = new StateStore(projectPath, { migrate: true });
+  warnIfJobsActive(stateStore);
   stateStore.close();
+
+  migrateLegacyDocuments(tenetRoot);
 
   // Overwrite skill files (these are tenet-owned, not user-edited)
   copySkillDirs(projectPath);
@@ -377,8 +427,10 @@ function upgradeProject(projectPath: string): void {
   mergeOpenCodeConfig(projectPath);
   writeCodexConfig(projectPath);
 
-  // Do NOT overwrite: project, harness, spec, interview, knowledge, journal, status, steer, bootstrap
-  // Do NOT overwrite: .state/config.json
+  // User docs are preserved in place except for the one-time legacy migration
+  // (see migrateLegacyDocuments): legacy doc dirs + DESIGN.md are MOVED into
+  // archive/legacy-v1/ and knowledge/ is snapshotted there. project/ templates,
+  // status/, state-snapshot/, and .state/config.json are never overwritten.
 }
 
 const backupStateDb = (tenetRoot: string): string | null => {
@@ -392,6 +444,92 @@ const backupStateDb = (tenetRoot: string): string | null => {
   const backupPath = path.join(stateDir, `tenet.db.bak-${stamp}`);
   StateStore.backupDatabase(path.dirname(tenetRoot), backupPath);
   return backupPath;
+};
+
+const isDirNonEmpty = (dir: string): boolean => {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    return false;
+  }
+  return fs.readdirSync(dir).length > 0;
+};
+
+/**
+ * One-time migration of legacy top-level document directories into
+ * .tenet/archive/legacy-v1/. Moves legacy doc dirs + DESIGN.md (rename) and
+ * snapshots knowledge/ (copy). Idempotent: the presence of the
+ * archive/legacy-v1/ marker means a prior upgrade already migrated, so this
+ * is a no-op on re-run.
+ *
+ * Destructive for pre-migration jobs: their artifact_paths point at the old
+ * top-level locations and will dangle after the move. Callers should warn
+ * before running this while jobs are active (see warnIfJobsActive).
+ */
+const migrateLegacyDocuments = (tenetRoot: string): void => {
+  const archiveLegacyRoot = path.join(tenetRoot, ARCHIVE_LEGACY_ROOT);
+  if (fs.existsSync(archiveLegacyRoot)) {
+    return;
+  }
+
+  fs.mkdirSync(archiveLegacyRoot, { recursive: true });
+
+  const movedDirs: string[] = [];
+  for (const dir of LEGACY_DOC_DIRS) {
+    const source = path.join(tenetRoot, dir);
+    if (!isDirNonEmpty(source)) {
+      continue;
+    }
+    fs.renameSync(source, path.join(archiveLegacyRoot, dir));
+    movedDirs.push(dir);
+  }
+
+  // knowledge/ is an active lane, not a retired legacy dir: its legacy content
+  // was archived above, but the top-level dir must remain (empty) as the active
+  // home context bootstrap curates durable facts back into.
+  fs.mkdirSync(path.join(tenetRoot, 'knowledge'), { recursive: true });
+
+  const movedFiles: string[] = [];
+  for (const file of LEGACY_FILES) {
+    const source = path.join(tenetRoot, file);
+    if (fs.existsSync(source) && fs.statSync(source).isFile()) {
+      fs.renameSync(source, path.join(archiveLegacyRoot, file));
+      movedFiles.push(file);
+    }
+  }
+
+  if (movedDirs.length === 0 && movedFiles.length === 0) {
+    return;
+  }
+
+  console.log('\nMigrated legacy Tenet documents into .tenet/archive/legacy-v1/:');
+  if (movedDirs.length > 0) {
+    console.log(`  moved: ${movedDirs.join(', ')}`);
+  }
+  if (movedFiles.length > 0) {
+    console.log(`  moved files: ${movedFiles.join(', ')}`);
+  }
+  console.log(
+    '  Context bootstrap curates durable facts from archive/legacy-v1/knowledge/ back into top-level .tenet/knowledge/.',
+  );
+  console.log(
+    '  Pre-migration jobs reference the old top-level paths and can no longer be re-compiled/retried.',
+  );
+};
+
+/**
+ * Warn (non-blocking) when pending/running jobs exist at upgrade time. Their
+ * artifact_paths may point at legacy top-level docs that the migration moves.
+ */
+const warnIfJobsActive = (stateStore: StateStore): void => {
+  const active =
+    stateStore.getJobsByStatus('pending').length + stateStore.getJobsByStatus('running').length;
+  if (active === 0) {
+    return;
+  }
+  console.warn(
+    `\nWarning: ${active} pending/running job(s) detected. tenet init --upgrade moves legacy document ` +
+      'directories, which breaks artifact_paths for pre-upgrade jobs (compile_context / tenet_retry_job ' +
+      'will fail). Consider finishing or cancelling active runs before upgrading.',
+  );
 };
 
 /**
@@ -437,6 +575,8 @@ const copyCodexSkill = (projectPath: string): void => {
         }
       }
     }
+
+    pruneDeletedSkillFiles(sourceDir, codexSkillDir);
   }
 };
 

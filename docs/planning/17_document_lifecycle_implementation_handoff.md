@@ -1,7 +1,18 @@
 # 17 - Document Lifecycle Implementation Handoff
 
 **Created**: 2026-06-12
-**Status**: Implementation planning handoff
+**Status**: Implementation planning handoff (migration stance superseded — see Update below)
+**Update (2026-06-17)**: The migration stance in this handoff was overridden
+  after implementation. V1 below deliberately excluded migration ("do not
+  silently migrate user projects"). That no longer holds: `tenet init --upgrade`
+  now performs a one-time, breaking migration that MOVES legacy doc dirs
+  (`spec/`, `interview/`, `decomposition/`, `harness/`, `journal/`, `visuals/`,
+  `bootstrap/`, `steer/`, `knowledge/`, `DESIGN.md`) into `.tenet/archive/legacy-v1/`
+  (bootstrap later curates durable facts from archived knowledge/ back into a
+  fresh top-level knowledge/), accepting that pre-migration jobs' `artifact_paths`
+  dangle. See README "Upgrading from ≤ 26.6.0". The "no silent migration on
+  init/upgrade" lines below (Critical Reading Notes, Source Requirements,
+  job-3, e2e-2, Completion Audit) are superseded by this update.
 **Primary source**: `docs/planning/16_document_lifecycle.md`
 **Second source**: `skills/tenet/SKILL.md` and `skills/tenet/phases/*.md`
 
