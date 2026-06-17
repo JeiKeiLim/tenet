@@ -5,10 +5,11 @@ Visual generation is mandatory in Full mode. These artifacts bridge the gap betw
 **Before producing any artifacts, determine `delivery_mode`**. Prefer the spec's front-matter field when the spec already exists (see `phases/02-spec-and-harness.md` § 2.1). If visuals run before spec generation in Full mode, use `## Delivery Mode Decision` from the interview transcript; if it is missing, stop and return to `phases/01-interview.md`. Do not silently default in Full mode. When `delivery_mode: agile`, Section 5 below overrides parts of Sections 1–4 — agile reshapes the output into a final-product view + per-slice wireframes rather than 3-5 variations, and adds a mid-run delta workflow. When `delivery_mode: autonomous` (or absent in non-Full/legacy flows), follow Sections 1–4 as written and ignore Section 5.
 
 ## Output Requirements
-- **Directory**: `.tenet/visuals/`
+- **Directory**: `.tenet/runs/{run_slug}/visuals/`
 - **Naming**: `{date}-NN-description.html` (e.g., `2026-04-08-00-architecture.html`, `2026-04-08-01-mockup-minimal.html`). The date prefix tells future sessions when the visual was created so they can decide if it needs updating.
 - **Self-Contained**: No external dependencies. Inline all CSS, SVG, and JS.
 - **Realistic**: Use plausible sample data. No "Lorem ipsum".
+- **Doctrine**: Read `.tenet/project/design.md` before creating artifacts. If `.tenet/project/design-components/` has relevant accepted examples, inspect them and preserve the established patterns.
 
 ## 1. Architecture Diagrams
 Required for all multi-component systems.
@@ -37,21 +38,23 @@ Required for all UI-facing projects.
 - **Approval**: Present all variations to the user. They must select or approve one before proceeding to the spec phase.
 - **Agile-mode override**: Replace the 3-5 variation pass with a single cohesive final-product mockup plus one wireframe per slice. See Section 5.1.
 
-## 3. DESIGN.md (Frontend Projects Only)
+## 3. Run Design Delta
 
-After the user approves a mockup design, write `.tenet/DESIGN.md` to capture the chosen design principles. This document ensures visual consistency across all future jobs.
+After the user approves a mockup design, write `.tenet/runs/{run_slug}/design.md` to capture the run-local design decisions and deltas from `.tenet/project/design.md`.
 
 **When to write:** Immediately after the user selects/approves a mockup variation.
 
 **Content:**
 ```markdown
-# Design System
+# Run Design Direction
 
 ## Chosen Direction
 - Selected mockup: [reference to approved file]
 - Design rationale: [why this direction was chosen]
+- Project design doctrine used: `.tenet/project/design.md`
+- Accepted component examples consulted: [relevant `.tenet/project/design-components/*` files, or "none"]
 
-## Visual Principles
+## Run-Local Visual Principles
 - Color palette: [primary, secondary, accent, background colors with hex codes]
 - Typography: [font families, sizes, weights]
 - Spacing: [spacing scale or pattern]
@@ -66,9 +69,12 @@ After the user approves a mockup design, write `.tenet/DESIGN.md` to capture the
 ## Layout
 - Grid system: [columns, breakpoints]
 - Responsive strategy: [mobile-first, breakpoints]
+
+## Proposed Project Doctrine Updates
+- [Only list proposals. Normal run work must not edit `.tenet/project/**`.]
 ```
 
-**Evolution:** Update DESIGN.md during implementation as new patterns emerge (new component types, responsive adjustments). Dev jobs that touch frontend MUST read DESIGN.md before writing CSS/components.
+**Evolution:** Implementation jobs may update `.tenet/runs/{run_slug}/design.md` as run-local patterns emerge. They must not update `.tenet/project/design.md` or `.tenet/project/design-components/` unless the user explicitly requested project doctrine maintenance.
 
 ## 4. Interactive Prototypes (after design lock-in)
 
@@ -129,14 +135,14 @@ This section overrides parts of Sections 1–4 when the spec's front matter decl
 Produce three artifacts that together preview the entire product:
 
 1. **Final-product architecture diagram** — same format as Section 1, scoped to the *complete* product (all slices combined). This is the system-level destination the user is signing off on at the plan-checkpoint.
-   - File: `.tenet/visuals/{date}-NN-architecture.html` (one canonical file)
+   - File: `.tenet/runs/{run_slug}/visuals/{date}-NN-architecture.html` (one canonical file)
 
 2. **Final-product UI mockup** — ONE cohesive mockup (not 3-5 variations). It shows the final state of the app after every slice ships. The user is approving the destination, not picking between styles.
-   - File: `.tenet/visuals/{date}-NN-final-product.html`
+   - File: `.tenet/runs/{run_slug}/visuals/{date}-NN-final-product.html`
    - If the user wants stylistic alternatives, run a tiny variation pass (2-3 alts) on top, but treat them as variants of the same destination, not entirely different products.
 
 3. **Per-slice wireframes** — one mockup per slice listed in the spec's `## Slice plan`. Each shows the app's UI state at the use-checkpoint for that slice — what the user will actually see and click when slice N's eval passes.
-   - File: `.tenet/visuals/{date}-NN-slice-M-{slice-name}.html` (M is the slice number, 1-indexed)
+   - File: `.tenet/runs/{run_slug}/visuals/{date}-NN-slice-M-{slice-name}.html` (M is the slice number, 1-indexed)
    - Wireframes are **additive**, mirroring the slice plan: slice 2's wireframe contains everything from slice 1 plus slice 2's new capability.
 
 The interactive prototype (Section 4) becomes a slice walkthrough: clicking "next slice" advances through the planned progression so the user can preview each use-checkpoint. This walkthrough is what the user reviews at the initial plan-checkpoint.
@@ -153,8 +159,8 @@ The mockup phase re-fires only when a redirect changes design. Produce *targeted
 | Adding a new slice | One new wireframe for the new slice + architecture delta if the slice introduces new structure |
 
 File the deltas alongside the originals using a `-revision-K` suffix (K is the revision count for that artifact, 1-indexed):
-- `.tenet/visuals/{date}-NN-slice-M-{slice-name}-revision-K.html`
-- `.tenet/visuals/{date}-NN-architecture-revision-K.html`
+- `.tenet/runs/{run_slug}/visuals/{date}-NN-slice-M-{slice-name}-revision-K.html`
+- `.tenet/runs/{run_slug}/visuals/{date}-NN-architecture-revision-K.html`
 
 Do NOT overwrite the original wireframes — the revision history is part of the audit trail the user uses at the next plan-checkpoint.
 
@@ -162,7 +168,7 @@ The redirect router (step 6 of the agile-mode rollout, see `docs/planning/14_agi
 
 ### 5.3 What does NOT change in agile mode
 
-- Section 3 (DESIGN.md) — same content, same trigger (after design lock-in on the final-product mockup).
+- Section 3 (run design delta) — same trigger (after design lock-in on the final-product mockup).
 - "Output Requirements" rules (self-contained, realistic data, naming convention) still hold.
 - Anti-Skip Enforcement still applies — agile mode does not skip mockup; it reshapes it.
 

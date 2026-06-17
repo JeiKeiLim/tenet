@@ -2,13 +2,16 @@
 
 This reference defines the mandatory interview phase for Tenet Full mode. Read and follow these instructions exactly to ensure project crystallization success.
 
-## 1. Output File Path
+## 1. Run Identity And Output File Path
 The interview transcript MUST be saved before proceeding to the next phase:
-- Path: `.tenet/interview/{date}-{feature}.md` (e.g. `.tenet/interview/2026-04-08-oauth.md`)
+- Run slug: `{date}-{feature}` (e.g. `2026-04-08-oauth`)
+- Run path: `.tenet/runs/{date}-{feature}/`
+- Transcript path: `.tenet/runs/{date}-{feature}/interview.md`
 - `{date}` is today's ISO date (YYYY-MM-DD), `{feature}` is a short slug derived from the project/feature name (e.g. "oauth", "payments", "user-dashboard")
 - Determine the feature slug early in the interview (from the user's description of what they want to build). Use lowercase, hyphen-separated words.
-- For subsequent rounds in the same session: append to the same file (add a new `## Round N` section)
-- For a new session on the same feature: create a new file with today's date — `resolveLatest()` will pick the most recent
+- Create `.tenet/runs/{date}-{feature}/research/`, `.tenet/runs/{date}-{feature}/journal/`, and `.tenet/runs/{date}-{feature}/visuals/` before writing run artifacts.
+- For subsequent rounds in the same session: append to the same `interview.md` file (add a new `## Round N` section).
+- For a new session on the same feature: create a new run directory with today's date. Feature-only lookup exists only as a legacy compatibility fallback.
 
 ## 2. Mandatory Question Categories
 Ask at least one question from each category in the first round.
@@ -151,18 +154,17 @@ When the user's requirements involve unfamiliar technologies, complex integratio
 4. Identify limitations, gotchas, and alternative approaches
 
 **Save research results:**
-- Call `tenet_update_knowledge(type="knowledge", title="research-{topic}")` with:
+- Write raw or run-specific research to `.tenet/runs/{date}-{feature}/research/{topic}.md` with:
   - What was researched and why
   - Key findings (capabilities, limitations, compatibility)
   - Recommended approach based on findings
   - Confidence tag: `[research-verified]` or `[research-inconclusive]`
-- File lands in `.tenet/knowledge/` for future agents to reference
+- Promote only durable, reusable facts to top-level `.tenet/knowledge/` via `tenet_update_knowledge(type="knowledge", title="{concern}")`.
 
 **Example research triggers during interview:**
-Files are auto-dated by `tenet_update_knowledge` (e.g., `2026-04-09_research-stripe-connect.md`):
-- "I want to use Stripe Connect for marketplace payments" → `title="research-stripe-connect"` — API, onboarding flow, payout mechanics
-- "Can we do real-time collaboration like Google Docs?" → `title="research-realtime-collaboration"` — CRDTs, WebSocket scaling, operational transforms
-- "The app needs to work offline" → `title="research-offline-first"` — service workers, IndexedDB, sync strategies
+- "I want to use Stripe Connect for marketplace payments" -> `.tenet/runs/{run_slug}/research/stripe-connect.md` — API, onboarding flow, payout mechanics
+- "Can we do real-time collaboration like Google Docs?" -> `.tenet/runs/{run_slug}/research/realtime-collaboration.md` — CRDTs, WebSocket scaling, operational transforms
+- "The app needs to work offline" -> `.tenet/runs/{run_slug}/research/offline-first.md` — service workers, IndexedDB, sync strategies
 
 **Do NOT skip research to keep the interview fast.** A 5-minute research pause prevents a multi-hour implementation mistake.
 
@@ -175,3 +177,22 @@ Files are auto-dated by `tenet_update_knowledge` (e.g., `2026-04-09_research-str
 - **Greenfield project:** 2-3 rounds, 8-15 questions total.
 - **Brownfield/known scope:** 1-2 rounds, 5-8 questions total.
 - **Standard mode (quick clarification):** 1 round, 3-5 questions total.
+
+## 11. Crystallize Project Doctrine (greenfield only)
+
+When the project is **greenfield** — i.e. the context bootstrap gate deferred `.tenet/project/**` because there was no implementation to scan — author the initial project doctrine here, from the interview decisions. This is the counterpart to the brownfield bootstrap synthesis: brownfield gets doctrine by scanning code, greenfield gets it from the interview.
+
+Skip this section entirely for **brownfield** projects — bootstrap already synthesized `project/` from the live codebase, and this section would just overwrite it.
+
+Run this after the clarity gate (§ 4) passes and the transcript is written:
+
+1. Confirm the run directory exists with its subdirectories (§ 1): `.tenet/runs/{run_slug}/` with `research/`, `journal/`, `visuals/`.
+2. Write each required project doc from the interview record — concrete decisions, never "TBD" / "determined later" placeholders:
+   - `.tenet/project/overview.md` — purpose, user personas, success metrics, current status (greenfield; implementation pending).
+   - `.tenet/project/product.md` — user-facing behavior agreed in the interview.
+   - `.tenet/project/architecture.md` — tech stack and runtime/architecture decisions confirmed in the interview.
+   - `.tenet/project/testing.md` — testing strategy and quality approach agreed in the interview.
+   - `.tenet/project/design.md` — interaction-surface and design conventions agreed in the interview (language, feedback, accessibility, visual system when relevant).
+3. These are the initial durable baseline. Later phases may refine them, but they must capture real interview decisions now so downstream jobs (`tenet_compile_context`, eval) read trustworthy doctrine instead of placeholders.
+
+After this, the greenfield bootstrap deferral is satisfied on real doctrine. Do not edit `.tenet/project/**` during normal implementation jobs; suggest doctrine updates via the run journal instead.

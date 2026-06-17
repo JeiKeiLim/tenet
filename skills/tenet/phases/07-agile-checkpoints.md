@@ -1,6 +1,6 @@
 # Phase 07: Agile Checkpoints And Redirects
 
-Use this phase only when `.tenet/spec/{date}-{feature}.md` declares `delivery_mode: agile`.
+Use this phase only when `.tenet/runs/{run_slug}/spec.md` declares `delivery_mode: agile`.
 
 Agile mode wraps the normal autonomous loop with user review checkpoints. Per-job execution and evaluation do not change: every job still runs through MCP, compiled context, and eval gates.
 
@@ -22,10 +22,10 @@ Agile mode wraps the normal autonomous loop with user review checkpoints. Per-jo
 After upfront mockups produce final-product artifacts and per-slice wireframes:
 
 1. Brief the user with concrete paths:
-   - Final-product architecture: `.tenet/visuals/{date}-NN-architecture.html`
-   - Final-product UI: `.tenet/visuals/{date}-NN-final-product.html`
-   - Per-slice wireframes: `.tenet/visuals/{date}-NN-slice-M-{name}.html`
-   - Slice plan: `.tenet/spec/{date}-{feature}.md` section `## Slice plan`
+   - Final-product architecture: `.tenet/runs/{run_slug}/visuals/{date}-NN-architecture.html`
+   - Final-product UI: `.tenet/runs/{run_slug}/visuals/{date}-NN-final-product.html`
+   - Per-slice wireframes: `.tenet/runs/{run_slug}/visuals/{date}-NN-slice-M-{name}.html`
+   - Slice plan: `.tenet/runs/{run_slug}/spec.md` section `## Slice plan`
 2. Ask for exactly one response:
    - `approve` — proceed to readiness gate, then slice 1 decomposition.
    - `redirect: <description>` — change the plan before build starts.
@@ -76,7 +76,7 @@ Only `redirect: ...` enters this router. Plain `approve` and `done` skip it.
 
 ### Step 1: Apply Spec Amendment
 
-Append a timestamped section to `.tenet/spec/{date}-{feature}.md`:
+Append a timestamped section to `.tenet/runs/{run_slug}/spec.md`:
 
 ```markdown
 ## Redirect at slice {N} ({ISO timestamp})

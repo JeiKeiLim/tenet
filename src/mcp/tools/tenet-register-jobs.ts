@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { parseMaxRetries } from '../../core/runtime-config.js';
 import { StateStore } from '../../core/state-store.js';
-import { artifactPathsSchema, normalizeArtifactPaths, type ArtifactPaths } from './artifact-paths.js';
+import {
+  artifactPathsSchema,
+  normalizeArtifactPaths,
+  toProjectRelativePath,
+  type ArtifactPaths,
+} from './artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const jobEntrySchema = z.object({
@@ -18,7 +23,26 @@ const jobEntrySchema = z.object({
         'Use tenet_report_blocking_finding to escalate blocking issues discovered during verification. ' +
         'Typical cases: final acceptance sweeps, architectural reviews, drift audits.',
     ),
+  allow_project_doctrine_edits: z
+    .boolean()
+    .optional()
+    .describe(
+      'Explicitly authorizes this job to edit .tenet/project/**. Use only for context bootstrap, doctrine maintenance, or direct user-requested project doctrine work.',
+    ),
 });
+
+const normalizeRunSlug = (raw: string | undefined): string | undefined => {
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error('run_slug must not be empty');
+  }
+
+  return trimmed;
+};
 
 export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateStore: StateStore): void => {
   registerTool(
@@ -31,6 +55,16 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
         'Each job becomes a pending SQLite entry that tenet_continue() can return.',
       inputSchema: z.object({
         feature: z.string().min(1).describe('Feature slug (e.g. "oauth", "payments"). Used to resolve spec/decomposition docs.'),
+        run_slug: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Human-readable run slug, usually {date}-{feature}, e.g. "2026-06-12-oauth". Stored additively on each job.'),
+        run_path: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Project-relative or absolute path to the run directory, normally .tenet/runs/<run-slug>. Stored additively on each job.'),
         artifact_paths: artifactPathsSchema
           .optional()
           .describe(
@@ -41,7 +75,7 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
         jobs: z.array(jobEntrySchema).min(1).describe('Array of jobs from the decomposition DAG'),
       }),
     },
-    async ({ feature, artifact_paths, jobs }) => {
+    async ({ feature, run_slug, run_path, artifact_paths, jobs }) => {
       const dagIdToDbId = new Map<string, string>();
       const resolvedArtifactPaths: ArtifactPaths | undefined = artifact_paths
         ? normalizeArtifactPaths(
@@ -51,6 +85,14 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
             ['scenarios', 'interview'],
           )
         : undefined;
+      const normalizedRunSlug = normalizeRunSlug(run_slug);
+      const normalizedRunPath = run_path
+        ? toProjectRelativePath(stateStore.projectPath, run_path, 'run_path')
+        : undefined;
+      const runPathWarning =
+        normalizedRunPath && normalizedRunPath !== '.tenet/runs' && !normalizedRunPath.startsWith('.tenet/runs/')
+          ? `run_path "${normalizedRunPath}" is inside the project but outside .tenet/runs/; this is supported for compatibility, but new runs should use .tenet/runs/<run-slug>.`
+          : undefined;
 
       const maxRetries = parseMaxRetries(stateStore.getConfig('max_retries'));
 
@@ -64,8 +106,11 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
             prompt: entry.prompt,
             depends_on: entry.depends_on,
             feature,
+            ...(normalizedRunSlug ? { run_slug: normalizedRunSlug } : {}),
+            ...(normalizedRunPath ? { run_path: normalizedRunPath } : {}),
             ...(resolvedArtifactPaths ? { artifact_paths: resolvedArtifactPaths } : {}),
             ...(entry.report_only === true ? { report_only: true } : {}),
+            ...(entry.allow_project_doctrine_edits === true ? { allow_project_doctrine_edits: true } : {}),
           },
           retryCount: 0,
           maxRetries,
@@ -101,6 +146,9 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
       return jsonResult({
         registered_count: registered.length,
         jobs: registered,
+        ...(normalizedRunSlug ? { run_slug: normalizedRunSlug } : {}),
+        ...(normalizedRunPath ? { run_path: normalizedRunPath } : {}),
+        ...(runPathWarning ? { run_path_warning: runPathWarning } : {}),
         ...(resolvedArtifactPaths
           ? { artifact_paths: resolvedArtifactPaths }
           : {

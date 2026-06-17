@@ -119,4 +119,101 @@ describe('tenet_compile_context artifact paths', () => {
 
     await expect(handler({ job_id: job.id })).rejects.toThrow(/artifact_paths\.spec not found/);
   });
+
+  it('inlines project docs and lists run-local evidence without inlining archive contents', async () => {
+    const { store, handler } = createHarness();
+    const runPath = '.tenet/runs/2026-06-12-oauth';
+    writeFile(store.projectPath, '.tenet/project/overview.md', '# Overview Doctrine');
+    writeFile(store.projectPath, '.tenet/project/architecture.md', '# Architecture Doctrine');
+    writeFile(store.projectPath, '.tenet/project/product.md', '# Product Doctrine');
+    writeFile(store.projectPath, '.tenet/project/testing.md', '# Testing Doctrine');
+    writeFile(store.projectPath, '.tenet/project/design.md', '# Design Doctrine');
+    writeFile(store.projectPath, '.tenet/project/design-components/button.html', '<button>Accepted</button>');
+    writeFile(store.projectPath, '.tenet/knowledge/worker-queue.md', '# Worker Queue');
+    writeFile(store.projectPath, `${runPath}/spec.md`, '# Run Spec');
+    writeFile(store.projectPath, `${runPath}/harness.md`, '# Run Harness');
+    writeFile(store.projectPath, `${runPath}/scenarios.md`, '# Run Scenarios');
+    writeFile(store.projectPath, `${runPath}/interview.md`, '# Run Interview');
+    writeFile(store.projectPath, `${runPath}/decomposition.md`, '# Run Decomposition');
+    writeFile(store.projectPath, `${runPath}/journal/attempt-1.md`, '# Attempt 1 should not inline');
+    writeFile(store.projectPath, `${runPath}/research/oauth.md`, '# OAuth research should not inline');
+    writeFile(store.projectPath, `${runPath}/visuals/mockup.html`, '<html>visual should not inline</html>');
+    writeFile(store.projectPath, '.tenet/archive/legacy-v1/spec/old.md', '# Archived Old Spec');
+    writeFile(store.projectPath, '.tenet/status/status.md', '# Generated Status');
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: {
+        feature: 'oauth',
+        run_slug: '2026-06-12-oauth',
+        run_path: runPath,
+        name: 'build oauth',
+        prompt: 'build it',
+        artifact_paths: {
+          spec: `${runPath}/spec.md`,
+          harness: `${runPath}/harness.md`,
+          scenarios: `${runPath}/scenarios.md`,
+          interview: `${runPath}/interview.md`,
+          decomposition: `${runPath}/decomposition.md`,
+        },
+      },
+      retryCount: 0,
+      maxRetries: 0,
+    });
+
+    const parsed = parseResult(await handler({ job_id: job.id }));
+
+    expect(parsed.context).toContain('# Overview Doctrine');
+    expect(parsed.context).toContain('# Architecture Doctrine');
+    expect(parsed.context).toContain('# Product Doctrine');
+    expect(parsed.context).toContain('# Testing Doctrine');
+    expect(parsed.context).toContain('# Design Doctrine');
+    expect(parsed.context).toContain('# Run Spec');
+    expect(parsed.context).toContain('# Run Harness');
+    expect(parsed.context).toContain('# Run Scenarios');
+    expect(parsed.context).toContain('# Run Interview');
+    expect(parsed.context).toContain('# Run Decomposition');
+    expect(parsed.context).toContain('- .tenet/knowledge/worker-queue.md');
+    expect(parsed.context).toContain('- .tenet/project/design-components/button.html');
+    expect(parsed.context).toContain('- .tenet/runs/2026-06-12-oauth/journal/attempt-1.md');
+    expect(parsed.context).toContain('- .tenet/runs/2026-06-12-oauth/research/oauth.md');
+    expect(parsed.context).toContain('- .tenet/runs/2026-06-12-oauth/visuals/mockup.html');
+    expect(parsed.context).toContain('Archived legacy Tenet evidence exists');
+    expect(parsed.context).not.toContain('Attempt 1 should not inline');
+    expect(parsed.context).not.toContain('OAuth research should not inline');
+    expect(parsed.context).not.toContain('visual should not inline');
+    expect(parsed.context).not.toContain('# Archived Old Spec');
+    expect(parsed.context).not.toContain('# Generated Status');
+  });
+
+  it('still supports legacy feature fallback with a compatibility notice', async () => {
+    const { store, handler } = createHarness();
+    writeFile(store.projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Legacy Spec');
+    writeFile(store.projectPath, '.tenet/spec/scenarios-2026-04-16-oauth.md', '# Legacy Scenarios');
+    writeFile(store.projectPath, '.tenet/interview/2026-04-16-oauth.md', '# Legacy Interview');
+    writeFile(store.projectPath, '.tenet/decomposition/2026-04-16-oauth.md', '# Legacy Decomposition');
+    writeFile(store.projectPath, '.tenet/harness/current.md', '# Legacy Harness');
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: {
+        feature: 'oauth',
+        name: 'build oauth',
+        prompt: 'build it',
+      },
+      retryCount: 0,
+      maxRetries: 0,
+    });
+
+    const parsed = parseResult(await handler({ job_id: job.id }));
+
+    expect(parsed.context).toContain('# Legacy Spec');
+    expect(parsed.context).toContain('# Legacy Harness');
+    expect(parsed.context).toContain('# Legacy Scenarios');
+    expect(parsed.context).toContain('# Legacy Interview');
+    expect(parsed.context).toContain('# Legacy Decomposition');
+    expect(parsed.context).toContain('Compatibility Notice');
+  });
 });

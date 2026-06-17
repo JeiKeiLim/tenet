@@ -281,7 +281,7 @@ const resolveReadinessArtifacts = (
   const specPath = resolveLatestFeatureDoc(path.join(tenetPath, 'spec'), feature);
   if (!specPath) {
     throw new Error(
-      `Spec not found for feature "${feature}" — pass artifact_paths.spec or write .tenet/spec/{date}-${feature}.md before validating readiness`,
+      `Spec not found for feature "${feature}" via legacy fallback — pass exact artifact_paths.spec for the current run (for new runs, .tenet/runs/<run-slug>/spec.md).`,
     );
   }
 
@@ -289,7 +289,7 @@ const resolveReadinessArtifacts = (
   const harnessMd = readIfExists(harnessPath);
   if (!harnessMd) {
     throw new Error(
-      'Harness not found at .tenet/harness/current.md — pass artifact_paths.harness or update the harness before validating readiness',
+      'Harness not found via legacy fallback at .tenet/harness/current.md — pass exact artifact_paths.harness for the current run (for new runs, .tenet/runs/<run-slug>/harness.md).',
     );
   }
 
@@ -312,7 +312,7 @@ const resolveReadinessArtifacts = (
     interviewMd: interviewPath ? fs.readFileSync(interviewPath, 'utf8') : undefined,
     scenariosMd: scenariosPath ? fs.readFileSync(scenariosPath, 'utf8') : undefined,
     warning:
-      'artifact_paths was not provided; used strict feature filename fallback. Pass exact artifact_paths to avoid stale document selection.',
+      'artifact_paths was not provided; used strict legacy feature filename fallback. Pass exact run-local artifact_paths to avoid stale document selection.',
   };
 };
 

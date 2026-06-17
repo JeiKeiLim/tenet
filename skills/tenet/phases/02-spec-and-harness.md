@@ -21,28 +21,34 @@ Before writing the spec, conduct comprehensive research on the technologies, API
 4. Cross-reference findings with interview decisions
 
 **Save ALL research results:**
-- Call `tenet_update_knowledge(type="knowledge", title="research-{topic}")` for each research topic
+- Write raw or run-specific findings to `.tenet/runs/{run_slug}/research/{topic}.md`
 - Include: what was researched, key findings, limitations discovered, recommended approach
 - Tag with `[research-verified]` confidence level
-- These become reference material for the spec AND for future dev agents
+- Promote only durable reusable facts to top-level `.tenet/knowledge/` via `tenet_update_knowledge(type="knowledge", title="{concern}")`
+- These become reference material for the current run; curated knowledge becomes reference material for future runs
 
 **Example pre-spec research:**
-Files are auto-dated by `tenet_update_knowledge` (e.g., `2026-04-09_research-nextjs-auth-patterns.md`):
-- `title="research-nextjs-auth-patterns"` → How to implement auth with the chosen stack, session management options
-- `title="research-stripe-connect-api"` → API limits, webhook requirements, test mode setup
-- `title="research-postgresql-jsonb-indexing"` → Performance characteristics for the planned schema design
+- `.tenet/runs/{run_slug}/research/nextjs-auth-patterns.md` -> How to implement auth with the chosen stack, session management options
+- `.tenet/runs/{run_slug}/research/stripe-connect-api.md` -> API limits, webhook requirements, test mode setup
+- `.tenet/runs/{run_slug}/research/postgresql-jsonb-indexing.md` -> Performance characteristics for the planned schema design
 
 **Do NOT skip this step.** Writing a spec without researching the technologies leads to specs that can't be implemented, or implementations that use the wrong patterns.
 
 ## 1. Exact File Paths
-CRITICAL: Do NOT write to root `.tenet/`. Use feature-scoped `$date-$feature.md` naming:
-- **SPEC**: `.tenet/spec/{date}-{feature}.md` (e.g. `.tenet/spec/2026-04-08-oauth.md`)
-- **HARNESS**: `.tenet/harness/current.md` (Update the existing template — project-wide, not feature-scoped)
-- **SCENARIOS**: `.tenet/spec/scenarios-{date}-{feature}.md` (e.g. `.tenet/spec/scenarios-2026-04-08-oauth.md`)
+CRITICAL: Write all run-local artifacts under `.tenet/runs/{run_slug}/` (paths below). Run artifacts do not live anywhere else.
 
-Use the same `{feature}` slug established during the interview phase. `{date}` is today's ISO date (YYYY-MM-DD).
+Use the same `{feature}` slug established during the interview phase. `{date}` is today's ISO date (YYYY-MM-DD), and `run_slug` is `{date}-{feature}`.
 
-## 2. Spec Requirements (`.tenet/spec/{date}-{feature}.md`)
+- **RUN PATH**: `.tenet/runs/{run_slug}/`
+- **SPEC**: `.tenet/runs/{run_slug}/spec.md`
+- **HARNESS**: `.tenet/runs/{run_slug}/harness.md`
+- **SCENARIOS**: `.tenet/runs/{run_slug}/scenarios.md`
+- **INTERVIEW**: `.tenet/runs/{run_slug}/interview.md`
+- **RESEARCH**: `.tenet/runs/{run_slug}/research/`
+
+Read `.tenet/project/overview.md`, `.tenet/project/architecture.md`, `.tenet/project/product.md`, `.tenet/project/testing.md`, and `.tenet/project/design.md` before writing run-local artifacts. Normal spec/harness work may suggest project doctrine updates in the run journal, but it must not directly edit `.tenet/project/**`.
+
+## 2. Spec Requirements (`.tenet/runs/{run_slug}/spec.md`)
 
 ### 2.1 Front matter (REQUIRED)
 
@@ -70,7 +76,7 @@ The spec must include:
 - **Tech Stack**: Confirmed choices with specific versions.
 - **API Endpoints**: Table with Method, Path, Auth, and Description.
 - **Database Schema**: Table per entity with Column, Type, and Constraints.
-- **Design Direction**: Explicit reference to the chosen mockup in `.tenet/visuals/`. In agile mode, the first spec draft may mark this as pending until `phases/03-visuals.md` produces final-product and slice artifacts; update this section before readiness validation.
+- **Design Direction**: Explicit reference to the chosen mockup/prototype in `.tenet/runs/{run_slug}/visuals/` and the applicable doctrine in `.tenet/project/design.md`. In agile mode, the first spec draft may mark this as pending until `phases/03-visuals.md` produces final-product and slice artifacts; update this section before readiness validation.
 - **Auth Flow**: Step by step numbered list.
 - **Success Criteria**: Numbered, measurable, and testable outcomes.
 - **Out of Scope**: List of features or behaviors the project will NOT implement.
@@ -110,16 +116,17 @@ Slice plan rules:
 - Pre-work that is not user-visible (foundational refactors, schema migrations) does not get its own slice; it is bundled into the first slice that needs it.
 - The plan is the bigger picture upfront, but it is allowed to evolve via redirects at use-checkpoints.
 
-## 3. Harness Requirements (`.tenet/harness/current.md`)
-Update the `tenet init` template with project-specific values:
+## 3. Harness Requirements (`.tenet/runs/{run_slug}/harness.md`)
+Write a run-specific quality and acceptance contract derived from the run spec plus `.tenet/project/testing.md` and other relevant project doctrine:
 - **Formatting & Linting**: Specify tools like `ruff`, `eslint`, or `prettier`.
 - **Testing**: Define framework and coverage targets.
 - **Architecture Rules**: Add project-specific structural constraints.
 - **Code Principles**: Append project-specific values to the defaults.
 - **Danger Zones**: List paths that must never be modified.
 - **Iron Laws**: Define project invariants, such as mandatory password hashing.
+- **Project Doctrine Boundary**: State that normal implementation jobs must not edit `.tenet/project/**`; proposed doctrine updates belong in `.tenet/runs/{run_slug}/journal/`.
 
-## 4. Scenarios (`.tenet/spec/scenarios.md`)
+## 4. Scenarios (`.tenet/runs/{run_slug}/scenarios.md`)
 Define success and failure shapes:
 ### Scenarios (Success)
 1. [User story with concrete steps and expected outcome]
@@ -128,12 +135,12 @@ Define success and failure shapes:
 
 ## 5. Validation Checklist
 Verify these before proceeding:
-- [ ] `.tenet/spec/{date}-{feature}.md` exists with the YAML front matter (`delivery_mode: autonomous | agile`) and all required sections.
+- [ ] `.tenet/runs/{run_slug}/spec.md` exists with the YAML front matter (`delivery_mode: autonomous | agile`) and all required sections.
 - [ ] If `delivery_mode: agile`, the `## Slice plan` section is present and lists at least 2 slices, each with `Adds`, `Bundled with`, `User can`, and `Out of slice`.
 - [ ] If `delivery_mode: autonomous` (or missing), the `## Slice plan` section is absent.
-- [ ] `.tenet/harness/current.md` is updated, not the original template.
-- [ ] `.tenet/spec/scenarios-{date}-{feature}.md` has 3+ scenarios and 3+ anti-scenarios.
-- [ ] If the project is UI-facing, game/canvas-based, visual, TUI, CLI workflow-oriented, API workflow-oriented, or otherwise user-interactive, required artifacts from `phases/03-visuals.md` exist in `.tenet/visuals/` and the spec references them.
+- [ ] `.tenet/runs/{run_slug}/harness.md` exists and is tailored to this run.
+- [ ] `.tenet/runs/{run_slug}/scenarios.md` has 3+ scenarios and 3+ anti-scenarios.
+- [ ] If the project is UI-facing, game/canvas-based, visual, TUI, CLI workflow-oriented, API workflow-oriented, or otherwise user-interactive, required artifacts from `phases/03-visuals.md` exist in `.tenet/runs/{run_slug}/visuals/` and the spec references them.
 - [ ] Harness danger zones are populated.
 
 **Do NOT proceed to decomposition until all three files are written and this checklist passes.**
@@ -146,10 +153,10 @@ After the checklist above passes, run `tenet_validate_readiness` with the exact 
 {
   "feature": "{feature}",
   "artifact_paths": {
-    "spec": ".tenet/spec/{date}-{feature}.md",
-    "harness": ".tenet/harness/current.md",
-    "scenarios": ".tenet/spec/scenarios-{date}-{feature}.md",
-    "interview": ".tenet/interview/{date}-{feature}.md"
+    "spec": ".tenet/runs/{run_slug}/spec.md",
+    "harness": ".tenet/runs/{run_slug}/harness.md",
+    "scenarios": ".tenet/runs/{run_slug}/scenarios.md",
+    "interview": ".tenet/runs/{run_slug}/interview.md"
   }
 }
 ```
