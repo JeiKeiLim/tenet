@@ -12,6 +12,7 @@ import {
   mergeCodexProjectTrust,
   mergeOpenCodePermission,
   mergeOpenCodePlaywrightPermission,
+  previewLegacyMigration,
 } from './init.js';
 import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 
@@ -340,7 +341,7 @@ describe('initProject', () => {
     }
     fs.writeFileSync(path.join(tenetRoot, 'DESIGN.md'), '# legacy design\n', 'utf8');
 
-    initProject(projectPath, { upgrade: true });
+    initProject(projectPath, { upgrade: true, migrateLegacy: true });
 
     for (const dir of legacyDirs) {
       expect(fs.existsSync(path.join(tenetRoot, dir))).toBe(false);
@@ -356,7 +357,7 @@ describe('initProject', () => {
     fs.mkdirSync(path.join(tenetRoot, 'knowledge'), { recursive: true });
     fs.writeFileSync(path.join(tenetRoot, 'knowledge', 'worker-queue.md'), '# Worker Queue\n', 'utf8');
 
-    initProject(projectPath, { upgrade: true });
+    initProject(projectPath, { upgrade: true, migrateLegacy: true });
 
     // Legacy knowledge content is archived; the active-lane dir stays (empty) for bootstrap to refill.
     expect(fs.existsSync(path.join(tenetRoot, 'knowledge'))).toBe(true);
@@ -387,7 +388,7 @@ describe('initProject', () => {
     fs.writeFileSync(path.join(tenetRoot, 'status', 'status.md'), '# runtime status\n', 'utf8');
     fs.writeFileSync(path.join(tenetRoot, 'state-snapshot', 'keep.md'), '# keep\n', 'utf8');
 
-    initProject(projectPath, { upgrade: true });
+    initProject(projectPath, { upgrade: true, migrateLegacy: true });
 
     expect(fs.readFileSync(path.join(tenetRoot, 'status', 'status.md'), 'utf8')).toBe('# runtime status\n');
     expect(fs.readFileSync(path.join(tenetRoot, 'state-snapshot', 'keep.md'), 'utf8')).toBe('# keep\n');
@@ -401,7 +402,7 @@ describe('initProject', () => {
     fs.mkdirSync(tenetRoot, { recursive: true });
     fs.mkdirSync(path.join(tenetRoot, 'spec'), { recursive: true }); // empty
 
-    initProject(projectPath, { upgrade: true });
+    initProject(projectPath, { upgrade: true, migrateLegacy: true });
 
     expect(fs.existsSync(path.join(tenetRoot, 'spec'))).toBe(true);
     expect(fs.existsSync(path.join(tenetRoot, 'archive', 'legacy-v1', 'spec'))).toBe(false);
@@ -414,17 +415,58 @@ describe('initProject', () => {
     fs.mkdirSync(path.join(tenetRoot, 'spec'), { recursive: true });
     fs.writeFileSync(path.join(tenetRoot, 'spec', 'oauth.md'), '# legacy oauth spec\n', 'utf8');
 
-    initProject(projectPath, { upgrade: true });
+    initProject(projectPath, { upgrade: true, migrateLegacy: true });
     expect(fs.existsSync(path.join(tenetRoot, 'archive', 'legacy-v1', 'spec', 'oauth.md'))).toBe(true);
 
     // A legacy-looking dir recreated after migration must NOT be re-archived.
     fs.mkdirSync(path.join(tenetRoot, 'spec'), { recursive: true });
     fs.writeFileSync(path.join(tenetRoot, 'spec', 'payments.md'), '# stays at top level\n', 'utf8');
 
-    initProject(projectPath, { upgrade: true });
+    initProject(projectPath, { upgrade: true, migrateLegacy: true });
 
     expect(fs.readFileSync(path.join(tenetRoot, 'spec', 'payments.md'), 'utf8')).toBe('# stays at top level\n');
     expect(fs.existsSync(path.join(tenetRoot, 'archive', 'legacy-v1', 'spec', 'payments.md'))).toBe(false);
+  });
+
+  it('does not migrate legacy dirs when migrateLegacy is not set', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+    fs.mkdirSync(path.join(tenetRoot, 'spec'), { recursive: true });
+    fs.writeFileSync(path.join(tenetRoot, 'spec', 'note.md'), '# legacy spec\n', 'utf8');
+
+    initProject(projectPath, { upgrade: true });
+
+    // No consent flag → the destructive move does not run.
+    expect(fs.readFileSync(path.join(tenetRoot, 'spec', 'note.md'), 'utf8')).toBe('# legacy spec\n');
+    expect(fs.existsSync(path.join(tenetRoot, 'archive', 'legacy-v1'))).toBe(false);
+  });
+
+  it('previewLegacyMigration reports alreadyMigrated and hasWork correctly', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+
+    // Empty legacy dir is not listed as work.
+    fs.mkdirSync(path.join(tenetRoot, 'spec'), { recursive: true });
+    let preview = previewLegacyMigration(tenetRoot);
+    expect(preview.alreadyMigrated).toBe(false);
+    expect(preview.hasWork).toBe(false);
+    expect(preview.dirs).not.toContain('spec');
+
+    // Non-empty legacy dir + DESIGN.md show up as work.
+    fs.writeFileSync(path.join(tenetRoot, 'spec', 'oauth.md'), '# legacy oauth\n', 'utf8');
+    fs.writeFileSync(path.join(tenetRoot, 'DESIGN.md'), '# legacy design\n', 'utf8');
+    preview = previewLegacyMigration(tenetRoot);
+    expect(preview.hasWork).toBe(true);
+    expect(preview.dirs).toContain('spec');
+    expect(preview.files).toContain('DESIGN.md');
+
+    // Once the archive marker exists, the migration reads as already done.
+    fs.mkdirSync(path.join(tenetRoot, 'archive', 'legacy-v1'), { recursive: true });
+    preview = previewLegacyMigration(tenetRoot);
+    expect(preview.alreadyMigrated).toBe(true);
+    expect(preview.hasWork).toBe(false);
   });
 });
 
