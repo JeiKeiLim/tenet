@@ -134,7 +134,8 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 # Initialize project (interactive agent selection + optional Playwright MCP install)
 tenet init [path]
 tenet init --agent claude-code --skip-playwright-check
-tenet init --upgrade  # Update DB, skills/configs; MIGRATES legacy docs (see note below)
+tenet init --upgrade                    # Update DB, skills/configs; prompts before moving legacy docs (see note below)
+tenet init --upgrade --migrate-legacy   # Non-interactive: run the destructive legacy-doc move without prompting
 
 # Start MCP server
 tenet serve
@@ -161,9 +162,14 @@ tenet config --timeout 120            # Set job timeout (minutes)
 ### Upgrading from ≤ 26.6.0
 
 Versions after 26.6.0 introduce the Tenet **document lifecycle**. Running
-`tenet init --upgrade` on an existing project now performs a one-time,
-**breaking** migration of your `.tenet/` layout:
+`tenet init --upgrade` on an existing project offers a one-time, **breaking**
+migration of your `.tenet/` layout — and it asks first.
 
+- **Consent gate:** when legacy document directories are present, `tenet init --upgrade`
+  prompts Y/N (default **No**) before moving anything. In non-interactive contexts
+  (CI, agent-driven) it skips the move and prints the opt-in command:
+  `tenet init --upgrade --migrate-legacy`. `-y/--yes` does **not** auto-migrate —
+  the destructive move always has to name itself.
 - **Moves** legacy document directories — `spec/`, `interview/`,
   `decomposition/`, `harness/`, `journal/`, `visuals/`, `bootstrap/`,
   `steer/`, `knowledge/`, and `DESIGN.md` — into `.tenet/archive/legacy-v1/`.
@@ -176,6 +182,18 @@ locations, and moving those files breaks `tenet_compile_context` and
 `tenet_retry_job` for pre-upgrade jobs (their paths dangle). Finish or cancel
 active runs first. The migration runs once (subsequent upgrades skip it), and
 upgrades warn at runtime if pending/running jobs are present.
+
+### Support prompt
+
+On an interactive `tenet init` or `tenet init --upgrade`, Tenet asks whether
+you'd like to star [github.com/JeiKeiLim/tenet](https://github.com/JeiKeiLim/tenet)
+— and only if it can't already confirm you've starred it (via `gh`). It is
+skipped in non-interactive/`--yes` runs and never fires from the autonomous
+skill loop. Declining ("no") just defers to the next run; once you've actually
+starred — confirmed via `gh`, or you accept and the one-key star succeeds — it
+stops asking that project. The "starred" marker lives per-project in
+`.tenet/.state/config.json` under `star_nudge`. Set `TENET_NO_STAR_NUDGE=1` to
+suppress it entirely.
 
 ## MCP Tools
 
