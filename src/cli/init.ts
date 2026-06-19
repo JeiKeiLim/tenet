@@ -45,6 +45,13 @@ const VALID_AGENTS = ['claude-code', 'opencode', 'codex'] as const;
 type InitOptions = {
   agent?: string;
   upgrade?: boolean;
+  /**
+   * Opt in to the one-time destructive legacy-document migration on upgrade.
+   * Defaults to false: the move never runs unless the caller (CLI consent gate)
+   * explicitly enables it. Destructive for pre-migration jobs — their
+   * artifact_paths dangle after the move.
+   */
+  migrateLegacy?: boolean;
 };
 
 const PORTABLE_STATE_README = `# Tenet State Snapshot
@@ -159,6 +166,8 @@ type StateConfig = {
   opencode_args_playwright_eval?: string;
   codex_args_playwright_eval?: string;
   claude_args_playwright_eval?: string;
+  /** Per-project star-nudge state (see src/cli/star-nudge.ts). */
+  star_nudge?: { starredAt?: string };
 };
 
 export const writeStateConfig = (tenetRoot: string, config: StateConfig): void => {
@@ -329,7 +338,7 @@ export function initProject(projectPath: string, options?: InitOptions): void {
       throw new Error('No .tenet directory found. Run `tenet init` first.');
     }
     // Upgrade: overwrite skills and MCP configs, preserve user docs
-    upgradeProject(projectPath);
+    upgradeProject(projectPath, options);
     return;
   }
 
@@ -362,7 +371,7 @@ export function initProject(projectPath: string, options?: InitOptions): void {
  * Upgrade an existing tenet project: overwrite skills and MCP configs,
  * ensure new directories exist, but preserve all user docs and state.
  */
-function upgradeProject(projectPath: string): void {
+function upgradeProject(projectPath: string, options?: InitOptions): void {
   const tenetRoot = path.join(projectPath, '.tenet');
 
   // Ensure any new directories exist (added in newer versions)
@@ -378,7 +387,7 @@ function upgradeProject(projectPath: string): void {
   warnIfJobsActive(stateStore);
   stateStore.close();
 
-  migrateLegacyDocuments(tenetRoot);
+  migrateLegacyDocuments(tenetRoot, { enabled: options?.migrateLegacy === true });
 
   // Overwrite skill files (these are tenet-owned, not user-edited)
   copySkillDirs(projectPath);
@@ -416,17 +425,74 @@ const isDirNonEmpty = (dir: string): boolean => {
 };
 
 /**
+ * Non-mutating read of which legacy top-level dirs/files a migration would move.
+ * Shared by previewLegacyMigration (for the CLI consent prompt) and
+ * migrateLegacyDocuments (the actual move) so both agree on the plan.
+ */
+const computeLegacyMigrationPlan = (tenetRoot: string): { dirs: string[]; files: string[] } => {
+  const dirs: string[] = [];
+  for (const dir of LEGACY_DOC_DIRS) {
+    if (isDirNonEmpty(path.join(tenetRoot, dir))) {
+      dirs.push(dir);
+    }
+  }
+
+  const files: string[] = [];
+  for (const file of LEGACY_FILES) {
+    const source = path.join(tenetRoot, file);
+    if (fs.existsSync(source) && fs.statSync(source).isFile()) {
+      files.push(file);
+    }
+  }
+
+  return { dirs, files };
+};
+
+export type LegacyMigrationPreview = {
+  /** archive/legacy-v1/ marker exists — a prior upgrade already migrated. */
+  alreadyMigrated: boolean;
+  /** Non-empty legacy dirs that would move. */
+  dirs: string[];
+  /** Legacy files (e.g. DESIGN.md) that would move. */
+  files: string[];
+  /** Whether there is anything to move (dirs + files). */
+  hasWork: boolean;
+};
+
+/**
+ * Read-only preview of the legacy-document migration. Used by the CLI consent
+ * gate to decide whether to prompt and to show the user what would move. Does
+ * not touch the filesystem.
+ */
+export const previewLegacyMigration = (tenetRoot: string): LegacyMigrationPreview => {
+  const alreadyMigrated = fs.existsSync(path.join(tenetRoot, ARCHIVE_LEGACY_ROOT));
+  if (alreadyMigrated) {
+    return { alreadyMigrated: true, dirs: [], files: [], hasWork: false };
+  }
+  const { dirs, files } = computeLegacyMigrationPlan(tenetRoot);
+  return { alreadyMigrated: false, dirs, files, hasWork: dirs.length + files.length > 0 };
+};
+
+/**
  * One-time migration of legacy top-level document directories into
  * .tenet/archive/legacy-v1/. Moves legacy doc dirs + DESIGN.md (rename) and
- * snapshots knowledge/ (copy). Idempotent: the presence of the
- * archive/legacy-v1/ marker means a prior upgrade already migrated, so this
- * is a no-op on re-run.
+ * archives knowledge/ (the active-lane dir is recreated empty). Idempotent: the
+ * presence of the archive/legacy-v1/ marker means a prior upgrade already
+ * migrated, so this is a no-op on re-run.
+ *
+ * Gated by `enabled`: the destructive move only runs when the CLI consent gate
+ * (interactive Y/N or the --migrate-legacy flag) explicitly opts in. When
+ * disabled, this is a silent no-op — the CLI owns the messaging.
  *
  * Destructive for pre-migration jobs: their artifact_paths point at the old
  * top-level locations and will dangle after the move. Callers should warn
  * before running this while jobs are active (see warnIfJobsActive).
  */
-const migrateLegacyDocuments = (tenetRoot: string): void => {
+const migrateLegacyDocuments = (tenetRoot: string, opts: { enabled: boolean }): void => {
+  if (!opts.enabled) {
+    return;
+  }
+
   const archiveLegacyRoot = path.join(tenetRoot, ARCHIVE_LEGACY_ROOT);
   if (fs.existsSync(archiveLegacyRoot)) {
     return;
@@ -434,13 +500,11 @@ const migrateLegacyDocuments = (tenetRoot: string): void => {
 
   fs.mkdirSync(archiveLegacyRoot, { recursive: true });
 
+  const plan = computeLegacyMigrationPlan(tenetRoot);
+
   const movedDirs: string[] = [];
-  for (const dir of LEGACY_DOC_DIRS) {
-    const source = path.join(tenetRoot, dir);
-    if (!isDirNonEmpty(source)) {
-      continue;
-    }
-    fs.renameSync(source, path.join(archiveLegacyRoot, dir));
+  for (const dir of plan.dirs) {
+    fs.renameSync(path.join(tenetRoot, dir), path.join(archiveLegacyRoot, dir));
     movedDirs.push(dir);
   }
 
@@ -450,12 +514,9 @@ const migrateLegacyDocuments = (tenetRoot: string): void => {
   fs.mkdirSync(path.join(tenetRoot, 'knowledge'), { recursive: true });
 
   const movedFiles: string[] = [];
-  for (const file of LEGACY_FILES) {
-    const source = path.join(tenetRoot, file);
-    if (fs.existsSync(source) && fs.statSync(source).isFile()) {
-      fs.renameSync(source, path.join(archiveLegacyRoot, file));
-      movedFiles.push(file);
-    }
+  for (const file of plan.files) {
+    fs.renameSync(path.join(tenetRoot, file), path.join(archiveLegacyRoot, file));
+    movedFiles.push(file);
   }
 
   if (movedDirs.length === 0 && movedFiles.length === 0) {

@@ -14,11 +14,14 @@ import {
   mergeClaudeLocalSettings,
   mergeCodexProjectTrust,
   mergeOpenCodePermission,
+  previewLegacyMigration,
   promptAgent,
   promptYesNo,
   readStateConfig,
   writeStateConfig,
 } from './init.js';
+import type { LegacyMigrationPreview } from './init.js';
+import { maybeStarNudge } from './star-nudge.js';
 import {
   DEFAULT_JOB_TIMEOUT_MINUTES,
   formatMaxRetries,
@@ -157,6 +160,23 @@ const runPlaywrightCheckFlow = async (projectPath: string): Promise<void> => {
   }
 };
 
+/**
+ * Interactive consent prompt for the destructive legacy-document migration.
+ * Shows exactly what would move and the dangling-job risk, then asks Y/N
+ * (default No). Returns the user's decision.
+ */
+const promptMigrateLegacy = async (preview: LegacyMigrationPreview): Promise<boolean> => {
+  console.log('\nTenet found legacy top-level document directories from an older layout.');
+  console.log(
+    `  would move into .tenet/archive/legacy-v1/: ${[...preview.dirs, ...preview.files].join(', ')}`,
+  );
+  console.log(
+    '  This is destructive for pre-migration jobs: their artifact_paths will dangle ' +
+      '(compile_context / tenet_retry_job will fail). Finish or cancel active runs first.',
+  );
+  return promptYesNo('\nMigrate these legacy documents now?', false);
+};
+
 const startBackgroundServer = (projectPath: string): void => {
   const entryPath = fileURLToPath(new URL('../../dist/mcp/index.js', import.meta.url));
   const child = fork(entryPath, [], {
@@ -189,13 +209,18 @@ const run = async (): Promise<void> => {
     .argument('[path]', 'Project path', '.')
     .option('--agent <name>', 'Default agent adapter (claude-code, opencode, codex)')
     .option('--upgrade', 'Upgrade existing project: migrate DB, overwrite skills and MCP configs, preserve user docs')
+    .option(
+      '--migrate-legacy',
+      'On upgrade, run the one-time destructive move of legacy doc dirs (spec/, interview/, …) into .tenet/archive/legacy-v1/. Required in non-interactive contexts; prompts interactively otherwise.',
+    )
     .option('--skip-playwright-check', 'Skip the Playwright MCP availability check (useful for one-line installs)')
     .option('--skip-pre-approval', 'Skip the MCP tool pre-approval flow (do not touch .claude/settings.local.json, opencode.json permissions, .codex/config.toml trust)')
-    .option('-y, --yes', 'Assume yes for all interactive prompts (non-interactive init, useful for CI)')
+    .option('-y, --yes', 'Assume yes for all interactive prompts (non-interactive init, useful for CI). Does NOT auto-run the destructive --migrate-legacy move.')
     .description('Initialize Tenet project scaffold')
     .action(async (targetPath: string, options: {
       agent?: string;
       upgrade?: boolean;
+      migrateLegacy?: boolean;
       skipPlaywrightCheck?: boolean;
       skipPreApproval?: boolean;
       yes?: boolean;
@@ -203,10 +228,32 @@ const run = async (): Promise<void> => {
       const projectPath = path.resolve(targetPath);
 
       if (options.upgrade) {
+        const tenetRoot = path.join(projectPath, '.tenet');
+        const preview = previewLegacyMigration(tenetRoot);
+
+        // Consent gate for the destructive legacy move:
+        //  - --migrate-legacy flag → explicit opt-in (any context)
+        //  - interactive TTY with work to do → Y/N prompt (default No)
+        //  - otherwise (non-TTY, no flag) → skip; tell the user how to opt in
+        //  -y/--yes deliberately does NOT auto-migrate (it is a broad "yes" to
+        //    prompts; the destructive action must name itself).
+        let migrate = false;
+        if (options.migrateLegacy) {
+          migrate = true;
+        } else if (process.stdin.isTTY && preview.hasWork && !preview.alreadyMigrated) {
+          migrate = await promptMigrateLegacy(preview);
+        }
+
         try {
-          initProject(projectPath, { upgrade: true });
+          initProject(projectPath, { upgrade: true, migrateLegacy: migrate });
           console.log('Upgraded tenet DB, skills, and MCP configs.');
-          console.log('Legacy document directories migrated to .tenet/archive/legacy-v1/; project/ docs and runtime state preserved.');
+          if (migrate && preview.hasWork) {
+            console.log('Legacy document directories migrated to .tenet/archive/legacy-v1/; project/ docs and runtime state preserved.');
+          } else if (!migrate && preview.hasWork && !preview.alreadyMigrated) {
+            console.log('\nSkipped legacy document migration (destructive). To move these into .tenet/archive/legacy-v1/, re-run:');
+            console.log('  tenet init --upgrade --migrate-legacy');
+            console.log(`  would move: ${[...preview.dirs, ...preview.files].join(', ')}`);
+          }
         } catch (error) {
           if (error instanceof Error) {
             console.error(error.message);
@@ -221,6 +268,10 @@ const run = async (): Promise<void> => {
 
         if (!options.skipPreApproval) {
           await runMcpPreApprovalFlow(projectPath, { assumeYes: options.yes });
+        }
+
+        if (process.stdin.isTTY && !options.yes) {
+          await maybeStarNudge(projectPath);
         }
         return;
       }
@@ -255,6 +306,10 @@ const run = async (): Promise<void> => {
       console.log('- Run Tenet context bootstrap to replace .tenet/project/*.md placeholders with current project doctrine');
       console.log(`- Start ${agent ?? 'your agent'} in this directory`);
       console.log('- To change agent later: tenet config --agent <name>');
+
+      if (process.stdin.isTTY && !options.yes) {
+        await maybeStarNudge(projectPath);
+      }
     });
 
   program
