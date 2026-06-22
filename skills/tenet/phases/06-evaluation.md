@@ -121,7 +121,7 @@ Integration test jobs (`integration_test` type) have a different eval flow:
 The orchestrator should parse the integration test output to identify specific failures and report a focused blocking finding rather than retrying the entire feature.
 
 ## Evaluation Result Format
-Record results via `tenet_update_knowledge` with a descriptive title. Example: `title="eval project-scaffold mechanical-and-spec-compliance"`. The tool generates a dated markdown file in `.tenet/knowledge/`.
+Record results via `tenet_update_knowledge` with a descriptive title. Example: `title="eval project-scaffold mechanical-and-spec-compliance"`. The tool defaults to `type="journal"` and writes a dated markdown file in the run journal (`.tenet/runs/<run-slug>/journal/`); pass `type="knowledge"` only for durable facts worth promoting to `.tenet/knowledge/`.
 
 ```markdown
 # Evaluation: job-{id}
