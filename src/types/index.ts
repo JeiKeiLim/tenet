@@ -86,7 +86,16 @@ export interface SteerMessage {
 export interface SteerResult {
   has_emergency: boolean;
   has_directive: boolean;
-  messages: SteerMessage[];
+  /** All unresolved user steers — uncapped, so human input is never crowded out. */
+  user_messages: SteerMessage[];
+  /** Most-recent-`limit` unresolved agent steers. */
+  agent_messages: SteerMessage[];
+  /** True unresolved counts per source (independent of the agent cap). */
+  total_unresolved: { user: number; agent: number };
+  /** How many were actually returned per source this call. */
+  returned: { user: number; agent: number };
+  /** True when the agent bucket was capped — there are more agent steers than returned. */
+  truncated: boolean;
 }
 
 export interface HealthReport {

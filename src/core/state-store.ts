@@ -652,24 +652,130 @@ export class StateStore {
     };
   }
 
-  getUnprocessedSteers(jobId?: string): SteerMessage[] {
-    const rows = this.db
-      .prepare("SELECT * FROM steer_messages WHERE status != 'resolved' ORDER BY timestamp ASC")
-      .all() as SteerRow[];
-    const messages = rows.map((row) => this.toSteerMessage(row));
-    if (!jobId) {
-      return messages;
+  /**
+   * Fetch the unresolved steer inbox, split by source.
+   *
+   * User steers are returned in full (uncapped) so human input is never crowded
+   * out by agent noise. Agent steers are capped to the most recent `agentLimit`
+   * so a pile-up can't flood context every cycle. `totals` reflects the true
+   * unresolved count per source (independent of the agent cap) so truncation is
+   * visible to the caller rather than silently dropped.
+   */
+  getSteerInbox({
+    jobId,
+    agentLimit,
+  }: {
+    jobId?: string;
+    agentLimit: number;
+  }): {
+    userMessages: SteerMessage[];
+    agentMessages: SteerMessage[];
+    totals: { user: number; agent: number };
+  } {
+    if (jobId) {
+      // Targeted path: filter to this job's steers (+ broadcasts), then partition.
+      const rows = this.db
+        .prepare("SELECT * FROM steer_messages WHERE status != 'resolved' ORDER BY timestamp ASC")
+        .all() as SteerRow[];
+      const filtered = rows
+        .map((row) => this.toSteerMessage(row))
+        .filter(
+          (m) => !m.affectedJobIds || m.affectedJobIds.length === 0 || m.affectedJobIds.includes(jobId),
+        );
+      const userMessages = filtered.filter((m) => m.source !== 'agent');
+      const allAgent = filtered.filter((m) => m.source === 'agent');
+      const agentMessages = allAgent.slice(Math.max(0, allAgent.length - agentLimit));
+      return {
+        userMessages,
+        agentMessages,
+        totals: { user: userMessages.length, agent: allAgent.length },
+      };
     }
-    // Filter to messages that target this specific job or have no target (broadcast)
-    return messages.filter(
-      (m) => !m.affectedJobIds || m.affectedJobIds.length === 0 || m.affectedJobIds.includes(jobId),
-    );
+
+    // Global path (the every-cycle orchestrator fetch): per-bucket SQL.
+    const userRows = this.db
+      .prepare(
+        "SELECT * FROM steer_messages WHERE status != 'resolved' AND source != 'agent' ORDER BY timestamp ASC",
+      )
+      .all() as SteerRow[];
+    const agentRows = this.db
+      .prepare(
+        "SELECT * FROM (SELECT * FROM steer_messages WHERE status != 'resolved' AND source = 'agent' ORDER BY timestamp DESC LIMIT ?) ORDER BY timestamp ASC",
+      )
+      .all(agentLimit) as SteerRow[];
+    const totals = this.countUnprocessedSteers();
+    return {
+      userMessages: userRows.map((row) => this.toSteerMessage(row)),
+      agentMessages: agentRows.map((row) => this.toSteerMessage(row)),
+      totals: { user: totals.user, agent: totals.agent },
+    };
   }
 
-  updateSteerStatus(id: string, status: SteerMessageStatus, agentResponse?: string): void {
-    this.db
-      .prepare('UPDATE steer_messages SET status = ?, agent_response = ? WHERE id = ?')
-      .run(status, agentResponse ?? null, id);
+  /**
+   * Cheap unresolved counts split by source — for the CLI status line and the
+   * health report, without loading any message bodies.
+   */
+  countUnprocessedSteers(): { user: number; agent: number; total: number } {
+    const rows = this.db
+      .prepare(
+        "SELECT CASE WHEN source = 'agent' THEN 'agent' ELSE 'user' END AS bucket, COUNT(*) AS n " +
+          "FROM steer_messages WHERE status != 'resolved' GROUP BY bucket",
+      )
+      .all() as { bucket: string; n: number }[];
+    let user = 0;
+    let agent = 0;
+    for (const row of rows) {
+      if (row.bucket === 'agent') {
+        agent = row.n;
+      } else {
+        user = row.n;
+      }
+    }
+    return { user, agent, total: user + agent };
+  }
+
+  /** Transition one or more steers by id (precise retire — only these are touched). */
+  updateSteersStatus(
+    ids: string[],
+    status: SteerMessageStatus,
+    agentResponse?: string,
+  ): { updated: number } {
+    if (ids.length === 0) {
+      return { updated: 0 };
+    }
+    const placeholders = ids.map(() => '?').join(',');
+    const info = this.db
+      .prepare(`UPDATE steer_messages SET status = ?, agent_response = ? WHERE id IN (${placeholders})`)
+      .run(status, agentResponse ?? null, ...ids);
+    return { updated: info.changes };
+  }
+
+  /**
+   * Bulk-transition every agent-originated context steer. Never touches user
+   * steers or directives of any source — those are retired only by explicit id,
+   * so a standing rule or a pending user directive can't be swept away.
+   */
+  sweepAgentContextSteers(
+    status: SteerMessageStatus,
+    agentResponse?: string,
+  ): { swept: number; ids: string[] } {
+    const run = this.db.transaction((): { swept: number; ids: string[] } => {
+      const rows = this.db
+        .prepare(
+          "SELECT id FROM steer_messages WHERE source = 'agent' AND class = 'context' AND status != 'resolved'",
+        )
+        .all() as { id: string }[];
+      if (rows.length === 0) {
+        return { swept: 0, ids: [] };
+      }
+      const ids = rows.map((row) => row.id);
+      const placeholders = ids.map(() => '?').join(',');
+      this.db
+        .prepare(`UPDATE steer_messages SET status = ?, agent_response = ? WHERE id IN (${placeholders})`)
+        .run(status, agentResponse ?? null, ...ids);
+      return { swept: ids.length, ids };
+    });
+    return run();
   }
 
   getJobOutput(jobId: string): unknown {

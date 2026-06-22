@@ -28,7 +28,7 @@ export const registerTenetHealthCheckTool = (
         stale_documents: [],
         missing_updates: [],
         broken_references: [],
-        unacknowledged_steers: stateStore.getUnprocessedSteers().length,
+        unacknowledged_steers: stateStore.countUnprocessedSteers().total,
       };
 
       if (jobManager.getActiveConcurrency() > activeJobs) {

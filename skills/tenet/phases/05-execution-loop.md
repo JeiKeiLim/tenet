@@ -19,7 +19,7 @@ The pre-execution confirmation gate in `phases/04-decomposition.md` MUST also be
 Execute this sequence for every job cycle:
 
 1.  **Check Steering**: `tenet_process_steer()`
-    Ensure no emergency overrides or new directives exist before starting.
+    Read `user_messages` first (always returned in full — human input can never be crowded out by agent noise), then `agent_messages`. Ensure no emergency overrides or new directives exist before starting. `truncated: true` means there are more agent steers than shown — widen `limit` or run a sweep to drain them. Retire steers you have handled this cycle with `tenet_update_steer` (see **Steer Hygiene** below).
 2.  **Get Next Job**: `tenet_continue()`
     Retrieves the next pending job from the runtime queue. The response includes `next_job` with its runtime `id`.
 3.  **Compile Context**: `tenet_compile_context(job_id="<next_job.id>")`
@@ -79,6 +79,16 @@ After every job:
 - Write a journal entry via `tenet_update_knowledge(type="journal")` to log job completion. Journals write to `.tenet/runs/<run-slug>/journal/`.
 - If the job produced reusable technical insight, also write a knowledge entry via `tenet_update_knowledge(type="knowledge")` with appropriate confidence tag.
 
+### Steer Hygiene
+
+The steer inbox must be maintained or it stops being useful — agent self-notes accumulate and crowd out real signal. Every cycle:
+
+- **Read `user_messages` first.** They are always returned in full; agent noise can never hide them.
+- **Retire what you've handled.** A `context` steer is one-time — resolve it with `tenet_update_steer(ids=[...], status="resolved")` once consumed, or sweep all agent-context at a run/slice boundary: `tenet_update_steer(sweep="agent_context", status="resolved")`.
+- **Retire directives only when clearly done.** Resolve a `directive` once the work it governed is complete or clearly superseded. If you are unsure it still applies, **leave it** — never discard user input on a guess.
+- **Keep standing rules.** A directive that must hold across jobs (e.g. "all DB changes need a migration") stays active every cycle until you retire it by id. The sweep never touches directives or user steers, so they are safe.
+- **Self-notes are `context`.** Anything you add for yourself (contention notes, self-unblocking) goes in as `class="context"` with the default agent source, so it stays sweepable and won't pile up as `directive`s.
+
 ## Report-Only Jobs (blocking finding escape hatch)
 
 Some jobs are **report-only** — their deliverable is an assessment or final acceptance report, not code. They must NOT edit project files (other than writing the report itself).
@@ -131,7 +141,8 @@ for finding in code_output.findings + test_output.findings:
         tenet_retry_job(job_id=source_job.id, enhanced_prompt="Refresh evidence from current commands: " + finding.detail)
     elif finding.category == "contention":
         # If we're in parallel mode for this feature, switch to sequential:
-        tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="directive")
+        # Agent self-note -> context (sweepable), not directive
+        tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="context")
         tenet_retry_job(job_id=source_job.id)
     elif finding.category == "scope_conflict":
         # If this is a report-only job that discovered a blocking finding, use the
