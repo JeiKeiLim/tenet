@@ -158,30 +158,112 @@ describe('StateStore', () => {
     expect(store.getNextRunnableJob()?.id).toBe(join.id);
   });
 
-  it('reads and updates steer messages from SQLite table', () => {
-    const { tempDir, store } = createStore();
-    const dbPath = path.join(tempDir, '.tenet', '.state', 'tenet.db');
-    const db = new Database(dbPath);
+  describe('steer inbox', () => {
+    const insertSteer = (
+      db: Database,
+      id: string,
+      ts: string,
+      cls: 'context' | 'directive' | 'emergency',
+      status: string,
+      source: string,
+      content = `steer ${id}`,
+    ): void => {
+      db.prepare(
+        `INSERT INTO steer_messages (id, timestamp, class, content, status, source, agent_response, affected_job_ids)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, '[]')`,
+      ).run(id, ts, cls, content, status, source);
+    };
 
-    db.prepare(
-      `
-      INSERT INTO steer_messages (id, timestamp, class, content, status, source, agent_response, affected_job_ids)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    ).run('steer-1', '2026-01-01T00:00:00.000Z', 'directive', 'Prioritize tests', 'received', 'user', null, JSON.stringify(['job-1']));
+    it('returns the inbox split by source and retires steers by id', () => {
+      const { tempDir, store } = createStore();
+      const db = new Database(path.join(tempDir, '.tenet', '.state', 'tenet.db'));
+      insertSteer(db, 'u1', '2026-01-01T00:00:00.000Z', 'directive', 'received', 'user', 'Prioritize tests');
+      db.close();
 
-    db.close();
+      const inbox = store.getSteerInbox({ agentLimit: 50 });
+      expect(inbox.userMessages).toHaveLength(1);
+      expect(inbox.userMessages[0]?.id).toBe('u1');
+      expect(inbox.userMessages[0]?.status).toBe('received');
+      expect(inbox.agentMessages).toHaveLength(0);
+      expect(inbox.totals).toEqual({ user: 1, agent: 0 });
 
-    const unprocessed = store.getUnprocessedSteers();
-    expect(unprocessed).toHaveLength(1);
-    expect(unprocessed[0]?.id).toBe('steer-1');
-    expect(unprocessed[0]?.status).toBe('received');
-    expect(unprocessed[0]?.affectedJobIds).toEqual(['job-1']);
+      const { updated } = store.updateSteersStatus(['u1'], 'resolved', 'Done');
+      expect(updated).toBe(1);
 
-    store.updateSteerStatus('steer-1', 'resolved', 'Done');
+      const after = store.getSteerInbox({ agentLimit: 50 });
+      expect(after.userMessages).toHaveLength(0);
+      expect(after.totals).toEqual({ user: 0, agent: 0 });
+    });
 
-    const remaining = store.getUnprocessedSteers();
-    expect(remaining).toHaveLength(0);
+    it('returns all user steers uncapped but caps agent steers to the most recent N', () => {
+      const { tempDir, store } = createStore();
+      const db = new Database(path.join(tempDir, '.tenet', '.state', 'tenet.db'));
+      insertSteer(db, 'u1', '2026-01-01T00:00:01.000Z', 'context', 'received', 'user');
+      insertSteer(db, 'u2', '2026-01-01T00:00:02.000Z', 'context', 'received', 'user');
+      insertSteer(db, 'u3', '2026-01-01T00:00:03.000Z', 'context', 'received', 'user');
+      insertSteer(db, 'a1', '2026-01-01T00:00:01.000Z', 'context', 'received', 'agent');
+      insertSteer(db, 'a2', '2026-01-01T00:00:02.000Z', 'context', 'received', 'agent');
+      insertSteer(db, 'a3', '2026-01-01T00:00:03.000Z', 'context', 'received', 'agent');
+      insertSteer(db, 'a4', '2026-01-01T00:00:04.000Z', 'context', 'received', 'agent');
+      insertSteer(db, 'a5', '2026-01-01T00:00:05.000Z', 'context', 'received', 'agent');
+      db.close();
+
+      const inbox = store.getSteerInbox({ agentLimit: 3 });
+      expect(inbox.userMessages.map((m) => m.id)).toEqual(['u1', 'u2', 'u3']); // uncapped, ASC
+      expect(inbox.agentMessages.map((m) => m.id)).toEqual(['a3', 'a4', 'a5']); // most-recent 3, ASC
+      expect(inbox.totals).toEqual({ user: 3, agent: 5 }); // true counts, not the capped slice
+    });
+
+    it('counts unresolved steers by source without loading bodies', () => {
+      const { store } = createStore();
+      store.createSteer({ class: 'directive', content: 'user d', source: 'user' });
+      store.createSteer({ class: 'context', content: 'agent c1', source: 'agent' });
+      store.createSteer({ class: 'context', content: 'agent c2', source: 'agent' });
+
+      expect(store.countUnprocessedSteers()).toEqual({ user: 1, agent: 2, total: 3 });
+    });
+
+    it('sweeps only agent-context steers, leaving user steers and directives untouched', () => {
+      const { tempDir, store } = createStore();
+      const db = new Database(path.join(tempDir, '.tenet', '.state', 'tenet.db'));
+      insertSteer(db, 'ac1', '2026-01-01T00:00:01.000Z', 'context', 'received', 'agent'); // swept
+      insertSteer(db, 'ac2', '2026-01-01T00:00:02.000Z', 'context', 'received', 'agent'); // swept
+      insertSteer(db, 'ad1', '2026-01-01T00:00:03.000Z', 'directive', 'received', 'agent'); // kept (directive)
+      insertSteer(db, 'uc1', '2026-01-01T00:00:04.000Z', 'context', 'received', 'user'); // kept (user)
+      insertSteer(db, 'ud1', '2026-01-01T00:00:05.000Z', 'directive', 'received', 'user'); // kept (user)
+      db.close();
+
+      const result = store.sweepAgentContextSteers('resolved', 'slice boundary');
+      expect(result.swept).toBe(2);
+      expect(result.ids.sort()).toEqual(['ac1', 'ac2']);
+
+      const inbox = store.getSteerInbox({ agentLimit: 50 });
+      expect(inbox.userMessages.map((m) => m.id).sort()).toEqual(['uc1', 'ud1']);
+      expect(inbox.agentMessages.map((m) => m.id)).toEqual(['ad1']); // agent directive survived
+      expect(inbox.totals).toEqual({ user: 2, agent: 1 });
+    });
+
+    it('filters to a specific job (and broadcasts) when jobId is given', () => {
+      const { tempDir, store } = createStore();
+      const db = new Database(path.join(tempDir, '.tenet', '.state', 'tenet.db'));
+      db.prepare(
+        `INSERT INTO steer_messages (id, timestamp, class, content, status, source, agent_response, affected_job_ids)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+      ).run('t1', '2026-01-01T00:00:00.000Z', 'directive', 'for job-1', 'received', 'user', JSON.stringify(['job-1']));
+      db.prepare(
+        `INSERT INTO steer_messages (id, timestamp, class, content, status, source, agent_response, affected_job_ids)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+      ).run('other', '2026-01-01T00:00:00.500Z', 'directive', 'for job-2', 'received', 'user', JSON.stringify(['job-2']));
+      db.prepare(
+        `INSERT INTO steer_messages (id, timestamp, class, content, status, source, agent_response, affected_job_ids)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+      ).run('b1', '2026-01-01T00:00:01.000Z', 'context', 'broadcast', 'received', 'agent', JSON.stringify([]));
+      db.close();
+
+      const inbox = store.getSteerInbox({ jobId: 'job-1', agentLimit: 50 });
+      expect(inbox.userMessages.map((m) => m.id)).toEqual(['t1']); // targeted, not 'other'
+      expect(inbox.agentMessages.map((m) => m.id)).toEqual(['b1']); // broadcast included
+    });
   });
 
   it('round-trips config values', () => {

@@ -23,6 +23,7 @@ allowed-tools:
   - tenet_update_knowledge
   - tenet_add_steer
   - tenet_process_steer
+  - tenet_update_steer
   - tenet_health_check
   - tenet_get_status
   - tenet_retry_job
@@ -191,11 +192,17 @@ Read `phases/05-execution-loop.md` before starting execution.
 
 ## Steering
 
+The steer inbox is a live to-do list, not a log — it must be maintained, or it swells with agent self-notes and stops being useful.
+
 When the user sends input during execution:
 
-1. Classify it as `context`, `directive`, or `emergency`.
-2. Persist it with `tenet_add_steer(...)`; use `affected_job_ids` when known.
-3. Process steering at every loop checkpoint with `tenet_process_steer()`.
+1. Classify it as `context` (one-time info), `directive` (a rule/scope change that holds until lifted), or `emergency` (immediate halt).
+2. Persist it with `tenet_add_steer(...)`; use `affected_job_ids` when known. **Agent self-notes go in as `context`, never `directive`**, so they stay sweepable.
+3. Process steering at every loop checkpoint with `tenet_process_steer()`. Read `user_messages` first, always — user steers are returned in full and can never be crowded out by agent noise. `agent_messages` is capped to a recent window; `truncated: true` and `total_unresolved` tell you there is more to drain.
+4. **Retire steers you have handled** with `tenet_update_steer`:
+   - A `context` steer once consumed — or sweep all agent-context at a run/slice boundary: `tenet_update_steer(sweep="agent_context", status="resolved")`.
+   - A `directive` once the work it governed is done or clearly superseded. If you are unsure whether a directive still applies, **keep it** — never discard user input on a guess. A directive that must hold across jobs stays until you explicitly retire it by id.
+   - The sweep only ever touches agent-context steers — user steers and directives of any source retire only by explicit id.
 
 User steers outrank agent steers. Emergency steer cancels active jobs via `tenet_cancel_job` and stops dispatch until resolved.
 

@@ -22,6 +22,7 @@ export const TENET_MCP_TOOL_NAMES = [
   'tenet_update_knowledge',
   'tenet_add_steer',
   'tenet_process_steer',
+  'tenet_update_steer',
   'tenet_health_check',
   'tenet_get_status',
   'tenet_retry_job',
