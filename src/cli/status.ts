@@ -163,10 +163,12 @@ export function showStatus(projectPath: string, options?: StatusOptions): void {
         }
       }
 
-      const unprocessedSteers = stateStore.getUnprocessedSteers().length;
-      if (unprocessedSteers > 0) {
+      const steerCounts = stateStore.countUnprocessedSteers();
+      if (steerCounts.total > 0) {
         console.log('');
-        console.log(`Unprocessed steer messages: ${unprocessedSteers}`);
+        console.log(
+          `Unprocessed steer messages: ${steerCounts.total} (${steerCounts.user} user, ${steerCounts.agent} agent)`,
+        );
       }
     } finally {
       stateStore.close();

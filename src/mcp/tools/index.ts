@@ -11,6 +11,7 @@ import { registerTenetJobResultTool } from './tenet-job-result.js';
 import { registerTenetJobWaitTool } from './tenet-job-wait.js';
 import { registerTenetAddSteerTool } from './tenet-add-steer.js';
 import { registerTenetProcessSteerTool } from './tenet-process-steer.js';
+import { registerTenetUpdateSteerTool } from './tenet-update-steer.js';
 import { registerTenetRegisterJobsTool } from './tenet-register-jobs.js';
 import { registerTenetReportBlockingFindingTool } from './tenet-report-blocking-finding.js';
 import { registerTenetRetryJobTool } from './tenet-retry-job.js';
@@ -51,6 +52,7 @@ export const registerAllTools = (server: McpServer, jobManager: JobManager, stat
   safeRegister(() => registerTenetUpdateKnowledgeTool(registerTool, stateStore));
   safeRegister(() => registerTenetAddSteerTool(registerTool, stateStore));
   safeRegister(() => registerTenetProcessSteerTool(registerTool, stateStore));
+  safeRegister(() => registerTenetUpdateSteerTool(registerTool, stateStore));
   safeRegister(() => registerTenetHealthCheckTool(registerTool, stateStore, jobManager));
   safeRegister(() => registerTenetGetStatusTool(registerTool, stateStore));
   // tenet_set_agent removed from MCP — available via CLI only
