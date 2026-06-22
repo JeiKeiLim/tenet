@@ -72,10 +72,12 @@ Write or refresh:
   product.md
   testing.md
   design.md
-  design-components/     # optional accepted examples
+  design-components/     # expected when the project has a visual/UI surface
 ```
 
 `project/design.md` is required for every project. It is experience-design doctrine: public/user-facing flows, operational surfaces, language and feedback, accessibility and responsiveness when relevant, visual system when relevant, and anti-patterns that would make the project feel wrong. Technical architecture belongs in `project/architecture.md`.
+
+`project/design-components/` holds self-contained accepted component examples — one HTML/MD file per component (buttons, cards, forms, empty states, navigation, etc.) using realistic sample data and pointing at the real source that implements each pattern. It is the canonical reference future visual and implementation work must preserve. It is optional ONLY for projects with no visual/UI interaction surface. When the "Live design" investigation lane finds a frontend, web UI, mobile UI, TUI, or other visual interaction surface, populate `design-components/` with the patterns already implemented in the codebase rather than leaving it empty. An empty or missing `design-components/` in a project that clearly has a frontend is a gap to flag for follow-up (record it as a follow-up or ask the user) — not a reason to silently skip it.
 
 Bootstrap may also curate durable reusable facts into top-level `.tenet/knowledge/`. Do not promote raw research dumps or run-local history as knowledge unless they have been deduplicated into concern-oriented facts that will help future work.
 

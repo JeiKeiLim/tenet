@@ -134,7 +134,7 @@ const parseJson = <T>(value: string | null, fallback: T): T => {
   }
 };
 
-const statePaths = (projectPath: string): { stateDir: string; dbPath: string; walPath: string; shmPath: string } => {
+export const statePaths = (projectPath: string): { stateDir: string; dbPath: string; walPath: string; shmPath: string } => {
   const stateDir = path.join(projectPath, '.tenet', '.state');
   const dbPath = path.join(stateDir, 'tenet.db');
   return {

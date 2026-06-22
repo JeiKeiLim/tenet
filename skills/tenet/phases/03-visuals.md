@@ -9,7 +9,7 @@ Visual generation is mandatory in Full mode. These artifacts bridge the gap betw
 - **Naming**: `{date}-NN-description.html` (e.g., `2026-04-08-00-architecture.html`, `2026-04-08-01-mockup-minimal.html`). The date prefix tells future sessions when the visual was created so they can decide if it needs updating.
 - **Self-Contained**: No external dependencies. Inline all CSS, SVG, and JS.
 - **Realistic**: Use plausible sample data. No "Lorem ipsum".
-- **Doctrine**: Read `.tenet/project/design.md` before creating artifacts. If `.tenet/project/design-components/` has relevant accepted examples, inspect them and preserve the established patterns.
+- **Doctrine**: Read `.tenet/project/design.md` before creating artifacts. If `.tenet/project/design-components/` exists and is non-empty, you MUST inspect every file in it and preserve the established component patterns in every mockup and prototype you produce. Do not skip this directory — it holds the accepted examples that define the look and feel all future visual work must match.
 
 ## 1. Architecture Diagrams
 Required for all multi-component systems.
@@ -52,7 +52,7 @@ After the user approves a mockup design, write `.tenet/runs/{run_slug}/design.md
 - Selected mockup: [reference to approved file]
 - Design rationale: [why this direction was chosen]
 - Project design doctrine used: `.tenet/project/design.md`
-- Accepted component examples consulted: [relevant `.tenet/project/design-components/*` files, or "none"]
+- Accepted component examples consulted: [list every `.tenet/project/design-components/*` file inspected, or "none — directory absent/empty" with a one-line reason]
 
 ## Run-Local Visual Principles
 - Color palette: [primary, secondary, accent, background colors with hex codes]

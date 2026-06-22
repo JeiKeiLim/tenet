@@ -6,9 +6,9 @@
 # Auth: OIDC trusted publishing (no NPM_TOKEN secret). One-time setup required
 # on npmjs.com — see docs/release-runbook.md for the steps.
 #
-# Pre-publish gate: typecheck + unit/integration tests MUST pass. Lint is
-# skipped (eslint isn't currently a devDep). E2E canaries are NOT run here —
-# they cost real money and are meant for manual maintainer runs.
+# Pre-publish gate: typecheck + lint + unit/integration tests MUST pass.
+# E2E canaries are NOT run here — they cost real money and are meant for
+# manual maintainer runs.
 name: Publish to npm
 
 on:
@@ -64,6 +64,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+      - name: Lint
+        run: pnpm run lint
 
       - name: Test
         run: pnpm run test

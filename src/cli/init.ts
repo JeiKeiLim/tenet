@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { StateStore } from '../core/state-store.js';
+import { StateStore, statePaths } from '../core/state-store.js';
 import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 import { getPackageVersion } from './version.js';
 
@@ -142,6 +142,110 @@ const ensureTenetGitignore = (tenetRoot: string): void => {
     `${separator}# Tenet live SQLite runtime state and portable snapshots.\n${missingLines.join('\n')}\n`,
     'utf8',
   );
+};
+
+const REQUIRED_ROOT_GITIGNORE_LINES = ['.tenet/.state/'];
+
+/**
+ * Defense-in-depth: ensure the repo-ROOT .gitignore also ignores the live SQLite
+ * state, not just .tenet/.gitignore. The nested .tenet/.gitignore (written by
+ * ensureTenetGitignore) protects locally, but a root rule also covers collaborators
+ * before .tenet/.gitignore is committed.
+ *
+ * Merges into an existing root .gitignore only — never creates one, to avoid
+ * surprising repos that intentionally omit it. Idempotent; preserves custom rules.
+ */
+export const ensureRootGitignore = (projectPath: string): void => {
+  const gitignorePath = path.join(projectPath, '.gitignore');
+  if (!fs.existsSync(gitignorePath)) {
+    return;
+  }
+
+  const existing = fs.readFileSync(gitignorePath, 'utf8');
+  const existingLines = new Set(existing.split(/\r?\n/).map((line) => line.trim()));
+  const missingLines = REQUIRED_ROOT_GITIGNORE_LINES.filter((line) => !existingLines.has(line));
+  if (missingLines.length === 0) {
+    return;
+  }
+
+  const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+  fs.appendFileSync(
+    gitignorePath,
+    `${separator}# Tenet live SQLite runtime state. Do not track this in Git.\n${missingLines.join('\n')}\n`,
+    'utf8',
+  );
+};
+
+/**
+ * Detect whether the live SQLite DB (or its WAL/SHM sidecars) under .tenet/.state/
+ * is already tracked by Git, and warn with the exact untrack command. A tracked DB
+ * is the main source of DB corruption: git checkout/merge/stash can overwrite a
+ * live WAL database mid-write. .tenet/.gitignore only prevents tracking NEW files —
+ * it cannot untrack a DB committed before the rule existed.
+ *
+ * Non-blocking and advisory: prints a warning only. Does not run `git rm` itself
+ * (that mutates the index and would surprise the user). No-op when the project is
+ * not inside a git work tree or git is unavailable.
+ */
+export const detectTrackedStateFiles = (projectPath: string): void => {
+  let insideWorkTree: string;
+  try {
+    insideWorkTree = execSync('git rev-parse --is-inside-work-tree', {
+      cwd: projectPath,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
+      encoding: 'utf8',
+    }).trim();
+  } catch {
+    return; // not a git repo or git unavailable — nothing to detect
+  }
+  if (insideWorkTree !== 'true') {
+    return;
+  }
+
+  let tracked: string;
+  try {
+    tracked = execSync('git ls-files -- .tenet/.state', {
+      cwd: projectPath,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
+      encoding: 'utf8',
+    }).trim();
+  } catch {
+    return;
+  }
+  if (!tracked) {
+    return;
+  }
+
+  const { dbPath, walPath, shmPath } = statePaths(projectPath);
+  const dbBasenames = new Set([dbPath, walPath, shmPath].map((p) => path.basename(p)));
+  const offending = tracked
+    .split(/\r?\n/)
+    .map((rel) => rel.trim())
+    .filter((rel) => rel.length > 0 && dbBasenames.has(path.basename(rel)));
+
+  if (offending.length === 0) {
+    return;
+  }
+
+  console.warn(
+    `\nWarning: ${offending.join(', ')} under .tenet/.state/ is tracked by Git. ` +
+      'Git operations (checkout/merge/stash) can corrupt a live SQLite WAL database. ' +
+      'Untrack it (the local file is kept), then commit the removal:\n' +
+      `  git rm --cached --ignore-unmatch ${offending.join(' ')}\n` +
+      '.tenet/.gitignore already ignores .state/ for future files.',
+  );
+};
+
+/**
+ * Ensure the live SQLite state is neither newly tracked nor silently corrupted by
+ * an already-tracked DB: merge a defense-in-depth rule into the root .gitignore,
+ * then warn if a DB file is already committed.
+ */
+const ensureStateDbGitSafety = (projectPath: string): void => {
+  ensureRootGitignore(projectPath);
+  detectTrackedStateFiles(projectPath);
 };
 
 const ensurePortableStateFiles = (tenetRoot: string): void => {
@@ -355,6 +459,7 @@ export function initProject(projectPath: string, options?: InitOptions): void {
 
   ensureTemplateFiles(tenetRoot);
   ensurePortableStateFiles(tenetRoot);
+  ensureStateDbGitSafety(projectPath);
 
   if (options?.agent) {
     writeStateConfig(tenetRoot, { default_agent: options.agent });
@@ -381,6 +486,7 @@ function upgradeProject(projectPath: string, options?: InitOptions): void {
   fs.mkdirSync(path.join(tenetRoot, '.state'), { recursive: true });
   ensureTemplateFiles(tenetRoot);
   ensurePortableStateFiles(tenetRoot);
+  ensureStateDbGitSafety(projectPath);
 
   backupStateDb(tenetRoot);
   const stateStore = new StateStore(projectPath, { migrate: true });

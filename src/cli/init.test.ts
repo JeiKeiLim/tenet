@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,8 @@ import {
   addPlaywrightAgentConfigs,
   addPlaywrightToCodexConfig,
   addPlaywrightToOpenCodeConfig,
+  detectTrackedStateFiles,
+  ensureRootGitignore,
   initProject,
   mergeClaudePlaywrightSettings,
   mergeClaudeLocalSettings,
@@ -467,6 +470,108 @@ describe('initProject', () => {
     preview = previewLegacyMigration(tenetRoot);
     expect(preview.alreadyMigrated).toBe(true);
     expect(preview.hasWork).toBe(false);
+  });
+});
+
+describe('state DB git safety', () => {
+  const gitAvailable = (() => {
+    try {
+      execSync('git --version', { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  describe('ensureRootGitignore', () => {
+    it('appends .tenet/.state/ to an existing root .gitignore without overwriting custom rules', () => {
+      const projectPath = createTempDir();
+      fs.writeFileSync(path.join(projectPath, '.gitignore'), 'node_modules\nbuild\n', 'utf8');
+
+      ensureRootGitignore(projectPath);
+
+      const content = fs.readFileSync(path.join(projectPath, '.gitignore'), 'utf8');
+      expect(content).toContain('node_modules');
+      expect(content).toContain('build');
+      expect(content).toContain('.tenet/.state/');
+    });
+
+    it('does not create a root .gitignore when none exists', () => {
+      const projectPath = createTempDir();
+      ensureRootGitignore(projectPath);
+      expect(fs.existsSync(path.join(projectPath, '.gitignore'))).toBe(false);
+    });
+
+    it('is idempotent — does not append the rule twice', () => {
+      const projectPath = createTempDir();
+      fs.writeFileSync(path.join(projectPath, '.gitignore'), 'node_modules\n', 'utf8');
+      ensureRootGitignore(projectPath);
+      ensureRootGitignore(projectPath);
+
+      const content = fs.readFileSync(path.join(projectPath, '.gitignore'), 'utf8');
+      expect((content.match(/\.tenet\/\.state\//g) ?? []).length).toBe(1);
+    });
+  });
+
+  (gitAvailable ? describe : describe.skip)('detectTrackedStateFiles', () => {
+    it('warns with the untrack command when the live DB is tracked by git', () => {
+      const projectPath = createTempDir();
+      execSync('git init', { cwd: projectPath, stdio: 'ignore' });
+      fs.mkdirSync(path.join(projectPath, '.tenet', '.state'), { recursive: true });
+      fs.writeFileSync(path.join(projectPath, '.tenet', '.state', 'tenet.db'), 'fake-db', 'utf8');
+      execSync('git add -f .tenet/.state/tenet.db', { cwd: projectPath, stdio: 'ignore' });
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      detectTrackedStateFiles(projectPath);
+
+      expect(warnSpy).toHaveBeenCalled();
+      const message = warnSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      expect(message).toContain('tenet.db');
+      expect(message).toContain('git rm --cached --ignore-unmatch');
+      warnSpy.mockRestore();
+    });
+
+    it('also flags WAL sidecars when they are tracked', () => {
+      const projectPath = createTempDir();
+      execSync('git init', { cwd: projectPath, stdio: 'ignore' });
+      fs.mkdirSync(path.join(projectPath, '.tenet', '.state'), { recursive: true });
+      fs.writeFileSync(path.join(projectPath, '.tenet', '.state', 'tenet.db'), 'db');
+      fs.writeFileSync(path.join(projectPath, '.tenet', '.state', 'tenet.db-wal'), 'wal');
+      execSync('git add -f .tenet/.state/tenet.db .tenet/.state/tenet.db-wal', {
+        cwd: projectPath,
+        stdio: 'ignore',
+      });
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      detectTrackedStateFiles(projectPath);
+
+      const message = warnSpy.mock.calls.map((call) => String(call[0])).join('\n');
+      expect(message).toContain('tenet.db-wal');
+      warnSpy.mockRestore();
+    });
+
+    it('does not warn when .tenet/.state exists but is untracked', () => {
+      const projectPath = createTempDir();
+      execSync('git init', { cwd: projectPath, stdio: 'ignore' });
+      fs.mkdirSync(path.join(projectPath, '.tenet', '.state'), { recursive: true });
+      fs.writeFileSync(path.join(projectPath, '.tenet', '.state', 'tenet.db'), 'db');
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      detectTrackedStateFiles(projectPath);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('is a silent no-op outside a git work tree', () => {
+      const projectPath = createTempDir();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(() => detectTrackedStateFiles(projectPath)).not.toThrow();
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      warnSpy.mockRestore();
+    });
   });
 });
 
