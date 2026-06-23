@@ -42,7 +42,7 @@ EOF
 Then visit the GitHub Releases page, review the final draft, and click **Publish release**. That click triggers `.github/workflows/publish.yml`:
 1. Checks out the tagged commit.
 2. Verifies `package.json` version matches the tag.
-3. Runs typecheck + tests + build.
+3. Runs typecheck + lint + tests + build.
 4. Runs `npm publish --provenance` via OIDC.
 
 Total time: ~2-3 minutes after you click Publish.
@@ -121,7 +121,6 @@ Useful when the repo is temporarily unable to use Actions (outage, credential is
 ## What's NOT automated
 
 - **E2E canaries** (`make e2e-*`). They cost real money and are maintainer-discretion. Run before a release if the change is risky.
-- **Lint** (`make lint`). eslint isn't currently in devDeps; the workflow skips it. Add eslint + re-enable the lint step if desired.
 - **Version bump**. Still manual via `make bump-patch` or `make bump-month`. Intentional — we want the commit with the version change to be deliberate and reviewable.
 
 ## Verifying a successful release

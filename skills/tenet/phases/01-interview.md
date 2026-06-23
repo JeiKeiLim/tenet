@@ -158,7 +158,7 @@ When the user's requirements involve unfamiliar technologies, complex integratio
   - What was researched and why
   - Key findings (capabilities, limitations, compatibility)
   - Recommended approach based on findings
-  - Confidence tag: `[research-verified]` or `[research-inconclusive]`
+  - Confidence tag: `[scanned-not-verified]` (unproven) or `[decision-only]` (adopted)
 - Promote only durable, reusable facts to top-level `.tenet/knowledge/` via `tenet_update_knowledge(type="knowledge", title="{concern}")`.
 
 **Example research triggers during interview:**

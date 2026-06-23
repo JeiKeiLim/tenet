@@ -2,6 +2,7 @@
 
 **Created**: 2026-04-28
 **Status**: Design (locked, ready for implementation)
+**Update (2026-06-23)**: Agile mode has since been implemented (phases 02, 04, 07). The artifact paths and phase list below predate the document lifecycle (see `docs/planning/16_document_lifecycle.md`) — shipped agile mode uses run-local `.tenet/runs/<run-slug>/` artifacts, `visuals/` (not `mockup/`), and 8 phases including context bootstrap. Treat the layout/phase details below as historical design narrative.
 **Origin**: Obsidian inbox note `2026-04-21-tenet-agile-autonomous-loop-idea.md`
 **Visual references**: `12_agile_mode_design.html` (static diagrams), `13_agile_mode_simulator.html` (interactive walkthrough)
 
@@ -123,7 +124,7 @@ Critic + test critic + playwright_eval fire on every job, just as in autonomous 
 ## What's reused (everything else)
 
 - All 7 phases: interview · spec · mockup · harness · decomposition · execution · eval
-- All 17 MCP tools — notably:
+- All current MCP tools (19 at time of writing) — notably:
   - `tenet_init` — scaffold (unchanged)
   - `tenet_validate_clarity` — after interview (unchanged)
   - `tenet_compile_context` — each phase (unchanged; resolves the same single doc per feature)
