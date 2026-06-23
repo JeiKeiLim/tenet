@@ -213,7 +213,7 @@ Use `tenet_update_knowledge` for both reusable knowledge and session journal ent
 - `type="knowledge"` for facts future jobs or future features can reuse.
 - `type="journal"` for job/session history and failure attempts. Journals route to `.tenet/runs/<run-slug>/journal/`.
 
-Use confidence tags such as `[implemented-and-tested]`, `[implemented-not-tested]`, `[decision-only]`, `[scanned-not-verified]`, `[research-verified]`, or `[research-inconclusive]`.
+Use confidence tags such as `[implemented-and-tested]`, `[implemented-not-tested]`, `[decision-only]`, or `[scanned-not-verified]`. (For research notes, prefer `[scanned-not-verified]` when a claim is unproven and `[decision-only]` once it has been adopted.)
 
 ## Doctrine Maintenance
 

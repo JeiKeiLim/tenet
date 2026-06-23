@@ -2,6 +2,10 @@
 
 **Created**: 2026-04-17
 **Status**: Design
+**Update (2026-06-23)**: Names below changed when shipped:
+  - `tenet_request_remediation` → `tenet_report_blocking_finding` (tool-names.ts:29; used in skills/tenet/phases/05-execution-loop.md and 06-evaluation.md)
+  - `blocked_remediation_required` → `blocked_on_finding` (src/core/migrations.ts:52 rewrites legacy rows to the shipped name at runtime)
+  The body keeps the proposal names as historical design narrative.
 **Origin**: `tenet-manual-test-codex` 10-hour autonomous run retrospective (`TENET_PIPELINE_RETROSPECTIVE.md`, 2026-04-16)
 
 ---
@@ -330,7 +334,7 @@ None. `extra_args` is empty by default; today's behavior is preserved for existi
 
 ## Part 5 — Pre-approve Tenet MCP tools during `tenet init`
 
-**Origin:** On a fresh `tenet init`, every first invocation of every Tenet MCP tool triggers an approval prompt in the host agent (Claude Code, OpenCode, or Codex). Since Tenet has 17 MCP tools, this is 17 prompts per agent switch. Previously listed as a Round-3 open idea in `project_tenet_open_ideas.md`; promoting here.
+**Origin:** On a fresh `tenet init`, every first invocation of every Tenet MCP tool triggers an approval prompt in the host agent (Claude Code, OpenCode, or Codex). Since Tenet has 19 MCP tools (at time of writing), this is one prompt per tool per agent switch. Previously listed as a Round-3 open idea in `project_tenet_open_ideas.md`; promoting here.
 
 ### Problem
 
