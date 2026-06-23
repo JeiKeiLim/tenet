@@ -141,7 +141,7 @@ Read the relevant phase file before executing that phase. The phrase "read" mean
 3. Pre-spec research, spec, harness, readiness gate: `phases/02-spec-and-harness.md`
 4. Visual artifacts and prototypes: `phases/03-visuals.md`
 5. DAG decomposition and job registration: `phases/04-decomposition.md`
-6. Autonomous execution loop, report-only blocking findings, finding dispatch, and git behavior: `phases/05-execution-loop.md`
+6. Autonomous execution loop, run-completion doctrine drift review, report-only blocking findings, finding dispatch, and git behavior: `phases/05-execution-loop.md`
 7. Evaluation pipeline and failure handling: `phases/06-evaluation.md`
 8. Agile checkpoints and redirects: `phases/07-agile-checkpoints.md`
 
@@ -214,6 +214,16 @@ Use `tenet_update_knowledge` for both reusable knowledge and session journal ent
 - `type="journal"` for job/session history and failure attempts. Journals route to `.tenet/runs/<run-slug>/journal/`.
 
 Use confidence tags such as `[implemented-and-tested]`, `[implemented-not-tested]`, `[decision-only]`, `[scanned-not-verified]`, `[research-verified]`, or `[research-inconclusive]`.
+
+## Doctrine Maintenance
+
+`.tenet/project/**` is read by every run but never re-scanned, so it can drift stale silently. The lifecycle is prompt-driven — there is no dedicated tool:
+
+- During a run, a job that finds doctrine missing/stale/wrong writes a **doctrine-drift note** to the run journal (see `phases/05-execution-loop.md` → *Project Doctrine Write Boundary*).
+- At run completion (`tenet_continue()` → `all_done`), the orchestrator consolidates drift notes into per-document proposals appended to `.tenet/runs/<run-slug>/doctrine-proposals.md`. That file is append-only and survives compaction / a lost session. The loop **never blocks** on it.
+- To apply an accepted proposal, dispatch a `dev` doctrine-maintenance job via the existing `tenet_start_job` with `allow_project_doctrine_edits: true`, then re-run the bootstrap gate (`phases/00-context-bootstrap.md`).
+
+Normal jobs never edit `.tenet/project/**` directly — only an authorized doctrine-maintenance job does.
 
 ## Safety
 
