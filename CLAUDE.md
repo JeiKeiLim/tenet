@@ -65,8 +65,8 @@ The system has four layers:
 
 Tenet uses a document lifecycle layout. `tenet init` scaffolds only this layout; legacy top-level artifact directories only appear via migration (see `src/cli/init.ts` → `migrateLegacyDocuments`).
 
-- **Durable doctrine** — `.tenet/project/` (`overview.md`, `architecture.md`, `product.md`, `testing.md`, `design.md`, `design-components/`). Authored by the context-bootstrap phase (brownfield) or post-interview crystallization (greenfield); normal implementation jobs must not edit it.
-- **Per-run artifacts** — `.tenet/runs/<run-slug>/` where `<run-slug>` = `YYYY-MM-DD-<feature>`. Holds `interview.md`, `spec.md`, `harness.md`, `scenarios.md`, `decomposition.md`, plus `research/`, `journal/`, and `visuals/` subdirs.
+- **Durable doctrine** — `.tenet/project/` (`overview.md`, `architecture.md`, `product.md`, `testing.md`, `design.md`, `design-components/`). Authored by the context-bootstrap phase (brownfield) or post-interview crystallization (greenfield); normal implementation jobs must not edit it. Doctrine stays current via the run-end drift review: jobs flag stale doctrine as drift notes, the run consolidates them into `.tenet/runs/<run>/doctrine-proposals.md`, and an authorized `dev` job (`allow_project_doctrine_edits: true`) applies accepted proposals then re-runs the bootstrap gate.
+- **Per-run artifacts** — `.tenet/runs/<run-slug>/` where `<run-slug>` = `YYYY-MM-DD-<feature>`. Holds `interview.md`, `spec.md`, `harness.md`, `scenarios.md`, `decomposition.md`, `doctrine-proposals.md` (run-end doctrine-drift proposals, append-only), plus `research/`, `journal/`, and `visuals/` subdirs.
 - **Curated knowledge** — `.tenet/knowledge/` (durable, concern-oriented facts promoted via `tenet_update_knowledge`).
 - **Legacy evidence** — `.tenet/archive/legacy-v1/` (one-time migration target for pre-lifecycle top-level dirs: `spec/`, `interview/`, `harness/`, `decomposition/`, `journal/`, `visuals/`, `bootstrap/`, `steer/`, `knowledge/`, `DESIGN.md`). Reference-only, not active doctrine.
 - **Auto-generated from DB** — `.tenet/status/` (`status.md`, `job-queue.md`).
