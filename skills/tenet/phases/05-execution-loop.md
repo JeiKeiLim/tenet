@@ -45,6 +45,44 @@ Execute this sequence for every job cycle:
     `.tenet/status/job-queue.md` and `.tenet/status/status.md` are generated from MCP state transitions. Do not edit them manually to advance runtime.
 13. **Loop**: Return to Step 1.
 
+## Run Completion — Doctrine Drift Review
+
+Steps 1–13 are the **per-job** cycle. The loop exits when `tenet_continue()` returns `all_done: true` (no `next_job`, nothing running), or when agile mode reaches its final checkpoint. At run completion, **before** the final `tenet_get_status()` report, run the doctrine drift review.
+
+`.tenet/project/**` doctrine is read at the start of every run (`tenet_compile_context`) but never re-scanned, so once it drifts, every subsequent run starts on stale context. This step keeps it from silently rotting — and it never blocks the loop.
+
+1. **Collect drift notes.** Read the run's journal (`.tenet/runs/<run-slug>/journal/`) for any **doctrine-drift notes** written during the run (see *Project Doctrine Write Boundary* above).
+2. **If there are none, stop.** Doctrine is current — write no proposal, no overhead. Continue to the final report.
+3. **Consolidate.** For each affected `.tenet/project/**` file, read the current doctrine and weigh the drift notes against it; draft one consolidated proposal per file (merge related notes, drop contradictions).
+4. **Append the proposals** to `.tenet/runs/<run-slug>/doctrine-proposals.md` (create the file if absent). One section per proposal:
+
+   ```markdown
+   ## project/<file>.md — <short reason>
+   - status: proposed
+   - current_claim: ...
+   - observed_reality: ...
+   - proposed_change: ...
+   - rationale: ...
+   - source_notes: [drift-note titles from the journal]
+   ```
+
+   This file is **append-only** and lives with the run, so it survives compaction and a lost session — proposals are never silently dropped.
+5. **Never block.** In autonomous mode, state the count and path in the final report and continue — the user applies proposals between runs. In attended/agile mode you may offer to apply accepted proposals inline (see *Applying a proposal*). Do not stall the run waiting on a decision.
+
+### Applying a proposal
+
+Proposals are applied by a doctrine-maintenance job through the **existing** tools — there is no new tool for this. To apply an accepted proposal:
+
+```
+tenet_start_job(job_type="dev", params={
+  name: "doctrine maintenance: <file>",
+  prompt: "<the proposal's proposed_change, with current_claim + observed_reality as context>",
+  allow_project_doctrine_edits: true
+})
+```
+
+`allow_project_doctrine_edits: true` authorizes the `.tenet/project/**` edit and is eval-safe — the code critic's `scope_conflict` check honors it (see `phases/06-evaluation.md`). After the job passes eval, **re-run the bootstrap gate** (`phases/00-context-bootstrap.md`) to confirm doctrine is coherent, then set the proposal's `status: applied`. Doctrine is re-synthesized and re-gated, not raw-patched — that is what "maintained correctly" means.
+
 ## Operational Rules
 
 ### Use MCP Tools, Not Subagents
@@ -53,7 +91,14 @@ Dispatch work via `tenet_start_job`. Do not call subagents directly. Do not writ
 ### Project Doctrine Write Boundary
 Normal implementation, integration, eval, spec, decomposition, harness, and visual jobs must not edit `.tenet/project/**`. They may read project doctrine and write run-local evidence under `.tenet/runs/<run-slug>/**`.
 
-If a normal job discovers that project doctrine is missing, stale, or wrong, it should write the proposed update to the run-local journal or design/spec notes and mention it in the final report. Only explicit context-bootstrap, migration/bootstrap synthesis, document lifecycle cleanup, or direct user-requested doctrine jobs may edit `.tenet/project/**`.
+If a normal job discovers that project doctrine is missing, stale, or wrong, it must record a **doctrine-drift note** — it must NOT edit `.tenet/project/**`. Write the note to the run journal via `tenet_update_knowledge(type="journal", title="doctrine drift: <file>")` with these `findings` fields:
+
+- **doctrine_file** — which `.tenet/project/**` file is affected (e.g. `project/architecture.md`)
+- **current_claim** — what the doctrine currently asserts
+- **observed_reality** — what the code or run actually shows
+- **proposed_change** — the specific edit that would bring doctrine back in line
+
+Only explicit context-bootstrap, an authorized doctrine-maintenance job (`allow_project_doctrine_edits: true`), or direct user-requested doctrine work may edit `.tenet/project/**`. Drift notes are the input that keeps `.tenet/project/**` from silently rotting — they are collected into durable proposals at run completion (see **Run Completion — Doctrine Drift Review** below).
 
 ### Background Status Check Pattern
 `tenet_job_wait` returns instantly by default, or long-polls when `wait_seconds` is set. The orchestrator dispatches bounded waits as background tasks and waits between checks using exponential backoff: start at 30 seconds, multiply by 1.5× each cycle, cap at 120 seconds. Between checks:
