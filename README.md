@@ -106,7 +106,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
                          MCP Protocol
                              |
                     +--------v--------+
-                    |   MCP Server    |  18 tools (start_job, eval, steer, etc.)
+                    |   MCP Server    |  19 tools (start_job, eval, steer, etc.)
                     +--------+--------+
                              |
               +--------------+--------------+
@@ -116,8 +116,8 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
      | (DAG, retry|  | (SQLite+WAL)|  | (subprocess)|
      | heartbeat) |  |             |  |             |
      +------------+  +-------------+  +-------------+
-                                       claude --print
-                                       opencode run
+                                       claude --print --output-format json
+                                       opencode run --format json
                                        codex exec --sandbox workspace-write
 ```
 
@@ -125,7 +125,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 
 1. **Core** — Job orchestration with DAG execution, heartbeat stall detection, configurable retry logic, and server-ID crash recovery
 2. **Adapters** — Pluggable agent adapters that spawn CLI subprocesses. 120-minute default timeout, configurable.
-3. **MCP Server** — 18 tools via `@modelcontextprotocol/server`. Zod-validated inputs.
+3. **MCP Server** — 19 tools via `@modelcontextprotocol/server`. Zod-validated inputs.
 4. **CLI** — `init`, `serve`, `status`, `config` commands. Scaffolds `.tenet/`, copies skills to agent-specific locations, and runs explicit DB upgrades.
 
 ## CLI Reference
@@ -215,6 +215,7 @@ suppress it entirely.
 | `tenet_update_knowledge` | Write knowledge/journal entries |
 | `tenet_add_steer` | Submit a steer message (context/directive/emergency) |
 | `tenet_process_steer` | Acknowledge and act on steer messages |
+| `tenet_update_steer` | Retire resolved steers by id or sweep agent-context steers |
 | `tenet_health_check` | Verify system consistency |
 | `tenet_get_status` | Get current job counts and progress |
 
