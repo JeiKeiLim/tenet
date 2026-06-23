@@ -82,7 +82,7 @@ The code critic checks:
 - Does the implementation match the spec's intent?
 - Are any anti-scenarios violated?
 - Are there obvious gaps or missing edge cases?
-- Did the job edit `.tenet/project/**` without explicit context-bootstrap, doctrine-maintenance, or direct user authorization? If yes, fail with `category: "scope_conflict"`.
+- Did the job edit `.tenet/project/**` without authorization? Authorization = the job was dispatched with `allow_project_doctrine_edits: true` (context-bootstrap, or a doctrine-maintenance job — see `phases/05-execution-loop.md` → *Applying a proposal*), or a direct user request. If edits are unauthorized, fail with `category: "scope_conflict"`.
 
 **Zero-findings rule**: If the critic finds nothing, it must re-analyze using an alternate attack vector like security, performance, or concurrency. Zero findings trigger a mandatory second pass.
 

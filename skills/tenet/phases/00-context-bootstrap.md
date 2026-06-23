@@ -14,7 +14,7 @@ The gate passes only when all required files exist and are usable:
 - `.tenet/project/testing.md`
 - `.tenet/project/design.md`
 
-Fail the gate when `.tenet/project/` is missing, any required file is missing, or a required file is empty, placeholder-only, or an obvious template. Do not score documents as thin, stale, incomplete, or improvable. Those judgments belong to explicit lifecycle maintenance, not bootstrap.
+Fail the gate when `.tenet/project/` is missing, any required file is missing, or a required file is empty, placeholder-only, or an obvious template. Do not score documents as thin, stale, incomplete, or improvable. Those judgments belong to explicit lifecycle maintenance, not bootstrap. That lifecycle is the **doctrine drift review** at run completion (`phases/05-execution-loop.md`): jobs flag stale doctrine as drift notes, the run end consolidates them into proposals under `.tenet/runs/<run>/doctrine-proposals.md`, and an authorized doctrine-maintenance job (`allow_project_doctrine_edits: true`) applies accepted ones and **re-runs this gate** to confirm coherence.
 
 When the gate fails, stop normal Tenet work and run this phase. Do not proceed to interview, spec, decomposition, execution, or eval until the gate passes.
 
