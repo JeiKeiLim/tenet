@@ -23,7 +23,7 @@ Before writing the spec, conduct comprehensive research on the technologies, API
 **Save ALL research results:**
 - Write raw or run-specific findings to `.tenet/runs/{run_slug}/research/{topic}.md`
 - Include: what was researched, key findings, limitations discovered, recommended approach
-- Tag with `[research-verified]` confidence level
+- Tag with `[scanned-not-verified]` confidence level
 - Promote only durable reusable facts to top-level `.tenet/knowledge/` via `tenet_update_knowledge(type="knowledge", title="{concern}")`
 - These become reference material for the current run; curated knowledge becomes reference material for future runs
 
