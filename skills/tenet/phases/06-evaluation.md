@@ -32,12 +32,12 @@ If the harness/spec says browser or visual exploration is required, missing Play
 
 ## Parallel vs Sequential Critics
 
-The three critic jobs (code critic, test critic, Playwright eval) may run **in parallel** or **sequentially**, decided by the readiness gate verdict (`eval_parallel_safe:{feature}` in the config table):
+The configured critic jobs may run **in parallel** or **sequentially**, decided by the readiness gate verdict (`eval_parallel_safe:{feature}` in the config table). The critic set comes from `.tenet/critics.json` — 3 built-in by default (code critic, test critic, interaction-e2e), plus any project-defined custom critics (see `../critics.md`):
 
 - **Parallel** (verdict `true`) — pure libraries, CLIs, data pipelines with no shared mutable state. Critics start concurrently; completion time ≈ slowest single critic.
-- **Sequential** (verdict `false` or missing) — stateful web apps where critics would collide on shared state (DB rows, sessions, rate-limit counters, ports, Playwright lock dirs). Critics run code → test → playwright. The caller still receives all three job IDs up front; job-manager auto-dispatches each downstream critic when its predecessor completes.
+- **Sequential** (verdict `false` or missing) — stateful web apps where critics would collide on shared state (DB rows, sessions, rate-limit counters, ports, Playwright lock dirs). Critics run in roster order (code → test → playwright by default). The caller receives every critic's job id up front in `jobs[]`; job-manager auto-dispatches each downstream critic when its predecessor completes.
 
-`tenet_start_eval` reads the verdict automatically — no orchestrator code change needed. If the verdict is missing, Tenet defaults to sequential (safe fallback).
+`tenet_start_eval` reads the verdict automatically — no orchestrator code change needed. If the verdict is missing, Tenet defaults to sequential (safe fallback). Disabling a built-in or adding a custom critic in `.tenet/critics.json` changes which (and how many) critics run; the blocking-finding resume gate tracks the same configured set, so disabling a critic does not strand a blocked parent.
 
 ## The 5 Evaluation Stages
 
@@ -215,4 +215,4 @@ For CLI/API/library projects, do not force Playwright:
 **FAIL**: Any scripted test fails OR exploratory testing finds visual/behavioral bugs. Retry or report a blocking finding with screenshots and findings as evidence.
 
 ## Anti-Skip Enforcement
-Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode requires Stage 3 (code critic), Stage 4 (test critic), and Stage 5 (agent-driven e2e). Both critics run in separate agent sessions with no access to the author's reasoning. The author cannot evaluate their own work.
+Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode runs every enabled critic — Stage 3 (code critic), Stage 4 (test critic), Stage 5 (interaction e2e), plus any custom critics enabled in `.tenet/critics.json`. All critics run in separate agent sessions with no access to the author's reasoning. The author cannot evaluate their own work.

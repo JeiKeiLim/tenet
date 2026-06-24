@@ -12,7 +12,7 @@
 You: "Add social features — reactions, badges, user profiles, share cards"
 Tenet: interviews you, writes the spec, generates visual mockups,
        decomposes into a dependency graph, implements each job,
-       asks workers to commit per job, evaluates with 3 independent critics,
+       asks workers to commit per job, evaluates with independent critics (3 built-in, configurable),
        and loops for 6+ hours until everything passes.
 ```
 
@@ -22,7 +22,7 @@ AI coding agents are powerful but short-lived. They lose context, drift off-spec
 
 - **Structured phases** — Context bootstrap, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. Full mode runs all of them; Standard skips the interview and Quick skips interview/spec/decomposition (see Execution Modes).
 - **DAG-based job orchestration** — Dependencies are explicit. Parallel jobs run in parallel. Blocked jobs wait.
-- **3-critic evaluation pipeline** — Code critic, Test critic, and Playwright e2e eval. All independent, all with fresh context (no author bias). All findings are blocking.
+- **Configurable critic pipeline** — 3 built-in critics by default (code, test, interaction-e2e), plus project-defined custom critics via `.tenet/critics.json`. All independent, all with fresh context (no author bias). All findings are blocking.
 - **Crash recovery** — Server-ID-based orphan detection. If the MCP server dies, jobs auto-retry on restart.
 - **Agent-agnostic** — Works with Claude Code, OpenCode, and Codex. Switch agents mid-project without losing state.
 - **Persistent state** — Versioned SQLite + WAL mode. Jobs, events, steer messages, and config survive crashes.
@@ -64,12 +64,12 @@ npx @jeikeilim/tenet init --agent claude-code --skip-playwright-check
 | **3. Visuals** | Generates architecture diagrams, UI mockups, DESIGN.md |
 | **4. Decomposition** | Breaks spec into a dependency graph (DAG) of jobs |
 | **5. Execution Loop** | Implements each job, prompts per-job commits, evaluates, retries on failure |
-| **6. Evaluation** | 3 independent critics: code, tests, and Playwright e2e |
+| **6. Evaluation** | Independent critics: code, tests, interaction-e2e (+ project-defined custom critics) |
 | **7. Agile Checkpoints** | Handles plan/use checkpoints and redirect loops in agile mode |
 
 ### The Evaluation Pipeline
 
-Every completed job faces three independent critics, each with fresh context and no access to the author's reasoning:
+Every completed job faces the configured critics — 3 built-in by default (code, test, interaction-e2e), plus any project-defined custom critics from `.tenet/critics.json`. Each runs with fresh context and no access to the author's reasoning:
 
 ```
 Job Complete
@@ -77,6 +77,7 @@ Job Complete
     +---> Code Critic    (spec alignment, security, edge cases)
     +---> Test Critic     (oracle problem detection, behavioral coverage)
     +---> Playwright Eval (scripted tests + agent-driven exploratory e2e)
+    +---> [custom critics] (repo-specific: security, a11y, API contract, ...)
     |
     ALL must pass --> Next job
     ANY fails     --> Retry with failure context

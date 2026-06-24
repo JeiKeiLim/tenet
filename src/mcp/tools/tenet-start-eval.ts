@@ -1,6 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
+import { loadCriticRoster, type ResolvedCritic } from '../../core/critic-roster.js';
 import { StateStore } from '../../core/state-store.js';
+import type { Job, JobType } from '../../types/index.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const buildJobScopeSection = (stateStore: StateStore, jobId: string): string => {
@@ -210,6 +214,75 @@ const TEST_CRITIC_PREAMBLE = [
   '',
 ].join('\n');
 
+type CriticDispatch = {
+  jobType: JobType;
+  evalStage: string;
+  prompt: string;
+};
+
+/**
+ * Resolve one roster critic into a dispatchable job spec (job type + eval stage
+ * + full prompt). Returns null when the critic should be skipped:
+ * - unknown built-in id (shouldn't happen — resolver guards it), or
+ * - a custom critic whose `prompt_file` is missing/unreadable.
+ *
+ * The job scope (eval-only-within-this-scope preamble) is prepended to every
+ * critic; built-ins append their fixed preamble, customs append their prompt
+ * file. Built-ins don't receive the implementation output verbatim except where
+ * their preamble expects it; customs always get the output so the prompt file
+ * can instruct the critic to use it.
+ */
+const buildCriticDispatch = (
+  critic: ResolvedCritic,
+  jobScope: string,
+  outputStr: string,
+  projectPath: string,
+): CriticDispatch | null => {
+  if (critic.builtin) {
+    switch (critic.id) {
+      case 'code_critic':
+        return {
+          jobType: critic.jobType,
+          evalStage: critic.stage,
+          prompt: jobScope + CODE_CRITIC_PREAMBLE + '## Implementation Output\n\n' + outputStr,
+        };
+      case 'test_critic':
+        return {
+          jobType: critic.jobType,
+          evalStage: critic.stage,
+          prompt: jobScope + TEST_CRITIC_PREAMBLE + '## Test Files and Spec\n\n' + outputStr,
+        };
+      case 'playwright_eval':
+        return {
+          jobType: critic.jobType,
+          evalStage: critic.stage,
+          prompt: jobScope + PLAYWRIGHT_EVAL_PREAMBLE,
+        };
+      default:
+        return null;
+    }
+  }
+
+  // Custom critic: read its prompt file (project-relative or absolute).
+  if (!critic.promptFile) {
+    return null;
+  }
+  const absPromptPath = path.isAbsolute(critic.promptFile)
+    ? critic.promptFile
+    : path.join(projectPath, critic.promptFile);
+  let promptBody: string;
+  try {
+    promptBody = fs.readFileSync(absPromptPath, 'utf8');
+  } catch {
+    return null;
+  }
+  return {
+    jobType: critic.jobType,
+    evalStage: critic.stage,
+    prompt: jobScope + promptBody + '\n## Implementation Output\n\n' + outputStr,
+  };
+};
+
 const resolveEvalParallelSafe = (stateStore: StateStore, feature?: string): boolean => {
   if (!feature) {
     // No feature → default to sequential (safe fallback)
@@ -228,16 +301,17 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
     'tenet_start_eval',
     {
       description:
-        'Start evaluation pipeline for a completed job. Dispatches THREE eval jobs: ' +
-        '(1) Code critic — independent purpose alignment check (spec + diff only, no author reasoning), ' +
-        '(2) Test critic — reviews whether tests are sufficient to prove features work (spec + tests only), ' +
-        '(3) Interaction e2e eval — runs the public-surface e2e checks declared by the harness; ' +
-        'uses scripted Playwright plus Playwright MCP only when browser/visual verification applies. ' +
-        'All three evaluate ONLY against the specific job\'s scope, not the full spec. ' +
-        'Execution mode (parallel vs sequential) is decided by the readiness verdict stored at ' +
-        'eval_parallel_safe:{feature}. When the verdict is missing or false, critics run sequentially ' +
-        'to avoid contention on shared state (DB, sessions, rate limits, ports). ' +
-        'Returns all three job IDs. Wait for all three to complete. ALL must pass.',
+        'Start evaluation pipeline for a completed job. Dispatches the configured critics from ' +
+        '.tenet/critics.json (3 built-in by default: code critic, test critic, interaction-e2e; plus any ' +
+        'user-defined custom critics). Each critic runs in an independent context with no author reasoning ' +
+        'and evaluates ONLY against the specific job\'s scope, not the full spec. ' +
+        'Code critic — purpose alignment check (spec + diff). Test critic — test sufficiency (spec + tests). ' +
+        'Interaction-e2e — public-surface e2e checks declared by the harness; uses scripted Playwright plus ' +
+        'Playwright MCP only when browser/visual verification applies. Custom critics use their own prompt ' +
+        'under .tenet/critics/. Execution mode (parallel vs sequential) is decided by the readiness verdict ' +
+        'stored at eval_parallel_safe:{feature}; when missing or false, critics run sequentially in roster ' +
+        'order to avoid contention on shared state (DB, sessions, rate limits, ports). ' +
+        'Returns a jobs[] list of every dispatched critic (variable length). Wait for all to complete. ALL must pass.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
         output: z.record(z.string(), z.unknown()),
@@ -252,6 +326,7 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
     async ({ job_id, output, feature }) => {
       const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
       const jobScope = buildJobScopeSection(stateStore, job_id);
+      const projectPath = stateStore.projectPath;
 
       const resolvedFeature = feature ?? (() => {
         const source = stateStore.getJob(job_id);
@@ -260,94 +335,103 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
 
       const parallelSafe = resolveEvalParallelSafe(stateStore, resolvedFeature);
 
-      const codeCriticParams = {
-        source_job_id: job_id,
-        eval_stage: 'code_critic',
-        name: `code_critic for ${job_id.slice(0, 8)}`,
-        prompt: jobScope + CODE_CRITIC_PREAMBLE + '## Implementation Output\n\n' + outputStr,
-        output,
-        ...(resolvedFeature ? { feature: resolvedFeature } : {}),
-      };
+      // Resolve the roster and build the dispatch list. A critic whose prompt
+      // can't be built (e.g. a custom critic with a missing prompt file) is
+      // skipped and reported, never fatal.
+      const { critics: roster, warning: rosterWarning } = loadCriticRoster(projectPath);
+      const enabledCritics = roster.filter((c) => c.enabled);
+      const dispatchList: CriticDispatch[] = [];
+      const skippedCritics: string[] = [];
+      for (const critic of enabledCritics) {
+        const dispatch = buildCriticDispatch(critic, jobScope, outputStr, projectPath);
+        if (!dispatch) {
+          skippedCritics.push(critic.id);
+          continue;
+        }
+        dispatchList.push(dispatch);
+      }
 
-      const testCriticParams = {
-        source_job_id: job_id,
-        eval_stage: 'test_critic',
-        name: `test_critic for ${job_id.slice(0, 8)}`,
-        prompt: jobScope + TEST_CRITIC_PREAMBLE + '## Test Files and Spec\n\n' + outputStr,
-        output,
-        ...(resolvedFeature ? { feature: resolvedFeature } : {}),
-      };
+      // Stages the resume gate waits for = exactly the stages we dispatched.
+      const expectedEvalStages = dispatchList.map((d) => d.evalStage);
 
-      const playwrightParams = {
+      const buildParams = (d: CriticDispatch) => ({
         source_job_id: job_id,
-        eval_stage: 'playwright_eval',
-        name: `playwright_eval for ${job_id.slice(0, 8)}`,
-        prompt: jobScope + PLAYWRIGHT_EVAL_PREAMBLE,
+        eval_stage: d.evalStage,
+        name: `${d.evalStage} for ${job_id.slice(0, 8)}`,
+        prompt: d.prompt,
         output,
+        expected_eval_stages: expectedEvalStages,
         ...(resolvedFeature ? { feature: resolvedFeature } : {}),
-      };
+      });
 
-      let codeCriticJob;
-      let testCriticJob;
-      let playwrightEvalJob;
+      type Dispatched = { role: string; id: string; status: Job['status']; parentJobId?: string };
+      const dispatched: Dispatched[] = [];
+
+      if (dispatchList.length === 0) {
+        return jsonResult({
+          jobs: [],
+          eval_parallel_safe: parallelSafe,
+          execution_mode: parallelSafe ? 'parallel' : 'sequential',
+          critics_dispatched: 0,
+          ...(rosterWarning ? { roster_warning: rosterWarning } : {}),
+          ...(skippedCritics.length ? { skipped_critics: skippedCritics } : {}),
+          message:
+            'No critics dispatched — the roster has no enabled critics with readable prompts. Eval cannot pass without at least one critic.',
+        });
+      }
 
       if (parallelSafe) {
-        codeCriticJob = jobManager.startJob('critic_eval', codeCriticParams);
-        testCriticJob = jobManager.startJob('eval', testCriticParams);
-        playwrightEvalJob = jobManager.startJob('playwright_eval', playwrightParams);
+        for (const d of dispatchList) {
+          const job = jobManager.startJob(d.jobType, buildParams(d));
+          dispatched.push({ role: d.evalStage, id: job.id, status: job.status });
+        }
       } else {
-        // Sequential: dispatch code critic; register test critic + playwright as pending
-        // with auto_dispatch_on_parent_complete so job-manager chains them on success.
-        codeCriticJob = jobManager.startJob('critic_eval', codeCriticParams);
-        testCriticJob = jobManager.createPendingJob(
-          'eval',
-          { ...testCriticParams, auto_dispatch_on_parent_complete: true },
-          codeCriticJob.id,
-        );
-        playwrightEvalJob = jobManager.createPendingJob(
-          'playwright_eval',
-          { ...playwrightParams, auto_dispatch_on_parent_complete: true },
-          testCriticJob.id,
-        );
+        // Sequential: start the first critic; register the rest as pending with
+        // auto_dispatch_on_parent_complete so job-manager chains them in roster order.
+        let prevId: string | undefined;
+        for (const d of dispatchList) {
+          if (prevId === undefined) {
+            const job = jobManager.startJob(d.jobType, buildParams(d));
+            dispatched.push({ role: d.evalStage, id: job.id, status: job.status });
+            prevId = job.id;
+          } else {
+            const job = jobManager.createPendingJob(
+              d.jobType,
+              { ...buildParams(d), auto_dispatch_on_parent_complete: true },
+              prevId,
+            );
+            dispatched.push({ role: d.evalStage, id: job.id, status: job.status, parentJobId: job.parentJobId });
+            prevId = job.id;
+          }
+        }
       }
 
       return jsonResult({
-        code_critic_job_id: codeCriticJob.id,
-        test_critic_job_id: testCriticJob.id,
-        playwright_eval_job_id: playwrightEvalJob.id,
-        jobs: [
-          {
-            role: 'code_critic',
-            job_id: codeCriticJob.id,
-            status: codeCriticJob.status,
-            lifecycle: codeCriticJob.status === 'running' ? 'running' : codeCriticJob.status,
-            next_tool: 'tenet_job_wait',
-            next_args: { job_id: codeCriticJob.id, wait_seconds: 30 },
-          },
-          {
-            role: 'test_critic',
-            job_id: testCriticJob.id,
-            status: testCriticJob.status,
-            lifecycle: parallelSafe ? 'running' : 'queued_after_parent',
-            parent_job_id: testCriticJob.parentJobId,
-            next_tool: 'tenet_job_wait',
-            next_args: { job_id: testCriticJob.id, wait_seconds: 30 },
-          },
-          {
-            role: 'playwright_eval',
-            job_id: playwrightEvalJob.id,
-            status: playwrightEvalJob.status,
-            lifecycle: parallelSafe ? 'running' : 'queued_after_parent',
-            parent_job_id: playwrightEvalJob.parentJobId,
-            next_tool: 'tenet_job_wait',
-            next_args: { job_id: playwrightEvalJob.id, wait_seconds: 30 },
-          },
-        ],
+        jobs: dispatched.map(({ role, id, status, parentJobId }, idx) => ({
+          role,
+          job_id: id,
+          status,
+          lifecycle: parallelSafe
+            ? status === 'running'
+              ? 'running'
+              : status
+            : idx === 0
+              ? status === 'running'
+                ? 'running'
+                : status
+              : 'queued_after_parent',
+          ...(parentJobId ? { parent_job_id: parentJobId } : {}),
+          next_tool: 'tenet_job_wait',
+          next_args: { job_id: id, wait_seconds: 30 },
+        })),
         eval_parallel_safe: parallelSafe,
         execution_mode: parallelSafe ? 'parallel' : 'sequential',
+        critics_dispatched: dispatched.length,
+        ...(rosterWarning ? { roster_warning: rosterWarning } : {}),
+        ...(skippedCritics.length ? { skipped_critics: skippedCritics } : {}),
         message: parallelSafe
-          ? 'Code critic, test critic, and Playwright eval dispatched in parallel. Wait for all three using tenet_job_wait + tenet_job_result. ALL must pass.'
-          : 'Critics dispatched sequentially (code → test → playwright) based on readiness verdict. Wait for each via tenet_job_wait + tenet_job_result. ALL must pass.',
+          ? `${dispatched.length} critic(s) dispatched in parallel. Wait for all via tenet_job_wait + tenet_job_result. ALL must pass.`
+          : `Critics dispatched sequentially in roster order. Wait for each via tenet_job_wait + tenet_job_result. ALL must pass.`,
       });
     },
   );
