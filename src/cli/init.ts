@@ -15,6 +15,7 @@ const REQUIRED_DIRS = [
   'knowledge',
   'status',
   'state-snapshot',
+  'critics',
 ];
 
 /**
@@ -63,6 +64,30 @@ This directory is for portable Tenet SQLite snapshots that are safe to track in 
 - Do not track \`.tenet/.state/\`; it is the live SQLite WAL database.
 `;
 
+/**
+ * Default critic roster. The 3 built-ins are enabled (today's behavior); the
+ * disabled `security` entry documents the custom-critic shape — flip `enabled`
+ * to true and write its prompt file under .tenet/critics/ to activate it.
+ * See skills/tenet/critics.md (the critic designer) for how to author one.
+ */
+const CRITICS_ROSTER_TEMPLATE = `{
+  "version": 1,
+  "critics": [
+    { "id": "code_critic", "builtin": true, "enabled": true },
+    { "id": "test_critic", "builtin": true, "enabled": true },
+    { "id": "playwright_eval", "builtin": true, "enabled": true },
+    {
+      "id": "security",
+      "builtin": false,
+      "enabled": false,
+      "stage": "security_critic",
+      "job_type": "critic_eval",
+      "prompt_file": ".tenet/critics/security.md"
+    }
+  ]
+}
+`;
+
 const TEMPLATE_FILES: Record<string, string> = {
   'project/overview.md': `# Project Overview
 
@@ -98,6 +123,8 @@ Bootstrap placeholder. Run Tenet context bootstrap to synthesize the current use
   'status/job-queue.md': '# Job Queue\n\n',
   'status/backlog.md': '# Backlog\n\n',
   'state-snapshot/README.md': PORTABLE_STATE_README,
+  'critics.json': CRITICS_ROSTER_TEMPLATE,
+  'critics/.gitkeep': '',
 };
 
 const REQUIRED_TENET_GITIGNORE_LINES = [

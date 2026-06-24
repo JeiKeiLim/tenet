@@ -304,4 +304,4 @@ When slice 2 fires later, the registration call would include only slice-2-* job
 - Section 3 (acceptance test generation from scenarios) — tests are still generated upfront, still mandatory. Tagging by slice is the only addition.
 - Section 5 (integration test checkpoints) — still required; agile mode just adds per-slice granularity on top.
 - Section 7 (execution protocol) — same MCP loop within a slice. The orchestrator's checkpoint pauses (steps 4 and 5 of the agile rollout) sit *outside* the MCP loop, between slice fires.
-- Per-job eval (critic + test critic + playwright_eval, defined in `phases/06-evaluation.md`) fires on every job, in both modes.
+- Per-job eval (the configured critics from `.tenet/critics.json`, defined in `phases/06-evaluation.md`) fires on every job, in both modes.

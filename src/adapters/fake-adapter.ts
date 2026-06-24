@@ -147,17 +147,21 @@ export const matchers = {
 
   /** Match when the prompt mentions the given eval stage. */
   evalStage:
-    (stage: 'code_critic' | 'test_critic' | 'playwright_eval' | 'readiness_validation'): FixturePredicate =>
+    (stage: string): FixturePredicate =>
     (inv) => {
       // eval_stage isn't on AgentInvocation directly — it's embedded in the prompt
       // via tenet_start_eval's preambles ("## Code Critic ...") / validate-readiness rubric.
+      // Known built-in stages use dedicated markers; custom critic stages fall back
+      // to matching the stage name itself (custom prompts are user-authored under
+      // .tenet/critics/, so tests can also just use `promptContains`).
       const markers: Record<string, string[]> = {
         code_critic: ['Code Critic', '"stage": "code_critic"'],
         test_critic: ['Test Critic', '"stage": "test_critic"'],
         playwright_eval: ['Playwright', 'PLAYWRIGHT EVAL'],
         readiness_validation: ['IMPLEMENTATION READINESS', 'readiness'],
       };
-      return markers[stage].some((m) => inv.prompt.includes(m));
+      const candidates = markers[stage] ?? [stage];
+      return candidates.some((m) => inv.prompt.includes(m));
     },
 
   /** Match when the prompt looks like a dev job (Deliverable Requirements preamble). */

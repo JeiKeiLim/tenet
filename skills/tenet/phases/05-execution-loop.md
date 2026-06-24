@@ -161,7 +161,7 @@ When a report-only job's context is compiled, `tenet_compile_context` prepends a
 2. Agent calls `tenet_report_blocking_finding(job_id=<self>, finding=..., why_it_blocks_report=..., recommended_followup=..., suspected_files=[...])`.
 3. Tenet marks the agent's job as `blocked_on_finding` and spawns a linked child `dev` follow-up job.
 4. The report-only worker stops report-only work and does not edit files for the finding.
-5. Orchestrator processes the child like any other dev job: dispatch → eval via `tenet_start_eval` → if all three critics pass, Tenet **auto-resumes** the report-only parent (flips it from `blocked_on_finding` → `pending`).
+5. Orchestrator processes the child like any other dev job: dispatch → eval via `tenet_start_eval` → if all configured critics pass, Tenet **auto-resumes** the report-only parent (flips it from `blocked_on_finding` → `pending`). The gate tracks the configured critic set, so disabling a built-in or adding a custom critic does not strand a blocked parent.
 6. Orchestrator picks up the parent via `tenet_continue()` and redispatches it with fresh context (it now sees the post-fix state).
 
 ### Why this shape
@@ -208,7 +208,7 @@ Plain "just retry" wastes cycles on test/harness/evidence bugs — route by cate
 
 ## Eval-mode decision (reminder)
 
-The three critics dispatched by `tenet_start_eval` run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step — just call `tenet_start_eval` and wait for all three job IDs it returns.
+The critics dispatched by `tenet_start_eval` (the configured set from `.tenet/critics.json`) run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step — just call `tenet_start_eval` and wait for every job id in the `jobs[]` list it returns.
 
 ## Git-Aware Pipeline
 

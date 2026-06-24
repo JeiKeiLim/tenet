@@ -174,7 +174,8 @@ Examples:
 - Readiness gate: after spec/harness/scenarios and required visuals, call `tenet_validate_readiness` with exact `artifact_paths` and resolve blockers before decomposition.
 - Plan/use checkpoints: in agile mode, block until the user responds with `approve`, `redirect: ...`, `cancel`, or `done` as defined in `phases/07-agile-checkpoints.md`.
 - Pre-execution gate: before dispatching a DAG or slice DAG, summarize mode, job count, key spec decisions, and harness constraints. Ask for confirmation unless the user explicitly asked to start without oversight.
-- Eval gate: after every completed job, call `tenet_start_eval(...)` and wait according to the returned `execution_mode`. All returned eval jobs must pass.
+- Eval gate: after every completed job, call `tenet_start_eval(...)` and wait according to the returned `execution_mode`. The critic set comes from `.tenet/critics.json` (3 built-in by default; the project may disable any and add custom critics). All returned eval jobs must pass.
+- To add a repo-specific critic (security, a11y, API contract, etc.), follow `critics.md` (the critic designer) — it produces the roster entry + prompt file so you don't hand-write prompts.
 
 ## Execution Rules
 
@@ -183,7 +184,7 @@ Read `phases/05-execution-loop.md` before starting execution.
 - Use Tenet MCP tools only. Do not call host subagents directly and do not manually implement job code during the execution loop.
 - Dispatch `tenet_job_wait` as background/non-blocking status checks with backoff. Stay responsive to user steering between checks.
 - Pass the original job ID to `tenet_start_eval`; pass `feature` when known.
-- `tenet_start_eval` may return parallel or sequential eval execution. Wait according to the returned job IDs and `execution_mode`; do not assume all critics are already running.
+- `tenet_start_eval` dispatches the configured critics and returns them as a variable-length `jobs[]` list (plus `execution_mode`). Wait on every job in that list; do not assume a fixed count or that all critics are already running.
 - Treat all eval failures as blocking for the current job or report-only parent.
 - Prefer `tenet_retry_job(job_id, enhanced_prompt)` for failed implementation jobs.
 - Use `tenet_report_blocking_finding` only for report-only jobs that discover blocking findings they must not fix directly.
