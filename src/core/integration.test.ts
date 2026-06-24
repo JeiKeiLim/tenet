@@ -98,6 +98,13 @@ const parseResult = (r: CallToolResult): Record<string, unknown> => {
   return JSON.parse(first.text);
 };
 
+const jobId = (parsed: Record<string, unknown>, role: string): string => {
+  const jobs = parsed.jobs as Array<Record<string, unknown>>;
+  const entry = jobs.find((j) => j.role === role);
+  if (!entry) throw new Error(`no dispatched critic with role '${role}'`);
+  return entry.job_id as string;
+};
+
 afterEach(() => {
   while (stores.length > 0) stores.pop()?.close();
   while (tempDirs.length > 0) {
@@ -182,13 +189,13 @@ describe('integration: sequential critic chain', () => {
     expect(parsed.execution_mode).toBe('sequential');
 
     // Sequentially: code critic starts running immediately, others pending with parent
-    await manager.waitForJob(parsed.code_critic_job_id as string, null, 5_000);
-    await manager.waitForJob(parsed.test_critic_job_id as string, null, 5_000);
-    await manager.waitForJob(parsed.playwright_eval_job_id as string, null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'playwright_eval'), null, 5_000);
 
-    expect(store.getJob(parsed.code_critic_job_id as string)?.status).toBe('completed');
-    expect(store.getJob(parsed.test_critic_job_id as string)?.status).toBe('completed');
-    expect(store.getJob(parsed.playwright_eval_job_id as string)?.status).toBe('completed');
+    expect(store.getJob(jobId(parsed, 'code_critic'))?.status).toBe('completed');
+    expect(store.getJob(jobId(parsed, 'test_critic'))?.status).toBe('completed');
+    expect(store.getJob(jobId(parsed, 'playwright_eval'))?.status).toBe('completed');
   });
 
   it('B2: safe verdict → 3 critics launch in parallel', async () => {
@@ -214,14 +221,14 @@ describe('integration: sequential critic chain', () => {
     expect(parsed.execution_mode).toBe('parallel');
 
     // All three should be running (or just-completed) — none were left pending waiting for a parent.
-    const test = store.getJob(parsed.test_critic_job_id as string);
-    const play = store.getJob(parsed.playwright_eval_job_id as string);
+    const test = store.getJob(jobId(parsed, 'test_critic'));
+    const play = store.getJob(jobId(parsed, 'playwright_eval'));
     expect(test?.parentJobId).toBeUndefined();
     expect(play?.parentJobId).toBeUndefined();
 
-    await manager.waitForJob(parsed.code_critic_job_id as string, null, 5_000);
-    await manager.waitForJob(parsed.test_critic_job_id as string, null, 5_000);
-    await manager.waitForJob(parsed.playwright_eval_job_id as string, null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'playwright_eval'), null, 5_000);
   });
 });
 

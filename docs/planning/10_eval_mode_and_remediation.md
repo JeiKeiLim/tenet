@@ -6,6 +6,8 @@
   - `tenet_request_remediation` → `tenet_report_blocking_finding` (tool-names.ts:29; used in skills/tenet/phases/05-execution-loop.md and 06-evaluation.md)
   - `blocked_remediation_required` → `blocked_on_finding` (src/core/migrations.ts:52 rewrites legacy rows to the shipped name at runtime)
   The body keeps the proposal names as historical design narrative.
+**Update (2026-06-25)**: The critic set is no longer fixed at 3. Critics are now configurable via `.tenet/critics.json` (3 built-in by default + custom critics; see `skills/tenet/critics.md`). "The 3 critic jobs" / "all three" below should be read as "the configured critics" — the parallel/sequential dispatch and the blocking-resume gate both track whatever the roster enables. The `expected_eval_stages` the gate waits for is stamped onto each critic job by `tenet_start_eval`.
+
 **Origin**: `tenet-manual-test-codex` 10-hour autonomous run retrospective (`TENET_PIPELINE_RETROSPECTIVE.md`, 2026-04-16)
 
 ---

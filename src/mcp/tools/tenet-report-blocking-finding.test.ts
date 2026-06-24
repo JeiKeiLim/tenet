@@ -292,6 +292,102 @@ describe('tenet_report_blocking_finding', () => {
     expect(store.getJob(reportJob.id)?.status).toBe('pending');
   });
 
+  it('auto-resumes parent when a disabled critic shrinks expected_eval_stages', async () => {
+    const { store, manager, handler } = createHarness();
+
+    const reportJob = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const result = await handler({
+      job_id: reportJob.id,
+      finding: 'harness flaky',
+      why_it_blocks_report: 'acceptance report would be unreliable',
+      recommended_followup: 'cleanup hook',
+    });
+    const parsed = parseResult(result);
+    const childId = parsed.child_job_id as string;
+
+    await manager.waitForJob(childId, null, 5_000);
+    expect(store.getJob(reportJob.id)?.status).toBe('blocked_on_finding');
+
+    // Project disabled the playwright critic, so only code + test run.
+    // expected_eval_stages must reflect that, or the gate would wait for a 3rd that never comes.
+    const expected = ['code_critic', 'test_critic'];
+    const codeCritic = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      expected_eval_stages: expected,
+      prompt: 'code critique',
+    });
+    const testCritic = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      expected_eval_stages: expected,
+      prompt: 'test critique',
+    });
+
+    await manager.waitForJob(codeCritic.id, null, 5_000);
+    await manager.waitForJob(testCritic.id, null, 5_000);
+
+    // Only two critics dispatched, both passed → parent resumes despite no playwright critic.
+    expect(store.getJob(reportJob.id)?.status).toBe('pending');
+  });
+
+  it('auto-resumes parent when a custom critic is part of expected_eval_stages', async () => {
+    const { store, manager, handler } = createHarness();
+
+    const reportJob = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const result = await handler({
+      job_id: reportJob.id,
+      finding: 'bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix',
+    });
+    const parsed = parseResult(result);
+    const childId = parsed.child_job_id as string;
+
+    await manager.waitForJob(childId, null, 5_000);
+
+    // A custom security critic was added to the roster, so it must also pass.
+    const expected = ['code_critic', 'test_critic', 'security_critic'];
+    const codeCritic = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      expected_eval_stages: expected,
+      prompt: 'code critique',
+    });
+    const testCritic = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      expected_eval_stages: expected,
+      prompt: 'test critique',
+    });
+    const securityCritic = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'security_critic',
+      expected_eval_stages: expected,
+      prompt: 'security critique',
+    });
+
+    await manager.waitForJob(codeCritic.id, null, 5_000);
+    await manager.waitForJob(testCritic.id, null, 5_000);
+    await manager.waitForJob(securityCritic.id, null, 5_000);
+
+    expect(store.getJob(reportJob.id)?.status).toBe('pending');
+  });
+
   it('does not auto-resume parent if only some critics have passed', async () => {
     const { store, manager, handler } = createHarness();
 

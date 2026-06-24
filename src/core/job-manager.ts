@@ -10,6 +10,7 @@ import {
   parseTimeoutMinutes,
 } from './runtime-config.js';
 import { StateStore } from './state-store.js';
+import { DEFAULT_EVAL_STAGES } from './critic-roster.js';
 
 type JobManagerConfig = {
   maxParallelAgents?: number;
@@ -839,9 +840,28 @@ export class JobManager {
     }
   }
 
+  /**
+   * Resolve the critic stages the resume gate should wait for. `tenet_start_eval`
+   * stamps `expected_eval_stages` onto every critic it dispatches (reflecting the
+   * project's `.tenet/critics.json` roster — so disabling a built-in or adding a
+   * custom critic shrinks/grows the set). Sibling jobs from before that stamping
+   * existed fall back to the 3 built-ins.
+   */
+  private resolveExpectedEvalStages(sourceJobId: string): Set<string> {
+    const siblings = this.stateStore.getEvalsForSource(sourceJobId);
+    for (const s of siblings) {
+      const stamped = s.params.expected_eval_stages;
+      if (Array.isArray(stamped) && stamped.length > 0) {
+        return new Set(stamped.filter((stage): stage is string => typeof stage === 'string'));
+      }
+    }
+    return new Set(DEFAULT_EVAL_STAGES);
+  }
+
   private checkBlockingFindingResume(completedJob: Job, rawOutput: unknown): void {
-    const evalStages = new Set(['code_critic', 'test_critic', 'playwright_eval']);
-    if (!evalStages.has(typeof completedJob.params.eval_stage === 'string' ? completedJob.params.eval_stage : '')) {
+    const completedStage =
+      typeof completedJob.params.eval_stage === 'string' ? completedJob.params.eval_stage : '';
+    if (!completedStage) {
       return;
     }
 
@@ -873,16 +893,24 @@ export class JobManager {
       return;
     }
 
+    const expectedStages = this.resolveExpectedEvalStages(sourceJobId);
+    if (!expectedStages.has(completedStage)) {
+      return;
+    }
+
     const siblings = this.stateStore.getEvalsForSource(sourceJobId);
     const evalSiblings = siblings.filter((s) => {
       const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
-      return evalStages.has(stage);
+      return expectedStages.has(stage);
     });
 
-    // Need all three critic stages present and all completed with passed:true
-    const stages = new Set(evalSiblings.map((s) => s.params.eval_stage as string));
-    if (stages.size < 3) {
-      return;
+    // Wait until every expected stage has a sibling before deciding — a disabled
+    // built-in shrinks this set, a custom critic grows it.
+    const presentStages = new Set(evalSiblings.map((s) => s.params.eval_stage as string));
+    for (const expected of expectedStages) {
+      if (!presentStages.has(expected)) {
+        return;
+      }
     }
 
     for (const s of evalSiblings) {
@@ -897,7 +925,7 @@ export class JobManager {
       }
     }
 
-    // All three critics passed — let the report-only parent run again with fresh context.
+    // All expected critics passed — let the report-only parent run again with fresh context.
     this.stateStore.updateJob(blockedParentId, {
       status: 'pending',
       startedAt: undefined,
