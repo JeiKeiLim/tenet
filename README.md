@@ -12,7 +12,7 @@
 You: "Add social features — reactions, badges, user profiles, share cards"
 Tenet: interviews you, writes the spec, generates visual mockups,
        decomposes into a dependency graph, implements each job,
-       asks workers to commit per job, evaluates with 3 independent critics,
+       asks workers to commit per job, evaluates with independent critics (3 built-in, configurable),
        and loops for 6+ hours until everything passes.
 ```
 
@@ -22,7 +22,7 @@ AI coding agents are powerful but short-lived. They lose context, drift off-spec
 
 - **Structured phases** — Context bootstrap, Interview, Spec, Visuals, Decomposition, Execution, Evaluation, and Agile checkpoints. Full mode runs all of them; Standard skips the interview and Quick skips interview/spec/decomposition (see Execution Modes).
 - **DAG-based job orchestration** — Dependencies are explicit. Parallel jobs run in parallel. Blocked jobs wait.
-- **3-critic evaluation pipeline** — Code critic, Test critic, and Playwright e2e eval. All independent, all with fresh context (no author bias). All findings are blocking.
+- **Configurable critic pipeline** — 3 built-in critics by default (code, test, interaction-e2e), plus project-defined custom critics via `.tenet/critics.json`. All independent, all with fresh context (no author bias). All findings are blocking.
 - **Crash recovery** — Server-ID-based orphan detection. If the MCP server dies, jobs auto-retry on restart.
 - **Agent-agnostic** — Works with Claude Code, OpenCode, and Codex. Switch agents mid-project without losing state.
 - **Persistent state** — Versioned SQLite + WAL mode. Jobs, events, steer messages, and config survive crashes.
@@ -64,12 +64,12 @@ npx @jeikeilim/tenet init --agent claude-code --skip-playwright-check
 | **3. Visuals** | Generates architecture diagrams, UI mockups, DESIGN.md |
 | **4. Decomposition** | Breaks spec into a dependency graph (DAG) of jobs |
 | **5. Execution Loop** | Implements each job, prompts per-job commits, evaluates, retries on failure |
-| **6. Evaluation** | 3 independent critics: code, tests, and Playwright e2e |
+| **6. Evaluation** | Independent critics: code, tests, interaction-e2e (+ project-defined custom critics) |
 | **7. Agile Checkpoints** | Handles plan/use checkpoints and redirect loops in agile mode |
 
 ### The Evaluation Pipeline
 
-Every completed job faces three independent critics, each with fresh context and no access to the author's reasoning:
+Every completed job faces the configured critics — 3 built-in by default (code, test, interaction-e2e), plus any project-defined custom critics from `.tenet/critics.json`. Each runs with fresh context and no access to the author's reasoning:
 
 ```
 Job Complete
@@ -77,12 +77,38 @@ Job Complete
     +---> Code Critic    (spec alignment, security, edge cases)
     +---> Test Critic     (oracle problem detection, behavioral coverage)
     +---> Playwright Eval (scripted tests + agent-driven exploratory e2e)
+    +---> [custom critics] (repo-specific: security, a11y, API contract, ...)
     |
     ALL must pass --> Next job
     ANY fails     --> Retry with failure context
 ```
 
 **The Oracle Problem**: Research shows AI-written tests have ~6% precision when the same agent writes both code and tests. Tenet's test critic explicitly checks for oracle leakage — tests that verify implementation behavior rather than intended behavior.
+
+### Configurable Critics
+
+The critic set is a project file: `.tenet/critics.json`, scaffolded by `tenet init` and read live on every eval (just edit it — no restart). A missing or invalid file falls back to the 3 built-ins.
+
+```json
+{
+  "version": 1,
+  "critics": [
+    { "id": "code_critic",     "builtin": true, "enabled": true },
+    { "id": "test_critic",     "builtin": true, "enabled": true },
+    { "id": "playwright_eval", "builtin": true, "enabled": false },
+    { "id": "security", "builtin": false, "enabled": true,
+      "stage": "security_critic", "job_type": "critic_eval",
+      "prompt_file": ".tenet/critics/security.md" }
+  ]
+}
+```
+
+- **Built-ins** — flip `enabled: false` to drop one (e.g. skip the e2e critic for a CLI-only project).
+- **Custom critics** — two steps: write a prompt at `.tenet/critics/<id>.md`, then add an entry. A custom prompt must end by emitting the verdict Tenet parses —
+  `{"passed": true/false, "stage": "<stage>", "findings": [{"category": "product_bug", "detail": "..."}]}` —
+  where `category` is one of `product_bug | test_bug | harness_bug | evidence_mismatch | contention | scope_conflict` so findings route to the right fix.
+
+Prefer not to hand-write the prompt? In Claude Code, ask *"tenet, create a security critic for this repo"* and it authors both the prompt and the roster entry, then smoke-tests it. Full reference: `skills/tenet/critics.md`.
 
 ### Steer Messages
 
@@ -210,7 +236,7 @@ suppress it entirely.
 | `tenet_job_result` | Retrieve job output and status |
 | `tenet_retry_job` | Reset a failed/completed job to pending |
 | `tenet_cancel_job` | Cancel a running or pending job |
-| `tenet_start_eval` | Dispatch code critic + test critic + playwright eval |
+| `tenet_start_eval` | Dispatch the configured critics (3 built-in + custom) from `.tenet/critics.json` |
 | `tenet_report_blocking_finding` | Let report-only jobs pause and spawn a linked follow-up job |
 | `tenet_update_knowledge` | Write knowledge/journal entries |
 | `tenet_add_steer` | Submit a steer message (context/directive/emergency) |
