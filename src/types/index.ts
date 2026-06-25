@@ -7,7 +7,7 @@ export type JobStatus =
   | 'blocked'
   | 'blocked_on_finding';
 
-export type JobType = 'dev' | 'eval' | 'critic_eval' | 'playwright_eval' | 'mechanical_eval' | 'integration_test' | 'compile_context' | 'health_check';
+export type JobType = 'dev' | 'eval' | 'critic_eval' | 'interaction_e2e' | 'mechanical_eval' | 'integration_test' | 'compile_context' | 'health_check';
 
 export interface Job {
   id: string;

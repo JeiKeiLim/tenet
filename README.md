@@ -95,7 +95,7 @@ The critic set is a project file: `.tenet/critics.json`, scaffolded by `tenet in
   "critics": [
     { "id": "code_critic",     "builtin": true, "enabled": true },
     { "id": "test_critic",     "builtin": true, "enabled": true },
-    { "id": "playwright_eval", "builtin": true, "enabled": true },
+    { "id": "interaction_e2e", "builtin": true, "enabled": true },
     { "id": "security", "builtin": false, "enabled": true,
       "stage": "security_critic", "job_type": "critic_eval",
       "prompt_file": ".tenet/critics/security.md" }

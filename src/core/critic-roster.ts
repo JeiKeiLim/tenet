@@ -16,34 +16,45 @@ import type { JobType } from '../types/index.js';
  * resume gate reads the `expected_eval_stages` the tool stamps onto each critic.
  */
 
-export type BuiltinCriticId = 'code_critic' | 'test_critic' | 'playwright_eval';
+export type BuiltinCriticId = 'code_critic' | 'test_critic' | 'interaction_e2e';
 
 export const BUILTIN_CRITIC_IDS: readonly BuiltinCriticId[] = [
   'code_critic',
   'test_critic',
-  'playwright_eval',
+  'interaction_e2e',
 ];
 
 /** Stages the resume gate waits for when a job predates roster stamping. */
 export const DEFAULT_EVAL_STAGES: readonly string[] = [
   'code_critic',
   'test_critic',
-  'playwright_eval',
+  'interaction_e2e',
 ];
 
 /** Custom critics may reuse either of these job types (no new JobType needed). */
-const VALID_CUSTOM_JOB_TYPES: readonly JobType[] = ['critic_eval', 'playwright_eval'];
+const VALID_CUSTOM_JOB_TYPES: readonly JobType[] = ['critic_eval', 'interaction_e2e'];
 
 const BUILTIN_STAGE: Record<BuiltinCriticId, string> = {
   code_critic: 'code_critic',
   test_critic: 'test_critic',
-  playwright_eval: 'playwright_eval',
+  interaction_e2e: 'interaction_e2e',
 };
 
 const BUILTIN_JOB_TYPE: Record<BuiltinCriticId, JobType> = {
   code_critic: 'critic_eval',
   test_critic: 'eval',
-  playwright_eval: 'playwright_eval',
+  interaction_e2e: 'interaction_e2e',
+};
+
+/**
+ * Legacy `.tenet/critics.json` files authored before the rename use the id
+ * `playwright_eval`. Map that onto the current built-in so those files keep
+ * resolving without a manual edit. This is the only place the legacy string is
+ * recognized — the DB migration rewrites stored rows, but user-authored files
+ * can't be auto-rewritten, hence this alias.
+ */
+const LEGACY_BUILTIN_ID_ALIAS: Readonly<Record<string, BuiltinCriticId>> = {
+  playwright_eval: 'interaction_e2e',
 };
 
 /** Raw shape of one entry in `.tenet/critics.json`. */
@@ -53,7 +64,7 @@ export type CriticRosterEntry = {
   enabled?: boolean;
   /** Custom only — the `eval_stage` name. Defaults to `id`. */
   stage?: string;
-  /** Custom only — `critic_eval` (default) or `playwright_eval`. */
+  /** Custom only — `critic_eval` (default) or `interaction_e2e`. */
   job_type?: JobType;
   /** Custom only — project-relative path to a markdown prompt. */
   prompt_file?: string;
@@ -120,17 +131,19 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
     if (typeof e.id !== 'string' || e.id.length === 0) {
       continue;
     }
-    if (usedIds.has(e.id)) {
+    // Legacy critics.json files use the pre-rename id `playwright_eval`; map it
+    // onto the current built-in so those files keep resolving without an edit.
+    const id = LEGACY_BUILTIN_ID_ALIAS[e.id] ?? e.id;
+    if (usedIds.has(id)) {
       continue;
     }
 
-    if (e.builtin === true || isBuiltinId(e.id)) {
+    if (e.builtin === true || isBuiltinId(id)) {
       // Built-in: only `enabled` (and presence/order) are meaningful.
-      if (!isBuiltinId(e.id)) {
+      if (!isBuiltinId(id)) {
         // `builtin: true` asserted for an unknown id — treat as misconfigured, skip.
         continue;
       }
-      const id = e.id;
       seenBuiltins.add(id);
       resolved.push({
         id,
@@ -141,18 +154,18 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
       });
       usedIds.add(id);
     } else {
-      const stage = typeof e.stage === 'string' && e.stage.length > 0 ? e.stage : e.id;
+      const stage = typeof e.stage === 'string' && e.stage.length > 0 ? e.stage : id;
       const jobType: JobType = isJobType(e.job_type) ? e.job_type : 'critic_eval';
       const promptFile = typeof e.prompt_file === 'string' && e.prompt_file.length > 0 ? e.prompt_file : undefined;
       resolved.push({
-        id: e.id,
+        id,
         builtin: false,
         enabled: e.enabled !== false,
         stage,
         jobType,
         promptFile,
       });
-      usedIds.add(e.id);
+      usedIds.add(id);
     }
   }
 

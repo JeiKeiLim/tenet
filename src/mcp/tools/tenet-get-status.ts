@@ -46,11 +46,11 @@ const extractJsonObject = (raw: string | undefined): Record<string, unknown> | u
   return undefined;
 };
 
-const findLatestPlaywrightLayer2Status = (stateStore: StateStore): string | undefined => {
-  // Scan completed playwright_eval jobs in reverse-chronological order
+const findLatestE2eStatus = (stateStore: StateStore): string | undefined => {
+  // Scan completed interaction_e2e critic jobs in reverse-chronological order
   const completed = stateStore
     .getJobsByStatus('completed' as Job['status'])
-    .filter((j) => j.type === 'playwright_eval')
+    .filter((j) => j.type === 'interaction_e2e')
     .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
 
   if (completed.length === 0) {
@@ -70,8 +70,8 @@ export const registerTenetGetStatusTool = (registerTool: RegisterTool, stateStor
     'tenet_get_status',
     {
       description:
-        'Get high-level project summary status. Also surfaces the most recent Playwright eval layer2_status ' +
-        'so callers can distinguish "fully verified" from "passed with Layer 2 skipped".',
+        'Get high-level project summary status. Also surfaces the most recent interaction-e2e critic status ' +
+        'so callers can distinguish "fully verified" from "passed with browser exploration skipped/applicable".',
       inputSchema: z.object({}),
     },
     async () => {
@@ -79,7 +79,7 @@ export const registerTenetGetStatusTool = (registerTool: RegisterTool, stateStor
       const total = stateStore.getTotalCount();
       const blocked = stateStore.getBlockedJobs().length;
       const running = stateStore.getJobsByStatus('running');
-      const latestLayer2 = findLatestPlaywrightLayer2Status(stateStore);
+      const latestLayer2 = findLatestE2eStatus(stateStore);
 
       const status: ProjectStatus = {
         project_path: stateStore.projectPath,
@@ -92,7 +92,7 @@ export const registerTenetGetStatusTool = (registerTool: RegisterTool, stateStor
         last_activity: new Date().toISOString(),
       };
 
-      const extras = latestLayer2 ? { latest_playwright_layer2_status: latestLayer2 } : {};
+      const extras = latestLayer2 ? { latest_e2e_status: latestLayer2 } : {};
 
       const updateInfo = await checkForUpdate();
       if (updateInfo?.update_available) {

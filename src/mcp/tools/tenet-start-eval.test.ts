@@ -42,7 +42,7 @@ const createHarness = (): {
   stores.push(store);
   store.setConfig('agent_override_eval', 'mock-adapter');
   store.setConfig('agent_override_critic_eval', 'mock-adapter');
-  store.setConfig('agent_override_playwright_eval', 'mock-adapter');
+  store.setConfig('agent_override_interaction_e2e', 'mock-adapter');
 
   const registry = new AdapterRegistry();
   registry.register(new MockAdapter('mock-adapter'));
@@ -148,7 +148,7 @@ describe('tenet_start_eval eval mode resolution', () => {
 
     const codeCriticId = jobId(parsed, 'code_critic');
     const testCriticId = jobId(parsed, 'test_critic');
-    const playwrightId = jobId(parsed, 'playwright_eval');
+    const playwrightId = jobId(parsed, 'interaction_e2e');
 
     const codeCritic = store.getJob(codeCriticId);
     const testCritic = store.getJob(testCriticId);
@@ -178,7 +178,7 @@ describe('tenet_start_eval eval mode resolution', () => {
 
     const codeCritic = store.getJob(jobId(parsed, 'code_critic'));
     const testCritic = store.getJob(jobId(parsed, 'test_critic'));
-    const playwright = store.getJob(jobId(parsed, 'playwright_eval'));
+    const playwright = store.getJob(jobId(parsed, 'interaction_e2e'));
 
     expect(codeCritic?.status).toBe('running');
     expect(testCritic?.status).toBe('running');
@@ -212,7 +212,7 @@ describe('tenet_start_eval eval mode resolution', () => {
 
     const codeCriticId = jobId(parsed, 'code_critic');
     const testCriticId = jobId(parsed, 'test_critic');
-    const playwrightId = jobId(parsed, 'playwright_eval');
+    const playwrightId = jobId(parsed, 'interaction_e2e');
 
     await waitForAll(manager, parsed);
 
@@ -265,7 +265,7 @@ describe('tenet_start_eval eval mode resolution', () => {
 
     const result = await handler({ job_id: sourceId, output: { summary: 'ok' } });
     const parsed = parseResult(result);
-    const playwright = store.getJob(jobId(parsed, 'playwright_eval'));
+    const playwright = store.getJob(jobId(parsed, 'interaction_e2e'));
     const prompt = playwright?.params.prompt as string;
 
     expect(prompt).toContain('Use exact artifact_paths when provided');
@@ -286,7 +286,7 @@ describe('tenet_start_eval eval mode resolution', () => {
     expect(prompt).toContain('SEMANTICS, not just non-5xx'); // API exploratory rigor
     // Output contract is unchanged (back-compat for the gate + status surfacing).
     expect(prompt).toContain(
-      'End with: {"passed": true/false, "stage": "playwright_eval", "surface": "web_ui|visual|cli|api|library|none", "layer2_status": "completed|skipped_no_mcp|not_applicable|failed", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
+      'End with: {"passed": true/false, "stage": "interaction_e2e", "surface": "web_ui|visual|cli|api|library|none", "layer2_status": "completed|skipped_no_mcp|not_applicable|failed", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
     );
 
     await waitForAll(manager, parsed);
@@ -302,12 +302,12 @@ describe('tenet_start_eval configurable critic roster', () => {
     const parsed = parseResult(result);
 
     expect(parsed.critics_dispatched).toBe(3);
-    expect(jobRoles(parsed)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
+    expect(jobRoles(parsed)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
     // expected_eval_stages is stamped on every dispatched critic
     expect(store.getJob(jobId(parsed, 'code_critic'))?.params.expected_eval_stages).toEqual([
       'code_critic',
       'test_critic',
-      'playwright_eval',
+      'interaction_e2e',
     ]);
 
     await waitForAll(manager, parsed);
@@ -323,7 +323,7 @@ describe('tenet_start_eval configurable critic roster', () => {
 
     expect(parsed.critics_dispatched).toBe(3);
     expect(parsed.roster_warning).toEqual(expect.stringContaining('Could not parse'));
-    expect(jobRoles(parsed)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
+    expect(jobRoles(parsed)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
 
     await waitForAll(manager, parsed);
   });
@@ -335,7 +335,7 @@ describe('tenet_start_eval configurable critic roster', () => {
       critics: [
         { id: 'code_critic', builtin: true, enabled: true },
         { id: 'test_critic', builtin: true, enabled: true },
-        { id: 'playwright_eval', builtin: true, enabled: false },
+        { id: 'interaction_e2e', builtin: true, enabled: false },
       ],
     });
     const sourceId = createSourceJob(store, 'oauth');
@@ -365,7 +365,7 @@ describe('tenet_start_eval configurable critic roster', () => {
       critics: [
         { id: 'code_critic', builtin: true, enabled: true },
         { id: 'test_critic', builtin: true, enabled: true },
-        { id: 'playwright_eval', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: true },
         {
           id: 'security',
           builtin: false,
@@ -396,7 +396,7 @@ describe('tenet_start_eval configurable critic roster', () => {
     expect(securityJob?.params.expected_eval_stages).toEqual([
       'code_critic',
       'test_critic',
-      'playwright_eval',
+      'interaction_e2e',
       'security_critic',
     ]);
 
@@ -410,7 +410,7 @@ describe('tenet_start_eval configurable critic roster', () => {
       critics: [
         { id: 'code_critic', builtin: true, enabled: true },
         { id: 'test_critic', builtin: true, enabled: true },
-        { id: 'playwright_eval', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: true },
         {
           id: 'security',
           builtin: false,
@@ -441,7 +441,7 @@ describe('tenet_start_eval configurable critic roster', () => {
       critics: [
         { id: 'code_critic', builtin: true, enabled: true },
         { id: 'test_critic', builtin: true, enabled: true },
-        { id: 'playwright_eval', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: true },
         {
           id: 'extra',
           builtin: false,
@@ -460,7 +460,7 @@ describe('tenet_start_eval configurable critic roster', () => {
 
     expect(parsed.execution_mode).toBe('sequential');
     const jobs = parsed.jobs as Array<Record<string, unknown>>;
-    expect(jobs.map((j) => j.role)).toEqual(['code_critic', 'test_critic', 'playwright_eval', 'extra_critic']);
+    expect(jobs.map((j) => j.role)).toEqual(['code_critic', 'test_critic', 'interaction_e2e', 'extra_critic']);
     expect(jobs[1].parent_job_id).toBe(jobs[0].job_id);
     expect(jobs[2].parent_job_id).toBe(jobs[1].job_id);
     expect(jobs[3].parent_job_id).toBe(jobs[2].job_id);

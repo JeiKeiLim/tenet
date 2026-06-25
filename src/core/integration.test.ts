@@ -53,7 +53,7 @@ const createHarness = (rules: FakeFixtureRule[]): Harness => {
   store.setConfig('agent_override_dev', 'fake');
   store.setConfig('agent_override_eval', 'fake');
   store.setConfig('agent_override_critic_eval', 'fake');
-  store.setConfig('agent_override_playwright_eval', 'fake');
+  store.setConfig('agent_override_interaction_e2e', 'fake');
 
   const registry = new AdapterRegistry();
   (registry as unknown as { adapters: Map<string, unknown> }).adapters.clear();
@@ -169,7 +169,7 @@ describe('integration: sequential critic chain', () => {
     const { store, manager, startEval } = createHarness([
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-completed.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
 
     // Mark the feature as unsafe — sequential mode
@@ -191,18 +191,18 @@ describe('integration: sequential critic chain', () => {
     // Sequentially: code critic starts running immediately, others pending with parent
     await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
-    await manager.waitForJob(jobId(parsed, 'playwright_eval'), null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'interaction_e2e'), null, 5_000);
 
     expect(store.getJob(jobId(parsed, 'code_critic'))?.status).toBe('completed');
     expect(store.getJob(jobId(parsed, 'test_critic'))?.status).toBe('completed');
-    expect(store.getJob(jobId(parsed, 'playwright_eval'))?.status).toBe('completed');
+    expect(store.getJob(jobId(parsed, 'interaction_e2e'))?.status).toBe('completed');
   });
 
   it('B2: safe verdict → 3 critics launch in parallel', async () => {
     const { store, manager, startEval } = createHarness([
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-completed.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
 
     store.setConfig('eval_parallel_safe:pure', 'true');
@@ -222,13 +222,13 @@ describe('integration: sequential critic chain', () => {
 
     // All three should be running (or just-completed) — none were left pending waiting for a parent.
     const test = store.getJob(jobId(parsed, 'test_critic'));
-    const play = store.getJob(jobId(parsed, 'playwright_eval'));
+    const play = store.getJob(jobId(parsed, 'interaction_e2e'));
     expect(test?.parentJobId).toBeUndefined();
     expect(play?.parentJobId).toBeUndefined();
 
     await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
-    await manager.waitForJob(jobId(parsed, 'playwright_eval'), null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'interaction_e2e'), null, 5_000);
   });
 });
 
@@ -240,7 +240,7 @@ describe('integration: blocking finding auto-resume', () => {
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-completed.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
 
     const parent = store.createJob({
@@ -274,10 +274,10 @@ describe('integration: blocking finding auto-resume', () => {
       eval_stage: 'test_critic',
       prompt: 'Test Critic review',
     });
-    const play = manager.startJob('playwright_eval', {
+    const play = manager.startJob('interaction_e2e', {
       source_job_id: childId,
-      eval_stage: 'playwright_eval',
-      prompt: 'Playwright eval',
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
     });
 
     await manager.waitForJob(code.id, null, 5_000);
@@ -326,17 +326,17 @@ describe('integration: blocking finding auto-resume', () => {
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────
 
-describe('integration: latest_playwright_layer2_status surfacing', () => {
-  const driveOnePlaywright = async (
+describe('integration: latest_e2e_status surfacing', () => {
+  const driveOneE2e = async (
     h: Harness,
     rules: FakeFixtureRule[],
   ): Promise<void> => {
     // Update the adapter with new rules by re-registering. Simpler: create a fresh job
     // and wait. We rely on a playwright-specific rule already being in the harness.
-    const job = h.manager.startJob('playwright_eval', {
+    const job = h.manager.startJob('interaction_e2e', {
       source_job_id: 'dummy',
-      eval_stage: 'playwright_eval',
-      prompt: 'Playwright eval',
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
     });
     await h.manager.waitForJob(job.id, null, 5_000);
     void rules;
@@ -344,32 +344,32 @@ describe('integration: latest_playwright_layer2_status surfacing', () => {
 
   it('D1: completed → surfaces "completed"', async () => {
     const h = createHarness([
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-completed.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
-    await driveOnePlaywright(h, []);
+    await driveOneE2e(h, []);
     const r = await h.getStatus({});
     const parsed = parseResult(r);
-    expect(parsed.latest_playwright_layer2_status).toBe('completed');
+    expect(parsed.latest_e2e_status).toBe('completed');
   });
 
   it('D2: skipped_no_mcp → surfaces "skipped_no_mcp"', async () => {
     const h = createHarness([
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-skipped.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-skipped.json' },
     ]);
-    await driveOnePlaywright(h, []);
+    await driveOneE2e(h, []);
     const r = await h.getStatus({});
     const parsed = parseResult(r);
-    expect(parsed.latest_playwright_layer2_status).toBe('skipped_no_mcp');
+    expect(parsed.latest_e2e_status).toBe('skipped_no_mcp');
   });
 
   it('D3: failed → surfaces "failed"', async () => {
     const h = createHarness([
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-failed.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-failed.json' },
     ]);
-    await driveOnePlaywright(h, []);
+    await driveOneE2e(h, []);
     const r = await h.getStatus({});
     const parsed = parseResult(r);
-    expect(parsed.latest_playwright_layer2_status).toBe('failed');
+    expect(parsed.latest_e2e_status).toBe('failed');
   });
 });
 
@@ -383,7 +383,7 @@ describe('integration: parser robustness', () => {
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-trailing-prose.md' },
       { match: matchers.evalStage('test_critic'), fixture: 'critic-passing-trailing-prose.md' },
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-completed.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
 
     const parent = store.createJob({
@@ -414,10 +414,10 @@ describe('integration: parser robustness', () => {
       eval_stage: 'test_critic',
       prompt: 'Test Critic review',
     });
-    const play = manager.startJob('playwright_eval', {
+    const play = manager.startJob('interaction_e2e', {
       source_job_id: childId,
-      eval_stage: 'playwright_eval',
-      prompt: 'Playwright eval',
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
     });
 
     await manager.waitForJob(code.id, null, 5_000);
@@ -432,7 +432,7 @@ describe('integration: parser robustness', () => {
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-truncated.txt' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-completed.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
 
     const parent = store.createJob({
@@ -463,10 +463,10 @@ describe('integration: parser robustness', () => {
       eval_stage: 'test_critic',
       prompt: 'Test Critic review',
     });
-    const play = manager.startJob('playwright_eval', {
+    const play = manager.startJob('interaction_e2e', {
       source_job_id: childId,
-      eval_stage: 'playwright_eval',
-      prompt: 'Playwright eval',
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
     });
 
     await manager.waitForJob(code.id, null, 5_000);
@@ -483,7 +483,7 @@ describe('integration: parser robustness', () => {
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
-      { match: matchers.evalStage('playwright_eval'), fixture: 'playwright-layer2-completed.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
 
     const parent = store.createJob({
@@ -514,10 +514,10 @@ describe('integration: parser robustness', () => {
       eval_stage: 'test_critic',
       prompt: 'Test Critic review',
     });
-    const play = manager.startJob('playwright_eval', {
+    const play = manager.startJob('interaction_e2e', {
       source_job_id: childId,
-      eval_stage: 'playwright_eval',
-      prompt: 'Playwright eval',
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
     });
 
     await manager.waitForJob(code.id, null, 5_000);

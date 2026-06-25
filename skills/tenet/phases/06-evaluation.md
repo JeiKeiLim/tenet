@@ -26,7 +26,7 @@ The interaction-e2e critic does agent-driven verification through whatever publi
 - `not_applicable` — this surface is not a browser (cli, api, library, or none). This is honest and expected, **not** a gap: the critic still ran agent-brain e2e on that surface and reported the result in `exploratory_findings`.
 - `failed` — browser Layer 2 or a required runtime was attempted but could not run (app wouldn't start, MCP errors).
 
-`tenet_get_status` surfaces the latest completed `playwright_eval` job's `layer2_status` as `latest_playwright_layer2_status` (the field name is kept stable for back-compat; the critic itself is surface-agnostic). For non-browser surfaces treat `not_applicable` as "browser Layer 2 didn't apply — read the non-browser e2e result," **not** as "unverified."
+`tenet_get_status` surfaces the latest completed `interaction_e2e` critic job's status as `latest_e2e_status` (the value comes from the critic's `layer2_status` field). For non-browser surfaces treat `not_applicable` as "browser Layer 2 didn't apply — read the non-browser e2e result," **not** as "unverified."
 
 If the harness/spec requires browser/visual exploration, missing Playwright MCP is a failure. If it is optional or skipped with reason, `skipped_no_mcp` is acceptable. For CLI/API/library surfaces the critic uses the shell — it does not skip, and it does not force a browser.
 
@@ -160,7 +160,7 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 
 ### Stage 5: Interaction E2E (Independent Job)
 
-Dispatched as a separate `playwright_eval` job by `tenet_start_eval` alongside code critic and test critic. The job type stays `playwright_eval` for compatibility — "Playwright" is only the browser tool, not the critic's identity. The worker has independent context (no implementation code, no author reasoning): it receives only the exact run artifacts, project doctrine, scenarios, and the running public surface.
+Dispatched as a separate `interaction_e2e` job by `tenet_start_eval` alongside code critic and test critic. "Playwright" is only the browser tool the critic uses for browser surfaces, not the critic's identity. The worker has independent context (no implementation code, no author reasoning): it receives only the exact run artifacts, project doctrine, scenarios, and the running public surface.
 
 The worker **classifies the declared e2e surface** first (`web_ui`, `visual`, `cli`, `api`, `library`, or `none`), then applies **the same agent-brain, exploratory rigor to whichever surface it is** — it never skips a non-browser surface, and never forces a browser onto one.
 

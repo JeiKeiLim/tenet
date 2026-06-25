@@ -25,7 +25,7 @@ class SlowAdapter implements AgentAdapter {
 
 type Handler = (args: {
   job_id?: string;
-  job_type?: 'dev' | 'eval' | 'critic_eval' | 'playwright_eval' | 'mechanical_eval' | 'compile_context' | 'health_check';
+  job_type?: 'dev' | 'eval' | 'critic_eval' | 'interaction_e2e' | 'mechanical_eval' | 'compile_context' | 'health_check';
   params?: Record<string, unknown>;
 }) => Promise<CallToolResult>;
 
