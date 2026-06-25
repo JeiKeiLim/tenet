@@ -76,7 +76,7 @@ Job Complete
     |
     +---> Code Critic    (spec alignment, security, edge cases)
     +---> Test Critic     (oracle problem detection, behavioral coverage)
-    +---> Playwright Eval (scripted tests + agent-driven exploratory e2e)
+    +---> Interaction E2E  (agent-driven e2e on the public surface — browser via Playwright MCP, CLI/API/library via shell)
     +---> [custom critics] (repo-specific: security, a11y, API contract, ...)
     |
     ALL must pass --> Next job
@@ -95,7 +95,7 @@ The critic set is a project file: `.tenet/critics.json`, scaffolded by `tenet in
   "critics": [
     { "id": "code_critic",     "builtin": true, "enabled": true },
     { "id": "test_critic",     "builtin": true, "enabled": true },
-    { "id": "playwright_eval", "builtin": true, "enabled": false },
+    { "id": "playwright_eval", "builtin": true, "enabled": true },
     { "id": "security", "builtin": false, "enabled": true,
       "stage": "security_critic", "job_type": "critic_eval",
       "prompt_file": ".tenet/critics/security.md" }
@@ -103,7 +103,7 @@ The critic set is a project file: `.tenet/critics.json`, scaffolded by `tenet in
 }
 ```
 
-- **Built-ins** — flip `enabled: false` to drop one (e.g. skip the e2e critic for a CLI-only project).
+- **Built-ins** — flip `enabled: false` to drop any one. The interaction-e2e critic covers CLI/API/library surfaces too (agent-brain shell e2e), so keep it enabled for CLI-only projects — only disable it if you want no public-surface e2e at all.
 - **Custom critics** — two steps: write a prompt at `.tenet/critics/<id>.md`, then add an entry. A custom prompt must end by emitting the verdict Tenet parses —
   `{"passed": true/false, "stage": "<stage>", "findings": [{"category": "product_bug", "detail": "..."}]}` —
   where `category` is one of `product_bug | test_bug | harness_bug | evidence_mismatch | contention | scope_conflict` so findings route to the right fix.

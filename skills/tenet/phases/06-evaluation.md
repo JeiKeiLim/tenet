@@ -17,18 +17,18 @@ Every critic finding (code critic, test critic) MUST include a `category` so the
 
 The critic emits findings as objects: `{"category": "...", "detail": "..."}`. Orchestrators MUST read the category to pick the right response — plain retry loops waste cycles on bugs that aren't product bugs.
 
-## E2E Surface And Playwright Layer 2 Honesty
+## E2E Surface And Verification Honesty
 
-The e2e eval job returns a `surface` field and a `layer2_status` field so downstream readers can distinguish browser-verified work from scripted-only or non-browser verification:
+The interaction-e2e critic does agent-driven verification through whatever public surface the job exposes — browser UI, CLI, API, library, or none. It returns a `surface` field (what it classified) and a `layer2_status` field (whether browser/visual exploration applied), so downstream readers can tell what was actually exercised:
 
-- `completed` — Layer 2 exploratory testing ran via Playwright MCP. Findings reflect real interactive use.
-- `skipped_no_mcp` — Playwright MCP was not installed and the harness/spec allowed browser exploration to be skipped. Only scripted (Layer 1) results are reported.
-- `not_applicable` — browser exploration is not part of this feature's declared e2e surface (for example CLI, API, library, or no e2e surface).
-- `failed` — Layer 2 was attempted but could not complete (app wouldn't start, MCP errors).
+- `completed` — a browser surface was exercised interactively via Playwright MCP. Findings reflect real interactive use.
+- `skipped_no_mcp` — browser/visual exploration was required-but-unavailable, and the harness/spec allowed skipping it. Only scripted results are reported.
+- `not_applicable` — this surface is not a browser (cli, api, library, or none). This is honest and expected, **not** a gap: the critic still ran agent-brain e2e on that surface and reported the result in `exploratory_findings`.
+- `failed` — browser Layer 2 or a required runtime was attempted but could not run (app wouldn't start, MCP errors).
 
-`tenet_get_status` surfaces the latest completed playwright_eval's `layer2_status` as `latest_playwright_layer2_status` so final reports can state honestly whether visual verification happened. A "passed" verdict with `layer2_status: skipped_no_mcp` is NOT the same as fully verified — say so in the final report.
+`tenet_get_status` surfaces the latest completed `playwright_eval` job's `layer2_status` as `latest_playwright_layer2_status` (the field name is kept stable for back-compat; the critic itself is surface-agnostic). For non-browser surfaces treat `not_applicable` as "browser Layer 2 didn't apply — read the non-browser e2e result," **not** as "unverified."
 
-If the harness/spec says browser or visual exploration is required, missing Playwright MCP is a failure. If the harness/spec says it is optional or skipped with reason, `skipped_no_mcp` is acceptable. For CLI/API/library projects, do the declared public-surface e2e checks instead of forcing Playwright.
+If the harness/spec requires browser/visual exploration, missing Playwright MCP is a failure. If it is optional or skipped with reason, `skipped_no_mcp` is acceptable. For CLI/API/library surfaces the critic uses the shell — it does not skip, and it does not force a browser.
 
 ## Parallel vs Sequential Critics
 
@@ -160,17 +160,28 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 
 ### Stage 5: Interaction E2E (Independent Job)
 
-Dispatched as a separate `playwright_eval` job by `tenet_start_eval` alongside code critic and test critic. The job type remains `playwright_eval` for compatibility, but the worker first reads the exact run artifacts and project doctrine supplied through compiled context or `artifact_paths`, then classifies the declared e2e surface: browser UI, visual/canvas/game, CLI, API, library, or not applicable. The worker has independent context — does NOT see implementation code or author reasoning. Receives only the exact run artifacts, project doctrine, scenarios, and the running public surface.
+Dispatched as a separate `playwright_eval` job by `tenet_start_eval` alongside code critic and test critic. The job type stays `playwright_eval` for compatibility — "Playwright" is only the browser tool, not the critic's identity. The worker has independent context (no implementation code, no author reasoning): it receives only the exact run artifacts, project doctrine, scenarios, and the running public surface.
 
-For browser UI, game/canvas, visual, or other browser-interactive features, the worker MUST do BOTH layers unless the harness/spec explicitly marks Layer 2 optional or skipped with reason:
+The worker **classifies the declared e2e surface** first (`web_ui`, `visual`, `cli`, `api`, `library`, or `none`), then applies **the same agent-brain, exploratory rigor to whichever surface it is** — it never skips a non-browser surface, and never forces a browser onto one.
 
-#### Layer 1: Scripted Playwright Tests (regression)
+#### Agent-brain QA (ALL surfaces)
+Beyond the happy-path checks the author declared, the worker probes like a real, hostile user:
+- Edge and invalid inputs — empty, huge, unicode, wrong type, missing required values, off-by-one boundaries.
+- Error paths — confirm failures surface the right non-zero exit / error status / clear message, not a silent success or a crash.
+- Undocumented surface area — flags/endpoints/arguments the scenarios omit but a real user would try (`--help`, `--version`, unknown subcommands, default no-arg behavior).
+- Chained workflows — commands/calls run in sequence the way a user actually operates.
+- Regression traps — anything a scripted test passes but a human would notice is wrong.
+
+#### Browser surface (web_ui / visual / canvas)
+The worker MUST do BOTH layers unless the harness/spec explicitly marks Layer 2 optional or skipped with reason.
+
+**Layer 1 — Scripted Playwright Tests (regression)**
 1. Locate existing Playwright test files (`tests/e2e/`, `e2e/`, `tests/playwright/`)
 2. Ensure the application is running (start dev server or docker compose)
 3. Run `npx playwright test` (or the project's test command)
 4. Report pass/fail counts and any failing tests
 
-#### Layer 2: Exploratory Agent-Driven Testing (Playwright MCP)
+**Layer 2 — Exploratory Agent-Driven Testing (Playwright MCP)**
 The worker uses Playwright MCP tools to interact with the app like a real user:
 - `browser_navigate(url)` — go to a page
 - `browser_click(selector)` — click buttons/links
@@ -179,40 +190,32 @@ The worker uses Playwright MCP tools to interact with the app like a real user:
 - `browser_take_screenshot()` — capture state visually
 - `browser_evaluate(...)` — inspect page state when visible output is insufficient
 
-**For each scenario in scope, the worker:**
-1. Navigates to the entry point
-2. Performs the user actions (click, fill, submit)
-3. Takes screenshots at each step
-4. Verifies the EXPECTED OUTCOME (not just absence of errors):
-   - After login: did the URL change to /dashboard? Is user info visible?
-   - After create: does the new item appear in the list?
-   - After form submit: did it redirect to the correct page?
-5. Tests edge cases scripted tests miss:
-   - Click every button on every page
-   - Try invalid inputs and verify error messages
-   - Test navigation between pages
-   - Verify all features in spec are reachable from the UI
+For each scenario in scope, the worker navigates, performs the user actions, takes screenshots, and verifies the EXPECTED OUTCOME (not just absence of errors) — then applies the agent-brain QA list above in the browser (click every button, try invalid inputs, test navigation, confirm every spec feature is reachable).
 
-#### Non-browser e2e
-For CLI/API/library projects, do not force Playwright:
-- CLI: run the public commands from scenarios and verify exit code, stdout/stderr, files, and side effects.
-- API: run acceptance/integration tests or direct HTTP workflow checks declared in the harness.
-- Library: run integration tests through the public API.
-- No e2e surface: set `layer2_status: "not_applicable"` and report the reason from the harness/spec.
+#### CLI surface
+Run the public commands declared in scenarios and verify exit code, stdout/stderr, files, and side effects — then go beyond them: probe `--help`/`--version`/unknown flags/default behavior; feed invalid/empty/huge/unicode/wrong-type args and confirm a non-zero exit with accurate stderr (not a stack trace or silent success); chain commands across one session; exercise pipes/stdin/interactive prompts/signals; check disk/env/config side effects.
+
+#### API surface
+Run the acceptance/integration tests or HTTP checks declared in the harness — then probe beyond them: hit endpoints/parameters NOT in the scenarios; try wrong method, unauthenticated, malformed/empty body, boundary inputs; verify response body and status SEMANTICS, not just non-5xx (a create that 200s without persisting, a 404 that should be a 401); check auth boundaries and error envelopes.
+
+#### Library surface
+Exercise the public API exploratorially: boundary/invalid inputs, contract-vs-docs drift, error paths — not just the happy-path integration tests. Do not invent a CLI/browser surface if the package exposes only a programmatic API.
+
+#### No e2e surface
+If the harness/spec declares no public surface for this job (pure internal module), set `surface: "none"` and `layer2_status: "not_applicable"`, state the reason, and pass — unless the harness REQUIRED a surface that is missing, in which case FAIL.
 
 **What this catches that scripted tests miss:**
-- Stats page implemented but not wired to navigation
-- Buttons with wrong sizes or misaligned layouts
-- Login form that submits but doesn't redirect correctly
-- Copy button that doesn't actually copy to clipboard
-- Broken CSS/styling that doesn't affect test assertions
+- Browser: stats page implemented but not wired to navigation; login form that submits but doesn't redirect; copy button that doesn't copy; broken CSS/styling that doesn't affect assertions.
+- CLI: a flag that silently no-ops; an invalid argument that exits 0; a command that mishandles unicode paths.
+- API: an endpoint that 200s on malformed input; a delete that returns success without removing; a 404 where auth should have returned 401.
+- Library: a public function that throws on documented valid input; a return shape that drifts from the docs.
 
-**When Playwright MCP is not available:** If browser/visual Layer 2 is required, fail the eval. If the harness/spec says it is optional or skipped with reason, report "Playwright MCP not installed — exploratory testing skipped" and pass with Layer 1 results only. If browser exploration is not applicable, use the non-browser e2e path and report `layer2_status: "not_applicable"`.
+**When Playwright MCP is not available (browser surface only):** If browser/visual Layer 2 is required, fail the eval. If the harness/spec says it is optional or skipped with reason, report "Playwright MCP not installed — exploratory browser testing skipped" and pass on Layer 1 results only. For CLI/API/library/none surfaces Playwright MCP is irrelevant — proceed with that branch.
 
-**When the application won't start:** FAIL the eval. The application must start to be tested.
+**When a required runtime won't start:** Only surfaces that need a running app/server apply here (browser, API). FAIL the eval — it must run to be tested. CLI/library surfaces that need no server are unaffected.
 
-**PASS**: Scripted tests pass AND exploratory testing finds no issues.
-**FAIL**: Any scripted test fails OR exploratory testing finds visual/behavioral bugs. Retry or report a blocking finding with screenshots and findings as evidence.
+**PASS**: Scripted/declared checks pass AND agent-brain probing finds no issues.
+**FAIL**: Any declared check fails OR agent-brain probing finds a behavioral bug. Retry or report a blocking finding with evidence (screenshots for browser; command output / request-response for CLI/API).
 
 ## Anti-Skip Enforcement
 Evaluation is mandatory. Every job must pass Stage 1 and 1.5. Full mode runs every enabled critic — Stage 3 (code critic), Stage 4 (test critic), Stage 5 (interaction e2e), plus any custom critics enabled in `.tenet/critics.json`. All critics run in separate agent sessions with no access to the author's reasoning. The author cannot evaluate their own work.

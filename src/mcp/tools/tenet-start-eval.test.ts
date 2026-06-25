@@ -273,6 +273,22 @@ describe('tenet_start_eval eval mode resolution', () => {
     expect(prompt).toContain('.tenet/project/design.md');
     expect(prompt).not.toContain('.tenet/harness/current.md');
 
+    // Reframe (#10): agent-brain QA is a first-class principle for EVERY surface,
+    // with browser demoted to one peer branch and CLI/API/library getting real
+    // exploratory guidance (not just "run the declared commands").
+    expect(prompt).toContain('Apply agent-brain QA to your surface (ALL surfaces)');
+    expect(prompt).toContain('### Browser surface (web_ui / visual / canvas)');
+    expect(prompt).toContain('### CLI surface');
+    expect(prompt).toContain('### API surface');
+    expect(prompt).toContain('### Library surface');
+    expect(prompt).toContain('--help'); // CLI exploratory probing
+    expect(prompt).toContain('confirm the exit code is non-zero'); // CLI error-path rigor
+    expect(prompt).toContain('SEMANTICS, not just non-5xx'); // API exploratory rigor
+    // Output contract is unchanged (back-compat for the gate + status surfacing).
+    expect(prompt).toContain(
+      'End with: {"passed": true/false, "stage": "playwright_eval", "surface": "web_ui|visual|cli|api|library|none", "layer2_status": "completed|skipped_no_mcp|not_applicable|failed", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
+    );
+
     await waitForAll(manager, parsed);
   });
 });
