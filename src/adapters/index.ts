@@ -19,7 +19,7 @@ const JOB_TYPES: JobType[] = [
   'dev',
   'eval',
   'critic_eval',
-  'playwright_eval',
+  'interaction_e2e',
   'mechanical_eval',
   'integration_test',
   'compile_context',

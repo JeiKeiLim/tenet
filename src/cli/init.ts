@@ -75,7 +75,7 @@ const CRITICS_ROSTER_TEMPLATE = `{
   "critics": [
     { "id": "code_critic", "builtin": true, "enabled": true },
     { "id": "test_critic", "builtin": true, "enabled": true },
-    { "id": "playwright_eval", "builtin": true, "enabled": true },
+    { "id": "interaction_e2e", "builtin": true, "enabled": true },
     {
       "id": "security",
       "builtin": false,
@@ -294,9 +294,9 @@ type StateConfig = {
   opencode_args?: string;
   codex_args?: string;
   claude_args?: string;
-  opencode_args_playwright_eval?: string;
-  codex_args_playwright_eval?: string;
-  claude_args_playwright_eval?: string;
+  opencode_args_interaction_e2e?: string;
+  codex_args_interaction_e2e?: string;
+  claude_args_interaction_e2e?: string;
   /** Per-project star-nudge state (see src/cli/star-nudge.ts). */
   star_nudge?: { starredAt?: string };
 };

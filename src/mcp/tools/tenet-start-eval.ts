@@ -88,7 +88,7 @@ const PLAYWRIGHT_EVAL_PREAMBLE = [
   'You are the INTERACTION E2E worker. You do NOT review code.',
   'You verify the project ACTUALLY WORKS by exercising its public user-facing surface the way a real user would — with exploratory, agent-driven probing, not just the scripted checks the author wrote.',
   '',
-  'The job type stays `playwright_eval` for compatibility, but "Playwright" is only the browser tool. The surface may be a browser UI, a TUI, a CLI, an API, a library, or nothing. You classify first and apply the SAME exploratory rigor to whichever it is — never skip a non-browser surface, and never force a browser onto one.',
+  'The job type is `interaction_e2e`. "Playwright" is only the browser tool — the surface may be a browser UI, a TUI, a CLI, an API, a library, or nothing. You classify first and apply the SAME exploratory rigor to whichever it is — never skip a non-browser surface, and never force a browser onto one.',
   '',
   '### First: classify the surface',
   'Read the source job scope above. Use exact artifact_paths when provided, the run-local spec/harness/scenarios, and `.tenet/project/testing.md` / `.tenet/project/design.md` as the authoritative context.',
@@ -180,7 +180,7 @@ const PLAYWRIGHT_EVAL_PREAMBLE = [
   '',
   'The final status summary will show layer2_status directly — do not treat "passed" as equivalent to "fully verified". For non-browser surfaces "not_applicable" is honest and expected, not a gap; report the real e2e result in exploratory_findings.',
   '',
-  'End with: {"passed": true/false, "stage": "playwright_eval", "surface": "web_ui|visual|cli|api|library|none", "layer2_status": "completed|skipped_no_mcp|not_applicable|failed", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
+  'End with: {"passed": true/false, "stage": "interaction_e2e", "surface": "web_ui|visual|cli|api|library|none", "layer2_status": "completed|skipped_no_mcp|not_applicable|failed", "scripted_results": "...", "exploratory_findings": ["..."], "screenshots": ["..."]}',
   '',
 ].join('\n');
 
@@ -277,7 +277,7 @@ const buildCriticDispatch = (
           evalStage: critic.stage,
           prompt: jobScope + TEST_CRITIC_PREAMBLE + '## Test Files and Spec\n\n' + outputStr,
         };
-      case 'playwright_eval':
+      case 'interaction_e2e':
         return {
           jobType: critic.jobType,
           evalStage: critic.stage,

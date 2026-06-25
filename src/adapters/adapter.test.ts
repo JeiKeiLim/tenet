@@ -84,16 +84,16 @@ describe('AdapterRegistry', () => {
     const registry = new AdapterRegistry({
       byJobType: {
         codex: {
-          playwright_eval: ['--dangerously-bypass-approvals-and-sandbox'],
+          interaction_e2e: ['--dangerously-bypass-approvals-and-sandbox'],
         },
       },
     });
 
-    expect(registry.getJobExtraArgs('codex', 'playwright_eval')).toEqual([
+    expect(registry.getJobExtraArgs('codex', 'interaction_e2e')).toEqual([
       '--dangerously-bypass-approvals-and-sandbox',
     ]);
     expect(registry.getJobExtraArgs('codex', 'dev')).toEqual([]);
-    expect(registry.getJobExtraArgs('mock-adapter', 'playwright_eval')).toEqual([]);
+    expect(registry.getJobExtraArgs('mock-adapter', 'interaction_e2e')).toEqual([]);
   });
 
   it('throws when no adapters are available for default selection', async () => {
@@ -111,12 +111,12 @@ describe('parseAdapterExtraArgs', () => {
       claude_args: '--allowedTools Bash,Read,Write',
       opencode_args: '--model github-copilot/claude-opus-4-5',
       codex_args: '--sandbox danger-full-access',
-      codex_args_playwright_eval: '--dangerously-bypass-approvals-and-sandbox',
+      codex_args_interaction_e2e: '--dangerously-bypass-approvals-and-sandbox',
     });
     expect(parsed.claude).toEqual(['--allowedTools', 'Bash,Read,Write']);
     expect(parsed.opencode).toEqual(['--model', 'github-copilot/claude-opus-4-5']);
     expect(parsed.codex).toEqual(['--sandbox', 'danger-full-access']);
-    expect(parsed.byJobType?.codex?.playwright_eval).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
+    expect(parsed.byJobType?.codex?.interaction_e2e).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
   });
 
   it('returns empty arrays for missing or empty values', () => {

@@ -271,7 +271,7 @@ Pass an empty string to clear a setting: `tenet config --opencode-args ""`.
 **Restart the Tenet MCP server after changing adapter args** — they're read at server startup.
 
 Notes on the mechanism:
-- Extra args are stored in `.tenet/.state/config.json` under `claude_args` / `opencode_args` / `codex_args`, with optional job-scoped keys such as `codex_args_playwright_eval`.
+- Extra args are stored in `.tenet/.state/config.json` under `claude_args` / `opencode_args` / `codex_args`, with optional job-scoped keys such as `codex_args_interaction_e2e`.
 - They're injected per-CLI at the known-safe position. Codex defaults to `--sandbox workspace-write`; global or job-scoped sandbox flags override that default.
 - Argument splitting is whitespace-based — values cannot contain embedded spaces in v1. If you need quoted values, file an issue.
 

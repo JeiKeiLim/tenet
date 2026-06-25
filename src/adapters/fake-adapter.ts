@@ -157,7 +157,7 @@ export const matchers = {
       const markers: Record<string, string[]> = {
         code_critic: ['Code Critic', '"stage": "code_critic"'],
         test_critic: ['Test Critic', '"stage": "test_critic"'],
-        playwright_eval: ['Playwright', 'PLAYWRIGHT EVAL'],
+        interaction_e2e: ['Interaction E2E', '"stage": "interaction_e2e"'],
         readiness_validation: ['IMPLEMENTATION READINESS', 'readiness'],
       };
       const candidates = markers[stage] ?? [stage];

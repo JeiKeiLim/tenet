@@ -167,7 +167,7 @@ describe('JobManager', () => {
     const registry = new AdapterRegistry({
       byJobType: {
         codex: {
-          playwright_eval: ['--dangerously-bypass-approvals-and-sandbox'],
+          interaction_e2e: ['--dangerously-bypass-approvals-and-sandbox'],
         },
       },
     });
@@ -180,7 +180,7 @@ describe('JobManager', () => {
       defaultJobTimeoutMs: 2_000,
     });
 
-    const job = manager.startJob('playwright_eval', { prompt: 'verify browser' });
+    const job = manager.startJob('interaction_e2e', { prompt: 'verify browser' });
     await manager.waitForJob(job.id, null, 5_000);
 
     expect(codex.lastInvocation?.extraArgs).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
