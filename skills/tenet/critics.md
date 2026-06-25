@@ -31,7 +31,7 @@ beats "check for security issues."
   "critics": [
     { "id": "code_critic",     "builtin": true,  "enabled": true },
     { "id": "test_critic",     "builtin": true,  "enabled": true },
-    { "id": "playwright_eval", "builtin": true,  "enabled": true },
+    { "id": "interaction_e2e", "builtin": true,  "enabled": true },
     {
       "id": "security",
       "builtin": false,
@@ -46,15 +46,14 @@ beats "check for security issues."
 
 - **Built-ins** (`builtin: true`): only `enabled` (and order) matter. Omitting
   one leaves it enabled at its default position. Set `enabled: false` to drop it.
-  Note: the `playwright_eval` (interaction-e2e) critic handles CLI/API/library
-  surfaces too — agent-brain shell e2e, not just browser — so for a CLI-only
-  project you usually want it **enabled**. Only disable it if you want no
-  public-surface e2e at all.
+  Note: the `interaction_e2e` critic handles CLI/API/library surfaces too —
+  agent-brain shell e2e, not just browser — so for a CLI-only project you usually
+  want it **enabled**. Only disable it if you want no public-surface e2e at all.
 - **Custom** (`builtin: false`):
   - `id` — stable identifier; also the default `stage` name if `stage` is omitted.
   - `stage` — the `eval_stage` name. Must be unique across the roster.
-  - `job_type` — `critic_eval` (default) or `playwright_eval`. Use
-    `playwright_eval` only if the critic needs browser tools / emits
+  - `job_type` — `critic_eval` (default) or `interaction_e2e`. Use
+    `interaction_e2e` only if the critic needs browser tools / emits
     `layer2_status`; otherwise `critic_eval`.
   - `prompt_file` — project-relative path to the prompt markdown. Missing file →
     the critic is skipped at dispatch with a warning (never fatal).

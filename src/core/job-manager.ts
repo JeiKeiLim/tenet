@@ -640,9 +640,10 @@ export class JobManager {
     const configuredTimeout = parseTimeoutMinutes(this.stateStore.getConfig('timeout_minutes'));
     const timeoutMs = configuredTimeout ? configuredTimeout * 60 * 1000 : undefined;
 
-    // Browser/visual e2e jobs need access to Playwright MCP tools for exploratory testing.
-    // CLI/API/library jobs with this legacy job type simply won't use them.
-    const allowedTools = job.type === 'playwright_eval'
+    // The interaction-e2e critic gets the Playwright MCP tool allowlist so it can
+    // drive a browser when the surface is web_ui/visual. CLI/API/library surfaces
+    // simply don't use them.
+    const allowedTools = job.type === 'interaction_e2e'
       ? [
           'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
           'mcp__playwright__browser_navigate',

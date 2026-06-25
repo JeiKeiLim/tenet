@@ -83,7 +83,7 @@ const createHarness = (): { store: StateStore; manager: JobManager; handler: Han
   store.setConfig('agent_override_dev', 'mock-adapter');
   store.setConfig('agent_override_eval', 'mock-adapter');
   store.setConfig('agent_override_critic_eval', 'mock-adapter');
-  store.setConfig('agent_override_playwright_eval', 'mock-adapter');
+  store.setConfig('agent_override_interaction_e2e', 'mock-adapter');
 
   const registry = new AdapterRegistry();
   registry.register(new PassingAdapter());
@@ -116,7 +116,7 @@ const createHarnessWithAdapter = (
   store.setConfig('agent_override_dev', adapter.name);
   store.setConfig('agent_override_eval', adapter.name);
   store.setConfig('agent_override_critic_eval', adapter.name);
-  store.setConfig('agent_override_playwright_eval', adapter.name);
+  store.setConfig('agent_override_interaction_e2e', adapter.name);
 
   const registry = new AdapterRegistry();
   registry.register(adapter);
@@ -278,9 +278,9 @@ describe('tenet_report_blocking_finding', () => {
       eval_stage: 'test_critic',
       prompt: 'test critique',
     });
-    const playwright = manager.startJob('playwright_eval', {
+    const playwright = manager.startJob('interaction_e2e', {
       source_job_id: childId,
-      eval_stage: 'playwright_eval',
+      eval_stage: 'interaction_e2e',
       prompt: 'playwright',
     });
 

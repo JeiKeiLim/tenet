@@ -428,16 +428,16 @@ const run = async (): Promise<void> => {
       'Extra CLI args to pass to every codex subprocess (e.g. "--sandbox danger-full-access"). Use "" to clear.',
     )
     .option(
-      '--claude-args-playwright-eval <args>',
-      'Extra CLI args to pass only to claude-code playwright_eval subprocesses. Use "" to clear.',
+      '--claude-args-interaction-e2e <args>',
+      'Extra CLI args to pass only to claude-code interaction-e2e critic subprocesses. Use "" to clear.',
     )
     .option(
-      '--opencode-args-playwright-eval <args>',
-      'Extra CLI args to pass only to opencode playwright_eval subprocesses. Use "" to clear.',
+      '--opencode-args-interaction-e2e <args>',
+      'Extra CLI args to pass only to opencode interaction-e2e critic subprocesses. Use "" to clear.',
     )
     .option(
-      '--codex-args-playwright-eval <args>',
-      'Extra CLI args to pass only to codex playwright_eval subprocesses (e.g. "--dangerously-bypass-approvals-and-sandbox"). Use "" to clear.',
+      '--codex-args-interaction-e2e <args>',
+      'Extra CLI args to pass only to codex interaction-e2e critic subprocesses (e.g. "--dangerously-bypass-approvals-and-sandbox"). Use "" to clear.',
     )
     .action(async (options: {
       project: string;
@@ -447,9 +447,9 @@ const run = async (): Promise<void> => {
       claudeArgs?: string;
       opencodeArgs?: string;
       codexArgs?: string;
-      claudeArgsPlaywrightEval?: string;
-      opencodeArgsPlaywrightEval?: string;
-      codexArgsPlaywrightEval?: string;
+      claudeArgsInteractionE2e?: string;
+      opencodeArgsInteractionE2e?: string;
+      codexArgsInteractionE2e?: string;
     }) => {
       const projectPath = resolveProjectPath(options.project);
       const tenetRoot = path.join(projectPath, '.tenet');
@@ -530,7 +530,7 @@ const run = async (): Promise<void> => {
 
       const setScopedArgs = (
         optionValue: string | undefined,
-        key: 'claude_args_playwright_eval' | 'opencode_args_playwright_eval' | 'codex_args_playwright_eval',
+        key: 'claude_args_interaction_e2e' | 'opencode_args_interaction_e2e' | 'codex_args_interaction_e2e',
       ): void => {
         if (optionValue === undefined) {
           return;
@@ -547,9 +547,9 @@ const run = async (): Promise<void> => {
         changed = true;
       };
 
-      setScopedArgs(options.claudeArgsPlaywrightEval, 'claude_args_playwright_eval');
-      setScopedArgs(options.opencodeArgsPlaywrightEval, 'opencode_args_playwright_eval');
-      setScopedArgs(options.codexArgsPlaywrightEval, 'codex_args_playwright_eval');
+      setScopedArgs(options.claudeArgsInteractionE2e, 'claude_args_interaction_e2e');
+      setScopedArgs(options.opencodeArgsInteractionE2e, 'opencode_args_interaction_e2e');
+      setScopedArgs(options.codexArgsInteractionE2e, 'codex_args_interaction_e2e');
 
       if (changed) {
         writeStateConfig(tenetRoot, config);
@@ -557,9 +557,9 @@ const run = async (): Promise<void> => {
           options.claudeArgs !== undefined ||
           options.opencodeArgs !== undefined ||
           options.codexArgs !== undefined ||
-          options.claudeArgsPlaywrightEval !== undefined ||
-          options.opencodeArgsPlaywrightEval !== undefined ||
-          options.codexArgsPlaywrightEval !== undefined
+          options.claudeArgsInteractionE2e !== undefined ||
+          options.opencodeArgsInteractionE2e !== undefined ||
+          options.codexArgsInteractionE2e !== undefined
         ) {
           console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
         }
@@ -578,9 +578,9 @@ const run = async (): Promise<void> => {
       console.log(`  claude_args: ${config.claude_args ?? '(none)'}`);
       console.log(`  opencode_args: ${config.opencode_args ?? '(none)'}`);
       console.log(`  codex_args: ${config.codex_args ?? '(none)'}`);
-      console.log(`  claude_args_playwright_eval: ${config.claude_args_playwright_eval ?? '(none)'}`);
-      console.log(`  opencode_args_playwright_eval: ${config.opencode_args_playwright_eval ?? '(none)'}`);
-      console.log(`  codex_args_playwright_eval: ${config.codex_args_playwright_eval ?? '(none)'}`);
+      console.log(`  claude_args_interaction_e2e: ${config.claude_args_interaction_e2e ?? '(none)'}`);
+      console.log(`  opencode_args_interaction_e2e: ${config.opencode_args_interaction_e2e ?? '(none)'}`);
+      console.log(`  codex_args_interaction_e2e: ${config.codex_args_interaction_e2e ?? '(none)'}`);
       console.log(
         '\nTo change: tenet config --agent <name> --max-retries <n|unlimited> --timeout <minutes> \\',
       );
@@ -588,7 +588,7 @@ const run = async (): Promise<void> => {
         '                         --claude-args "..." --opencode-args "..." --codex-args "..." \\',
       );
       console.log(
-        '                         --codex-args-playwright-eval "..."',
+        '                         --codex-args-interaction-e2e "..."',
       );
     });
 

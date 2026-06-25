@@ -8,14 +8,14 @@ const byId = (critics: ResolvedCritic[], id: string): ResolvedCritic | undefined
 
 describe('resolveRoster', () => {
   it('falls back to the 3 built-ins for invalid payloads', () => {
-    expect(resolveRoster(null).map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
-    expect(resolveRoster(undefined).map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
-    expect(resolveRoster('nope').map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
-    expect(resolveRoster({}).map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
+    expect(resolveRoster(null).map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
+    expect(resolveRoster(undefined).map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
+    expect(resolveRoster('nope').map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
+    expect(resolveRoster({}).map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
     expect(resolveRoster({ critics: 'not-an-array' }).map((c) => c.id)).toEqual([
       'code_critic',
       'test_critic',
-      'playwright_eval',
+      'interaction_e2e',
     ]);
   });
 
@@ -23,15 +23,15 @@ describe('resolveRoster', () => {
     const roster = resolveRoster({ version: 1, critics: [] });
     expect(roster).toHaveLength(3);
     expect(roster.every((c) => c.builtin && c.enabled)).toBe(true);
-    expect(roster.map((c) => c.stage)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
-    expect(roster.map((c) => c.jobType)).toEqual(['critic_eval', 'eval', 'playwright_eval']);
+    expect(roster.map((c) => c.stage)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
+    expect(roster.map((c) => c.jobType)).toEqual(['critic_eval', 'eval', 'interaction_e2e']);
   });
 
   it('honors enabled:false on a built-in', () => {
     const roster = resolveRoster({
-      critics: [{ id: 'playwright_eval', builtin: true, enabled: false }],
+      critics: [{ id: 'interaction_e2e', builtin: true, enabled: false }],
     });
-    expect(byId(roster, 'playwright_eval')?.enabled).toBe(false);
+    expect(byId(roster, 'interaction_e2e')?.enabled).toBe(false);
     expect(byId(roster, 'code_critic')?.enabled).toBe(true);
   });
 
@@ -39,7 +39,37 @@ describe('resolveRoster', () => {
     const roster = resolveRoster({
       critics: [{ id: 'code_critic', builtin: true, enabled: true }],
     });
-    expect(roster.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
+    expect(roster.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
+  });
+
+  it('maps the legacy `playwright_eval` id onto the interaction_e2e built-in', () => {
+    // A critics.json authored before the rename keeps resolving without an edit.
+    const roster = resolveRoster({
+      critics: [
+        { id: 'code_critic', builtin: true, enabled: true },
+        { id: 'test_critic', builtin: true, enabled: true },
+        { id: 'playwright_eval', builtin: true, enabled: false },
+      ],
+    });
+    expect(roster.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
+    const e2e = byId(roster, 'interaction_e2e');
+    expect(e2e?.builtin).toBe(true);
+    expect(e2e?.stage).toBe('interaction_e2e');
+    expect(e2e?.jobType).toBe('interaction_e2e');
+    expect(e2e?.enabled).toBe(false); // honors enabled:false carried by the legacy id
+  });
+
+  it('dedups a legacy id against its current equivalent', () => {
+    const roster = resolveRoster({
+      critics: [
+        { id: 'playwright_eval', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: false },
+      ],
+    });
+    // Both normalize to interaction_e2e → first wins, no duplicate.
+    const e2e = roster.filter((c) => c.id === 'interaction_e2e');
+    expect(e2e).toHaveLength(1);
+    expect(e2e[0].enabled).toBe(true);
   });
 
   it('resolves a custom critic with explicit stage/job_type/prompt_file', () => {
@@ -47,7 +77,7 @@ describe('resolveRoster', () => {
       critics: [
         { id: 'code_critic', builtin: true, enabled: true },
         { id: 'test_critic', builtin: true, enabled: true },
-        { id: 'playwright_eval', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: true },
         {
           id: 'security',
           builtin: false,
@@ -98,11 +128,11 @@ describe('resolveRoster', () => {
     const codeCritics = roster.filter((c) => c.id === 'code_critic');
     expect(codeCritics).toHaveLength(1);
     expect(codeCritics[0].enabled).toBe(false); // first wins
-    expect(roster.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
+    expect(roster.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
   });
 
   it('DEFAULT_ROSTER is the 3 built-ins enabled', () => {
-    expect(DEFAULT_ROSTER.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
+    expect(DEFAULT_ROSTER.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
     expect(DEFAULT_ROSTER.every((c) => c.enabled)).toBe(true);
   });
 });
@@ -117,14 +147,14 @@ describe('loadCriticRoster', () => {
   it('returns defaults when no roster file exists', () => {
     const { critics, warning } = loadCriticRoster(tmp);
     expect(warning).toBeUndefined();
-    expect(critics.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
+    expect(critics.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
   });
 
   it('returns defaults + a warning when the roster file is invalid JSON', () => {
     const rosterPath = path.join(mkdirTenet(tmp), 'critics.json');
     fs.writeFileSync(rosterPath, '{ broken', 'utf8');
     const { critics, warning } = loadCriticRoster(tmp);
-    expect(critics.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'playwright_eval']);
+    expect(critics.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
     expect(warning).toEqual(expect.stringContaining('Could not parse'));
   });
 
@@ -137,7 +167,7 @@ describe('loadCriticRoster', () => {
         critics: [
           { id: 'code_critic', builtin: true, enabled: true },
           { id: 'test_critic', builtin: true, enabled: true },
-          { id: 'playwright_eval', builtin: true, enabled: false },
+          { id: 'interaction_e2e', builtin: true, enabled: false },
           { id: 'a11y', stage: 'a11y_critic', prompt_file: '.tenet/critics/a11y.md' },
         ],
       }),
@@ -145,7 +175,7 @@ describe('loadCriticRoster', () => {
     );
     const { critics, warning } = loadCriticRoster(tmp);
     expect(warning).toBeUndefined();
-    expect(byId(critics, 'playwright_eval')?.enabled).toBe(false);
+    expect(byId(critics, 'interaction_e2e')?.enabled).toBe(false);
     expect(byId(critics, 'a11y')?.stage).toBe('a11y_critic');
   });
 });
