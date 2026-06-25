@@ -315,6 +315,54 @@ describe('initProject', () => {
     expect(fs.existsSync(path.join(tenetRoot, 'state-snapshot', 'README.md'))).toBe(true);
   });
 
+  it('rewrites the legacy playwright_eval id in .tenet/critics.json on upgrade', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(tenetRoot, 'critics.json'),
+      JSON.stringify(
+        {
+          version: 1,
+          critics: [
+            { id: 'code_critic', builtin: true, enabled: true },
+            { id: 'playwright_eval', builtin: true, enabled: true },
+            { id: 'my_custom', job_type: 'playwright_eval', prompt_file: '.tenet/critics/x.md' },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    initProject(projectPath, { upgrade: true });
+
+    const after = fs.readFileSync(path.join(tenetRoot, 'critics.json'), 'utf8');
+    expect(after).not.toContain('playwright_eval');
+    expect(after).toContain('"id": "interaction_e2e"');
+    expect(after).toContain('"job_type": "interaction_e2e"');
+    // Custom critic + enabled flags + structure preserved.
+    expect(after).toContain('my_custom');
+    expect(after).toContain('"enabled": true');
+  });
+
+  it('leaves a clean critics.json untouched on upgrade (idempotent)', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+    const clean = JSON.stringify(
+      { version: 1, critics: [{ id: 'interaction_e2e', builtin: true, enabled: true }] },
+      null,
+      2,
+    );
+    fs.writeFileSync(path.join(tenetRoot, 'critics.json'), clean, 'utf8');
+
+    initProject(projectPath, { upgrade: true });
+
+    expect(fs.readFileSync(path.join(tenetRoot, 'critics.json'), 'utf8')).toBe(clean);
+  });
+
   it('creates lifecycle docs during upgrade without overwriting existing project docs', () => {
     const projectPath = createTempDir();
     const tenetRoot = path.join(projectPath, '.tenet');

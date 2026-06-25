@@ -521,6 +521,7 @@ function upgradeProject(projectPath: string, options?: InitOptions): void {
   stateStore.close();
 
   migrateLegacyDocuments(tenetRoot, { enabled: options?.migrateLegacy === true });
+  migrateLegacyCriticRosterId(projectPath);
 
   // Overwrite skill files (these are tenet-owned, not user-edited)
   copySkillDirs(projectPath);
@@ -536,6 +537,38 @@ function upgradeProject(projectPath: string, options?: InitOptions): void {
   // archive/legacy-v1/ and knowledge/ is snapshotted there. project/ templates,
   // status/, state-snapshot/, and .state/config.json are never overwritten.
 }
+
+/**
+ * Rewrite the legacy `playwright_eval` built-in id (and any custom critic's
+ * `job_type: "playwright_eval"`) to `interaction_e2e` in a project's
+ * `.tenet/critics.json`. Run during `tenet init --upgrade` so the file a user
+ * opens matches the post-rename identifier.
+ *
+ * The roster resolver ALSO aliases the old id as a safety net, so this is
+ * cosmetic — but it removes the "wait, is this broken?" moment when a user
+ * sees the old name still sitting in their file. Targeted string replace: only
+ * the legacy token changes (order, enabled flags, custom critics, and formatting
+ * are preserved). Idempotent — a no-op once the file is clean.
+ */
+const migrateLegacyCriticRosterId = (projectPath: string): void => {
+  const rosterPath = path.join(projectPath, '.tenet', 'critics.json');
+  if (!fs.existsSync(rosterPath)) {
+    return;
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(rosterPath, 'utf8');
+  } catch {
+    return;
+  }
+  if (!raw.includes('playwright_eval')) {
+    return;
+  }
+  // `playwright_eval` only appears in a critics.json as a built-in id or a
+  // custom critic's job_type — both should become interaction_e2e.
+  fs.writeFileSync(rosterPath, raw.replace(/playwright_eval/g, 'interaction_e2e'), 'utf8');
+  console.log('Updated .tenet/critics.json: renamed playwright_eval → interaction_e2e.');
+};
 
 const backupStateDb = (tenetRoot: string): string | null => {
   const stateDir = path.join(tenetRoot, '.state');
