@@ -201,4 +201,47 @@ describe('DB migrations', () => {
     });
     expect(store.getJob('child-job')?.params.remediation_for).toBeUndefined();
   });
+
+  it('renames the legacy playwright_eval identifier to interaction_e2e in upgrade mode', () => {
+    const projectPath = createTempDir();
+    const dbPath = path.join(projectPath, '.tenet', '.state', 'tenet.db');
+
+    // Bootstrap a real current-shape DB, seed legacy rows, then regress the
+    // schema stamp to 1 so the v2 migration runs on reopen.
+    const bootstrap = new StateStore(projectPath);
+    stores.push(bootstrap);
+    bootstrap.close();
+
+    const seed = new Database(dbPath);
+    const now = Date.now();
+    seed.prepare(
+      'INSERT INTO jobs (id, type, status, params, agent_name, created_at, retry_count, max_retries, parent_job_id) VALUES (?,?,?,?,?,?,?,?,?)',
+    ).run(
+      'e2e-job',
+      'playwright_eval',
+      'completed',
+      JSON.stringify({ name: 'e2e', expected_eval_stages: ['code_critic', 'test_critic', 'playwright_eval'] }),
+      'claude',
+      now,
+      0,
+      3,
+      null,
+    );
+    seed.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run('agent_override_playwright_eval', 'claude');
+    seed.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run('codex_args_playwright_eval', '--foo');
+    seed.prepare('UPDATE config SET value = ? WHERE key = ?').run('1', DB_SCHEMA_VERSION_KEY);
+    seed.close();
+
+    const migrated = new StateStore(projectPath, { migrate: true });
+    stores.push(migrated);
+
+    expect(migrated.getConfig(DB_SCHEMA_VERSION_KEY)).toBe(String(CURRENT_DB_SCHEMA_VERSION));
+    const job = migrated.getJob('e2e-job');
+    expect(job?.type).toBe('interaction_e2e');
+    expect(job?.params.expected_eval_stages).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
+    expect(migrated.getConfig('agent_override_interaction_e2e')).toBe('claude');
+    expect(migrated.getConfig('agent_override_playwright_eval')).toBeNull();
+    expect(migrated.getConfig('codex_args_interaction_e2e')).toBe('--foo');
+    expect(migrated.getConfig('codex_args_playwright_eval')).toBeNull();
+  });
 });
