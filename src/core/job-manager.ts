@@ -348,6 +348,11 @@ export class JobManager {
     this.detectStalledJobs();
   }
 
+  /** Heartbeat staleness threshold (ms) — a running job whose last heartbeat is older than this is stale. */
+  getHeartbeatTimeoutMs(): number {
+    return this.heartbeatTimeoutMs;
+  }
+
   private detectStalledJobs(): void {
     const now = Date.now();
     this.stateStore.resetOrphanedJobs(this.serverId, this.heartbeatTimeoutMs);
@@ -711,9 +716,13 @@ export class JobManager {
       '- Do NOT write tests that only check absence of errors or internal state — a separate test critic will reject them',
       '- Every new endpoint, page, or feature MUST have at least one test that verifies it works correctly',
       '- Do NOT just explore, research, or describe what could be done — actually implement it',
-      projectDoctrineAuthorized
-        ? '- This job is explicitly authorized to edit `.tenet/project/**` project doctrine.'
-        : '- Do NOT edit `.tenet/project/**`; write proposed doctrine updates to the run-local journal or final report instead.',
+      ...(projectDoctrineAuthorized
+        ? ['- This job is explicitly authorized to edit `.tenet/project/**` project doctrine.']
+        : [
+            '- Do NOT edit `.tenet/project/**`. If you discover project doctrine (`.tenet/project/**`) is missing, stale, or wrong, record a **doctrine-drift note** — do NOT patch doctrine directly.',
+            '- Write the drift note to the run journal via `tenet_update_knowledge(type="journal", title="doctrine drift: <file>", findings={"doctrine_file": "<e.g. project/architecture.md>", "current_claim": "<what doctrine currently says>", "observed_reality": "<what the code or run actually shows>", "proposed_change": "<the specific edit that brings doctrine back in line>"})`.',
+            '- ALSO drop a `### doctrine-drift: <file>` marker at the spot in the run doc (e.g. `design.md`) where you note the drift inline, so the run-end review finds it even when written freeform. One note per affected doctrine file; the review dedupes by `doctrine_file`.',
+          ]),
       '',
       '## Smoke Check (mandatory before exiting)',
       '- If this is a server/API feature: start the server, verify your endpoints respond (non-5xx)',
