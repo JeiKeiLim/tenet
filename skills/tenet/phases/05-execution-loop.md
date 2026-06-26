@@ -34,11 +34,17 @@ Execute this sequence for every job cycle:
     - If `is_terminal` is true: proceed to step 7.
 7.  **Get Result**: `tenet_job_result(job_id="...")`
     Retrieve the final output and execution metadata. If the project is a git repository, read the worker's final output for the commit SHA. If the worker produced dirty changes but did not commit, make a best-effort fallback commit for the same job before evaluation. If git is unavailable or the fallback commit fails, write a journal note with the reason and continue.
+    **Context-limit / error exit (worker):** if the worker's result has no real deliverable — a context-limit or error string (e.g. "prompt is too long", "maximum context length exceeded"), an empty/truncated body, or a hard failure — do NOT proceed to evaluation as if it succeeded. Treat it as a failed run: retry as-is with `tenet_retry_job` so it re-runs with fresh context (apply backoff between attempts). If the same worker context-limits **twice in a row**, the job is too large for one pass — split it into smaller sub-jobs rather than retrying identical a third time. Never accept a context-limited worker result as a done deliverable.
 8.  **Start Evaluation**: `tenet_start_eval(job_id="<original_job_id>", output={...}, feature="<feature>")`
     Dispatches the output to the evaluation pipeline and returns eval job IDs plus `execution_mode`.
 9.  **Background Wait for Eval**: Same pattern as step 6. If `execution_mode` is sequential, later eval jobs may remain pending until parents complete; keep waiting on the returned IDs until all are terminal.
 10. **Get Eval Results**: `tenet_job_result(job_id="<eval_job_id>")`
-    Retrieve every returned eval result. ALL must pass.
+    Retrieve every returned eval result. ALL must pass. A critic/eval result passes **only** when it returns a valid rubric JSON with `passed: true`. A result with **no valid rubric JSON — a context-limit / error exit** (e.g. "prompt is too long", "maximum context length exceeded", a raw error string, or an empty/truncated body) — **is NOT a pass**, even though the job reached a terminal state. Do not treat a context-limited critic as "passed with partial result"; the resume gate already refuses to unblock on unparseable output, and you must do the same.
+
+    **On a context-limit / no-rubric critic exit:**
+    - **Retry as-is first.** `tenet_retry_job(job_id)` the affected critic so it re-runs with fresh context. This counts against the job's normal retry budget (default unlimited); apply backoff between attempts.
+    - **Split after 2 consecutive context-limits.** If the same critic context-limits twice in a row, the scope is too large for one pass — do not retry identical a third time. Split the critic's scope into multiple reduced-scope critic jobs (divide the files/diff into smaller batches, each its own eval job) and require all of those to pass. For a worker, redispatch as smaller sub-jobs.
+    - **Never accept a context-limited result as a pass** to move on. If retries and splits keep failing, treat it as a failed eval: `tenet_retry_job` the source, or `tenet_report_blocking_finding` if a specific cause is suspected.
 11. **Update Knowledge or Retry**: `tenet_update_knowledge(...)` on success; `tenet_retry_job(...)` or `tenet_report_blocking_finding(...)` on failure, as described below.
     Persist any architectural discoveries or critical findings.
 12. **Trust Status Sync**:
@@ -51,7 +57,10 @@ Steps 1–13 are the **per-job** cycle. The loop exits when `tenet_continue()` r
 
 `.tenet/project/**` doctrine is read at the start of every run (`tenet_compile_context`) but never re-scanned, so once it drifts, every subsequent run starts on stale context. This step keeps it from silently rotting — and it never blocks the loop.
 
-1. **Collect drift notes.** Read the run's journal (`.tenet/runs/<run-slug>/journal/`) for any **doctrine-drift notes** written during the run (see *Project Doctrine Write Boundary* above).
+1. **Collect drift notes.** Drift notes do not always land in the journal, so scan every place a dev job might have written one:
+   - **Run journal** (`.tenet/runs/<run-slug>/journal/`): entries titled `doctrine drift: <file>` — the exact contract dev jobs are told to use.
+   - **Run docs** (`.tenet/runs/<run-slug>/**`, e.g. `design.md`, `spec.md`): lines carrying the `### doctrine-drift: <file>` marker, **plus** any freeform prose describing doctrine as stale/wrong/missing even without the marker. LLMs do not always use the marker they were given — read for the *intent*, not just the token.
+   Match each note to its `doctrine_file`, then **dedupe by `doctrine_file`**: if the same drift surfaces via the journal, a marker, and freeform prose, that is ONE proposal, not three. See *Project Doctrine Write Boundary* below for the note shape.
 2. **If there are none, stop.** Doctrine is current — write no proposal, no overhead. Continue to the final report.
 3. **Consolidate.** For each affected `.tenet/project/**` file, read the current doctrine and weigh the drift notes against it; draft one consolidated proposal per file (merge related notes, drop contradictions).
 4. **Append the proposals** to `.tenet/runs/<run-slug>/doctrine-proposals.md` (create the file if absent). One section per proposal:
@@ -97,6 +106,8 @@ If a normal job discovers that project doctrine is missing, stale, or wrong, it 
 - **current_claim** — what the doctrine currently asserts
 - **observed_reality** — what the code or run actually shows
 - **proposed_change** — the specific edit that would bring doctrine back in line
+
+Also drop a `### doctrine-drift: <file>` marker at the spot in the run doc (e.g. `design.md`) where the drift is noted inline. The run-end review scans both the journal and run docs, and dedupes by `doctrine_file`, so writing the note either way is fine — but the marker guarantees it is found even when the note is written freeform.
 
 Only explicit context-bootstrap, an authorized doctrine-maintenance job (`allow_project_doctrine_edits: true`), or direct user-requested doctrine work may edit `.tenet/project/**`. Drift notes are the input that keeps `.tenet/project/**` from silently rotting — they are collected into durable proposals at run completion (see **Run Completion — Doctrine Drift Review** below).
 

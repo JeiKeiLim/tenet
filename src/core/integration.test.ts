@@ -82,7 +82,7 @@ const createHarness = (rules: FakeFixtureRule[]): Harness => {
   );
   const getStatus = captureHandler<GetStatusHandler>((rt) =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    registerTenetGetStatusTool(rt as any, store),
+    registerTenetGetStatusTool(rt as any, store, manager),
   );
   const reportBlockingFinding = captureHandler<ReportBlockingFindingHandler>((rt) =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
