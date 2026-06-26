@@ -262,7 +262,7 @@ claude --help | head -30
 ```bash
 tenet config --opencode-args "--model github-copilot/claude-opus-4-5"
 tenet config --codex-args '--config approval_policy="never"'
-tenet config --codex-args-playwright-eval "--dangerously-bypass-approvals-and-sandbox"
+tenet config --codex-args-interaction-e2e "--dangerously-bypass-approvals-and-sandbox"
 tenet config --claude-args "--allowedTools Bash,Read,Write,Edit"
 ```
 
