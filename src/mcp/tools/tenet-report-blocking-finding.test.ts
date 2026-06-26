@@ -63,6 +63,22 @@ class ControlledParentAdapter implements AgentAdapter {
   }
 }
 
+/** Returns a context-limit error string (no rubric JSON) for every invocation —
+ *  models a CLI that hit its context window and exited with an error message. */
+class ContextLimitAdapter implements AgentAdapter {
+  public readonly name = 'mock-adapter';
+  async invoke(_invocation: AgentInvocation): Promise<AgentResponse> {
+    return {
+      success: true,
+      output: 'Error: prompt is too long: 1048576 tokens > 200000 maximum',
+      durationMs: 0,
+    };
+  }
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+}
+
 type Handler = (args: {
   job_id: string;
   finding: string;
@@ -419,6 +435,53 @@ describe('tenet_report_blocking_finding', () => {
     await manager.waitForJob(codeCritic.id, null, 5_000);
 
     // Parent stays blocked (only one of three critics has passed)
+    expect(store.getJob(reportJob.id)?.status).toBe('blocked_on_finding');
+  });
+
+  it('does not auto-resume parent when a critic exits with context-limit / unparseable output', async () => {
+    const { store, manager, handler } = createHarnessWithAdapter(new ContextLimitAdapter());
+
+    const reportJob = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const result = await handler({
+      job_id: reportJob.id,
+      finding: 'bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix',
+    });
+    const childId = parseResult(result).child_job_id as string;
+
+    await manager.waitForJob(childId, null, 5_000);
+    expect(store.getJob(reportJob.id)?.status).toBe('blocked_on_finding');
+
+    // Both expected critics "complete" but with a context-limit error string —
+    // no valid rubric JSON. Neither counts as a pass, so the parent must stay blocked.
+    const expected = ['code_critic', 'test_critic'];
+    const codeCritic = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      expected_eval_stages: expected,
+      prompt: 'code critique',
+    });
+    const testCritic = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      expected_eval_stages: expected,
+      prompt: 'test critique',
+    });
+
+    await manager.waitForJob(codeCritic.id, null, 5_000);
+    await manager.waitForJob(testCritic.id, null, 5_000);
+    expect(store.getJob(codeCritic.id)?.status).toBe('completed');
+    expect(store.getJob(testCritic.id)?.status).toBe('completed');
+
+    // Unparseable critic output is NOT a pass → parent stays blocked_on_finding.
     expect(store.getJob(reportJob.id)?.status).toBe('blocked_on_finding');
   });
 });

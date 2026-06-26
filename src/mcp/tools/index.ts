@@ -54,7 +54,7 @@ export const registerAllTools = (server: McpServer, jobManager: JobManager, stat
   safeRegister(() => registerTenetProcessSteerTool(registerTool, stateStore));
   safeRegister(() => registerTenetUpdateSteerTool(registerTool, stateStore));
   safeRegister(() => registerTenetHealthCheckTool(registerTool, stateStore, jobManager));
-  safeRegister(() => registerTenetGetStatusTool(registerTool, stateStore));
+  safeRegister(() => registerTenetGetStatusTool(registerTool, stateStore, jobManager));
   // tenet_set_agent removed from MCP — available via CLI only
   safeRegister(() => registerTenetRegisterJobsTool(registerTool, stateStore));
   safeRegister(() => registerTenetReportBlockingFindingTool(registerTool, jobManager, stateStore));

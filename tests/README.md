@@ -70,11 +70,11 @@ Those are covered by Tier 2 manual E2E canaries today; Tier 3 replay harnesses a
 
 ## Tier 2 E2E canaries
 
-Tier 2 canaries are manual because they run real agent CLIs and cost time/money. The Makefile exposes five targets:
+Tier 2 canaries are manual because they run real agent CLIs and cost time/money. The Makefile exposes five canaries, plus an `e2e-all` runner:
 
 - `make e2e-cli` — key-count CLI canary.
 - `make e2e-api` — stateful note-store API canary.
-- `make e2e-web` — click-counter web canary with Playwright eval reporting.
+- `make e2e-web` — click-counter web canary with interaction-e2e reporting.
 - `make e2e-agile` — two-slice agile CLI canary.
 - `make e2e-agile-full` — full-pipeline agile canary where the agent produces the agile spec and slice DAGs.
 - `make e2e-all` — runs all five sequentially.

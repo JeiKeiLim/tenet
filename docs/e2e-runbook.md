@@ -10,7 +10,7 @@ See `docs/planning/11_auto_testing_plan.md` for the full three-tier strategy.
 |---|---|---|
 | `make e2e-cli` | key-count CLI | readiness with `eval_parallel_safe=true` → parallel critics |
 | `make e2e-api` | note-store API | readiness with `eval_parallel_safe=false` → sequential critics |
-| `make e2e-web` | click-counter HTML | Playwright eval Layer 2 reporting path |
+| `make e2e-web` | click-counter HTML | interaction-e2e Layer 2 reporting path |
 | `make e2e-agile` | 2-slice agile CLI | per-slice registration and slice progress status |
 | `make e2e-agile-full` | agent-driven agile pipeline | planning prompt produces agile spec, decomposition, and slice jobs |
 | `make e2e-all` | all five sequentially | full coverage of the canary paths |
@@ -42,7 +42,7 @@ Switch to a cheaper model globally via `tenet config --opencode-args "--model ..
 ```bash
 make e2e-cli          # quickest smoke
 make e2e-api          # stateful-app path
-make e2e-web          # static + playwright-eval path
+make e2e-web          # static + interaction-e2e path
 make e2e-agile        # per-slice agile path
 make e2e-agile-full   # agent-driven agile planning path
 make e2e-all          # all five
