@@ -116,6 +116,37 @@ describe('JobManager', () => {
     expect(output.output).toContain('Deliverable Requirements');
   });
 
+  it('dev preamble carries the doctrine-drift note contract (journal entry + run-doc marker)', async () => {
+    const { manager } = createHarness();
+    const job = manager.startJob('dev', { prompt: 'build feature' });
+    await manager.waitForJob(job.id, null, 5_000);
+
+    const prompt = (manager.getJobResult(job.id).output as { output: string }).output;
+
+    // The vague "or final report" misroute is gone...
+    expect(prompt).not.toContain('or final report');
+    // ...replaced by the actual discoverable contract the run-end review depends on.
+    expect(prompt).toContain('tenet_update_knowledge(type="journal"');
+    expect(prompt).toContain('title="doctrine drift: <file>"');
+    expect(prompt).toContain('doctrine_file');
+    expect(prompt).toContain('current_claim');
+    expect(prompt).toContain('observed_reality');
+    expect(prompt).toContain('proposed_change');
+    expect(prompt).toContain('### doctrine-drift: <file>');
+  });
+
+  it('dev preamble authorizes doctrine edits when allow_project_doctrine_edits is set', async () => {
+    const { manager } = createHarness();
+    const job = manager.startJob('dev', { prompt: 'maintain doctrine', allow_project_doctrine_edits: true });
+    await manager.waitForJob(job.id, null, 5_000);
+
+    const prompt = (manager.getJobResult(job.id).output as { output: string }).output;
+
+    expect(prompt).toContain('explicitly authorized to edit `.tenet/project/**`');
+    // Authorized jobs edit doctrine directly, so they are NOT told to write drift notes.
+    expect(prompt).not.toContain('title="doctrine drift: <file>"');
+  });
+
   it('cancels a running job', async () => {
     const { store, manager } = createHarness(1_000);
 

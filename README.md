@@ -152,7 +152,7 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 1. **Core** — Job orchestration with DAG execution, heartbeat stall detection, configurable retry logic, and server-ID crash recovery
 2. **Adapters** — Pluggable agent adapters that spawn CLI subprocesses. 120-minute default timeout, configurable.
 3. **MCP Server** — 19 tools via `@modelcontextprotocol/server`. Zod-validated inputs.
-4. **CLI** — `init`, `serve`, `status`, `config` commands. Scaffolds `.tenet/`, copies skills to agent-specific locations, and runs explicit DB upgrades.
+4. **CLI** — `init`, `serve`, `status`, `config`, and `db` maintenance commands. Scaffolds `.tenet/`, copies skills to agent-specific locations, and runs explicit DB upgrades.
 
 ## CLI Reference
 
