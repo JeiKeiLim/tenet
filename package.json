@@ -1,6 +1,6 @@
 {
   "name": "@jeikeilim/tenet",
-  "version": "26.6.6",
+  "version": "26.6.7",
   "description": "Cross-platform AI agent plugin for 12+ hour autonomous development cycles",
   "repository": {
     "type": "git",
