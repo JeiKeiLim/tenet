@@ -107,6 +107,33 @@ const jobStatusIcon = (status: Job['status']): string => {
   }
 };
 
+const dagIdOf = (job: Job): string | null => {
+  const { dag_id } = job.params;
+  return typeof dag_id === 'string' && dag_id.length > 0 ? dag_id : null;
+};
+
+/**
+ * Plan-order comparator: dag_id (natural/numeric) first, falling back to
+ * created_at so ad-hoc jobs (no dag_id) still order deterministically.
+ * Shared by the CLI `tenet status` table and the generated job-queue.md so
+ * the queue reads in dependency order instead of insertion/rowid order.
+ */
+export const compareJobsByPlan = (a: Job, b: Job): number => {
+  const aDag = dagIdOf(a);
+  const bDag = dagIdOf(b);
+  if (aDag && bDag) {
+    const cmp = aDag.localeCompare(bDag, undefined, { numeric: true, sensitivity: 'base' });
+    if (cmp !== 0) return cmp;
+  } else if (aDag) {
+    return -1;
+  } else if (bDag) {
+    return 1;
+  }
+  return (a.createdAt ?? 0) - (b.createdAt ?? 0);
+};
+
+export const sortJobsByPlan = (jobs: readonly Job[]): Job[] => [...jobs].sort(compareJobsByPlan);
+
 const renderJobLine = (job: Job): string => {
   const icon = jobStatusIcon(job.status);
   const name = typeof job.params.name === 'string' ? job.params.name : job.id.slice(0, 8);
@@ -129,6 +156,11 @@ export const writeStatusFiles = (projectPath: string, summary: JobSummary): void
     sliceInfo && sliceInfo.deliveryMode === 'agile'
       ? computeSliceProgress(summary.jobs, sliceInfo.slices)
       : null;
+
+  // Sort rendered lists in plan order (dag_id natural, then created_at).
+  const runningSorted = sortJobsByPlan(summary.running);
+  const failedSorted = sortJobsByPlan(summary.failed);
+  const queueSorted = sortJobsByPlan(summary.jobs);
 
   // status.md — high-level summary
   const now = new Date().toISOString();
@@ -154,17 +186,17 @@ export const writeStatusFiles = (projectPath: string, summary: JobSummary): void
     '',
   );
 
-  if (summary.running.length > 0) {
+  if (runningSorted.length > 0) {
     statusLines.push('## Currently Running', '');
-    for (const job of summary.running) {
+    for (const job of runningSorted) {
       statusLines.push(renderJobLine(job));
     }
     statusLines.push('');
   }
 
-  if (summary.failed.length > 0) {
+  if (failedSorted.length > 0) {
     statusLines.push('## Failed', '');
-    for (const job of summary.failed) {
+    for (const job of failedSorted) {
       statusLines.push(renderJobLine(job));
     }
     statusLines.push('');
@@ -180,7 +212,7 @@ export const writeStatusFiles = (projectPath: string, summary: JobSummary): void
     '',
   ];
 
-  for (const job of summary.jobs) {
+  for (const job of queueSorted) {
     queueLines.push(renderJobLine(job));
   }
   queueLines.push('');

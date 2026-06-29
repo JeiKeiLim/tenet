@@ -3,6 +3,7 @@ import path from 'node:path';
 import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { formatMaxRetries } from '../core/runtime-config.js';
 import { StateStore } from '../core/state-store.js';
+import { compareJobsByPlan } from '../core/status-writer.js';
 import type { Job } from '../types/index.js';
 
 const isProcessAlive = (pid: number): boolean => {
@@ -53,6 +54,17 @@ const statusIcon = (status: Job['status']): string => {
 const formatTimestamp = (ts: number): string => {
   const d = new Date(ts);
   return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+};
+
+// Display order across statuses: in-progress work first, then waiting, then history.
+const STATUS_PRIORITY: Record<Job['status'], number> = {
+  running: 0,
+  pending: 1,
+  blocked: 2,
+  blocked_on_finding: 3,
+  failed: 4,
+  completed: 5,
+  cancelled: 6,
 };
 
 const printJobTable = (jobs: Job[]): void => {
@@ -131,6 +143,14 @@ export function showStatus(projectPath: string, options?: StatusOptions): void {
         ...stateStore.getJobsByStatus('completed'),
         ...stateStore.getJobsByStatus('cancelled'),
       ];
+
+      // Order by status priority, then plan order (dag_id natural, else created_at)
+      // so the queue reads top-to-bottom as running → waiting → history, each in
+      // dependency order — not raw insertion/rowid order.
+      allJobs.sort((a, b) => {
+        const priority = (STATUS_PRIORITY[a.status] ?? 99) - (STATUS_PRIORITY[b.status] ?? 99);
+        return priority !== 0 ? priority : compareJobsByPlan(a, b);
+      });
 
       const completed = allJobs.filter((j) => j.status === 'completed').length;
       const cancelled = allJobs.filter((j) => j.status === 'cancelled').length;
