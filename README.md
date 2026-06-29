@@ -174,8 +174,8 @@ tenet status --all  # Include completed/failed jobs
 # SQLite state maintenance
 tenet db check              # Read-only integrity/index diagnostics
 tenet db backup             # Verified SQLite-safe backup
-tenet db snapshot           # Git-safe portable snapshot to .tenet/state-snapshot/
-tenet db restore-snapshot   # Restore live SQLite state from a portable snapshot
+tenet db snapshot           # Git-safe portable snapshot to .tenet/state-snapshot/ (gzip by default; --no-compress for plain)
+tenet db restore-snapshot   # Restore live SQLite state from a portable snapshot (auto-detects gzip/plain)
 
 # Configure
 tenet config                          # View current config

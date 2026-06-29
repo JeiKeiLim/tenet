@@ -375,13 +375,14 @@ const run = async (): Promise<void> => {
 
   dbCommand
     .command('snapshot')
-    .description('Write a Git-safe portable SQLite snapshot')
+    .description('Write a Git-safe portable SQLite snapshot (gzip-compressed by default)')
     .option('--project <path>', 'Project path', '.')
     .option('--output <path>', 'Snapshot destination path')
-    .action((options: { project: string; output?: string }) => {
+    .option('--no-compress', 'Write a plain uncompressed SQLite snapshot (tenet.db) instead of gzip')
+    .action((options: { project: string; output?: string; compress: boolean }) => {
       const projectPath = resolveProjectPath(options.project);
       try {
-        runDbSnapshot(projectPath, options.output);
+        runDbSnapshot(projectPath, options.output, { compress: options.compress });
       } catch (error) {
         if (error instanceof Error) {
           console.error(error.message);

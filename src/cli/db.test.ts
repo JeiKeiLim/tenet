@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import Database from 'better-sqlite3';
 import { StateStore } from '../core/state-store.js';
 import { runDbRestoreSnapshot, runDbSnapshot } from './db.js';
@@ -38,7 +39,7 @@ afterEach(() => {
 });
 
 describe('db snapshot commands', () => {
-  it('creates a portable snapshot that includes live WAL state', () => {
+  it('creates a gzip-compressed portable snapshot by default that includes live WAL state', () => {
     const projectPath = createTempDir();
     const store = new StateStore(projectPath);
     stores.push(store);
@@ -52,11 +53,42 @@ describe('db snapshot commands', () => {
 
     const snapshotPath = runDbSnapshot(projectPath);
 
-    expect(snapshotPath).toBe(path.join(projectPath, '.tenet', 'state-snapshot', 'tenet.db'));
-    expect(readJobNames(snapshotPath)).toEqual(['from-live-wal']);
+    expect(snapshotPath).toBe(path.join(projectPath, '.tenet', 'state-snapshot', 'tenet.db.gz'));
+    expect(fs.existsSync(snapshotPath)).toBe(true);
+    // Gzip magic bytes.
+    const head = fs.readFileSync(snapshotPath).subarray(0, 2);
+    expect(head[0]).toBe(0x1f);
+    expect(head[1]).toBe(0x8b);
+    // Content round-trips: decompress and read as a normal SQLite DB.
+    const plain = zlib.gunzipSync(fs.readFileSync(snapshotPath));
+    const peekPath = path.join(path.dirname(snapshotPath), 'peek.db');
+    fs.writeFileSync(peekPath, plain);
+    try {
+      expect(readJobNames(peekPath)).toEqual(['from-live-wal']);
+    } finally {
+      fs.rmSync(peekPath, { force: true });
+    }
   });
 
-  it('restores live state from the portable snapshot and removes sidecars', () => {
+  it('writes a plain uncompressed snapshot with compress:false', () => {
+    const projectPath = createTempDir();
+    const store = new StateStore(projectPath);
+    stores.push(store);
+    store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'plain-job' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+
+    const snapshotPath = runDbSnapshot(projectPath, undefined, { compress: false });
+
+    expect(snapshotPath).toBe(path.join(projectPath, '.tenet', 'state-snapshot', 'tenet.db'));
+    expect(readJobNames(snapshotPath)).toEqual(['plain-job']);
+  });
+
+  it('restores live state from the compressed snapshot (default source) and removes sidecars', () => {
     const projectPath = createTempDir();
     const store = new StateStore(projectPath);
     stores.push(store);
@@ -67,7 +99,7 @@ describe('db snapshot commands', () => {
       retryCount: 0,
       maxRetries: 1,
     });
-    const snapshotPath = runDbSnapshot(projectPath);
+    runDbSnapshot(projectPath); // writes tenet.db.gz
     store.createJob({
       type: 'dev',
       status: 'completed',
@@ -81,7 +113,8 @@ describe('db snapshot commands', () => {
     fs.writeFileSync(path.join(stateDir, 'tenet.db-wal'), 'stale wal placeholder', 'utf8');
     fs.writeFileSync(path.join(stateDir, 'tenet.db-shm'), 'stale shm placeholder', 'utf8');
 
-    runDbRestoreSnapshot(projectPath, snapshotPath, { force: true });
+    // No explicit source: must resolve the default tenet.db.gz and auto-decompress.
+    runDbRestoreSnapshot(projectPath, undefined, { force: true });
 
     expect(readJobNames(path.join(stateDir, 'tenet.db'))).toEqual(['snapshotted']);
     expect(fs.existsSync(path.join(stateDir, 'tenet.db-wal'))).toBe(false);
@@ -99,13 +132,13 @@ describe('db snapshot commands', () => {
       retryCount: 0,
       maxRetries: 1,
     });
-    const snapshotPath = runDbSnapshot(projectPath);
+    runDbSnapshot(projectPath);
     stores.pop()?.close();
 
     const walPath = path.join(projectPath, '.tenet', '.state', 'tenet.db-wal');
     fs.writeFileSync(walPath, 'stale wal placeholder', 'utf8');
 
-    expect(() => runDbRestoreSnapshot(projectPath, snapshotPath)).toThrow(/Refusing to restore/);
+    expect(() => runDbRestoreSnapshot(projectPath)).toThrow(/Refusing to restore/);
     expect(fs.readFileSync(walPath, 'utf8')).toBe('stale wal placeholder');
   });
 });
