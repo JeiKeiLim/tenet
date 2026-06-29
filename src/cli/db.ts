@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { StateStore, type DbHealthReport, type RestoreDatabaseOptions } from '../core/state-store.js';
 
 const timestamp = (): string =>
@@ -81,26 +82,76 @@ export const runDbBackup = (projectPath: string, destination?: string): string =
   return backupPath;
 };
 
-const defaultSnapshotPath = (projectPath: string): string =>
-  path.join(projectPath, '.tenet', 'state-snapshot', 'tenet.db');
+export type SnapshotOptions = { compress?: boolean };
 
-export const runDbSnapshot = (projectPath: string, destination?: string): string => {
-  const snapshotPath = destination ? path.resolve(destination) : defaultSnapshotPath(projectPath);
+// Gzip magic number (first two bytes): 0x1f 0x8b.
+const isGzipFile = (filePath: string): boolean => {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const head = Buffer.alloc(2);
+    const bytesRead = fs.readSync(fd, head, 0, 2, 0);
+    return bytesRead === 2 && head[0] === 0x1f && head[1] === 0x8b;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+};
+
+const defaultSnapshotPath = (projectPath: string, compress: boolean): string =>
+  path.join(projectPath, '.tenet', 'state-snapshot', compress ? 'tenet.db.gz' : 'tenet.db');
+
+// Prefer the compressed snapshot when restoring without an explicit source;
+// fall back to a legacy plain tenet.db so old snapshots keep restoring.
+const resolveDefaultSnapshotSource = (projectPath: string): string => {
+  const dir = path.join(projectPath, '.tenet', 'state-snapshot');
+  const gz = path.join(dir, 'tenet.db.gz');
+  return fs.existsSync(gz) ? gz : path.join(dir, 'tenet.db');
+};
+
+export const runDbSnapshot = (
+  projectPath: string,
+  destination?: string,
+  options?: SnapshotOptions,
+): string => {
+  const compress = options?.compress ?? true;
+  const snapshotPath = destination
+    ? path.resolve(destination)
+    : defaultSnapshotPath(projectPath, compress);
   const snapshotDir = path.dirname(snapshotPath);
   fs.mkdirSync(snapshotDir, { recursive: true });
-  const tempPath = path.join(snapshotDir, `tenet.db.tmp-${process.pid}-${Date.now()}`);
+  const tempPlain = path.join(snapshotDir, `tenet.db.tmp-${process.pid}-${Date.now()}`);
 
   try {
-    StateStore.backupDatabase(projectPath, tempPath);
-    fs.renameSync(tempPath, snapshotPath);
+    // VACUUM INTO a temp plain SQLite file (also asserts the live DB is healthy).
+    StateStore.backupDatabase(projectPath, tempPlain);
+    const rawSize = fs.statSync(tempPlain).size;
+
+    if (compress) {
+      const packed = zlib.gzipSync(fs.readFileSync(tempPlain), { level: 9 });
+      fs.writeFileSync(snapshotPath, packed);
+      fs.rmSync(tempPlain, { force: true });
+      const ratio = rawSize > 0 ? Math.max(0, Math.round((1 - packed.length / rawSize) * 100)) : 0;
+      const savings = ratio > 0 ? `, ${ratio}% smaller than ${formatBytes(rawSize)} raw` : '';
+      console.log(`Snapshot created: ${snapshotPath} (${formatBytes(packed.length)}${savings})`);
+    } else {
+      fs.renameSync(tempPlain, snapshotPath);
+      console.log(`Snapshot created: ${snapshotPath} (${formatBytes(rawSize)})`);
+    }
   } catch (error) {
-    if (fs.existsSync(tempPath)) {
-      fs.rmSync(tempPath, { force: true });
+    if (fs.existsSync(tempPlain)) {
+      fs.rmSync(tempPlain, { force: true });
     }
     throw error;
   }
 
-  console.log(`Snapshot created: ${snapshotPath}`);
   return snapshotPath;
 };
 
@@ -109,8 +160,31 @@ export const runDbRestoreSnapshot = (
   source?: string,
   options?: RestoreDatabaseOptions,
 ): string => {
-  const snapshotPath = source ? path.resolve(source) : defaultSnapshotPath(projectPath);
-  StateStore.restoreDatabase(projectPath, snapshotPath, options);
-  console.log(`Snapshot restored: ${snapshotPath}`);
-  return snapshotPath;
+  const resolvedSource = source ? path.resolve(source) : resolveDefaultSnapshotSource(projectPath);
+  if (!fs.existsSync(resolvedSource)) {
+    throw new Error(`snapshot does not exist: ${resolvedSource}`);
+  }
+
+  const snapshotDir = path.dirname(resolvedSource);
+  let restoreSource = resolvedSource;
+  let tempDecompressed: string | null = null;
+
+  // Auto-detect gzip via magic bytes so restore accepts both .db.gz and plain .db
+  // regardless of filename (handles legacy snapshots and custom destinations).
+  if (isGzipFile(resolvedSource)) {
+    tempDecompressed = path.join(snapshotDir, `tenet.db.tmp-restore-${process.pid}-${Date.now()}`);
+    fs.writeFileSync(tempDecompressed, zlib.gunzipSync(fs.readFileSync(resolvedSource)));
+    restoreSource = tempDecompressed;
+  }
+
+  try {
+    StateStore.restoreDatabase(projectPath, restoreSource, options);
+    console.log(`Snapshot restored: ${resolvedSource}${tempDecompressed ? ' (decompressed)' : ''}`);
+  } finally {
+    if (tempDecompressed) {
+      fs.rmSync(tempDecompressed, { force: true });
+    }
+  }
+
+  return resolvedSource;
 };
