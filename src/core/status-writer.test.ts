@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
 import type { Job } from '../types/index.js';
-import { writeStatusFiles } from './status-writer.js';
+import { writeStatusFiles, compareJobsByPlan } from './status-writer.js';
 
 const tempDirs: string[] = [];
 
@@ -53,6 +53,37 @@ afterEach(() => {
     const dir = tempDirs.pop();
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+describe('compareJobsByPlan (#23)', () => {
+  const j = (dagId: string | undefined, createdAt: number): Job =>
+    ({
+      id: dagId ?? 'adhoc',
+      type: 'dev',
+      status: 'pending',
+      params: dagId ? { dag_id: dagId, name: dagId } : { name: 'adhoc' },
+      agentName: 'default',
+      retryCount: 0,
+      maxRetries: 3,
+      createdAt,
+      updatedAt: createdAt,
+      serverId: '',
+    }) as Job;
+
+  it('orders dag_ids numerically (10 after 2), not lexically', () => {
+    const jobs = [j('s-10', 3), j('s-2', 1), j('s-1', 2)].sort(compareJobsByPlan);
+    expect(jobs.map((x) => x.params.dag_id)).toEqual(['s-1', 's-2', 's-10']);
+  });
+
+  it('falls back to created_at when dag_id is absent (ad-hoc jobs)', () => {
+    const jobs = [j(undefined, 30), j(undefined, 10), j(undefined, 20)].sort(compareJobsByPlan);
+    expect(jobs.map((x) => x.createdAt)).toEqual([10, 20, 30]);
+  });
+
+  it('places dag_id jobs before ad-hoc jobs', () => {
+    const jobs = [j(undefined, 1), j('a-1', 5)].sort(compareJobsByPlan);
+    expect(jobs.map((x) => x.params.dag_id)).toEqual(['a-1', undefined]);
+  });
 });
 
 describe('status-writer slice progress (agile mode)', () => {
