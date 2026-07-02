@@ -1,6 +1,8 @@
 # Phase 01: Interview
 
-This reference defines the mandatory interview phase for Tenet Full mode. Read and follow these instructions exactly to ensure project crystallization success.
+This reference defines the interview phase. **Full mode** runs it at full strength; **Standard** and **Quick** run a proportional subset (see § 10) but never skip it — Quick is a shallower interview, not a license to skip the phase. Read and follow these instructions exactly.
+
+The phase opens with the **mode-selection checkpoint** (selected mode + basis recorded in the `## Mode Selection` block in § 5) before the first interview question. See `SKILL.md` → Mode Selection.
 
 ## 1. Run Identity And Output File Path
 The interview transcript MUST be saved before proceeding to the next phase:
@@ -96,6 +98,12 @@ Date: [ISO date]
 Mode: Full
 Rounds: [N]
 
+## Mode Selection
+- Prompt shown: [the recommendation + one-line basis you presented]
+- User response: [confirm, or override to a different mode]
+- Selected mode: full|standard|quick
+- Selection basis: explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision
+
 ## Clarity Score
 - Goal: [Score] (weight 0.4)
 - Constraints: [Score] (weight 0.3)  
@@ -151,6 +159,7 @@ When the user triggers YOLO mode, **confirm before activating**: "Entering yolo 
 Once confirmed, the agent:
 - Skips interactive interview questions — makes all decisions autonomously based on codebase analysis and brownfield scan
 - Still writes the interview transcript with decisions made and assumptions
+- Still records `## Mode Selection` with `Selection basis: yolo_agent_decision` (mode chosen deliberately — default Full unless the task is clearly a small isolated tweak, in which case Quick)
 - Still records `## Delivery Mode Decision` with `Selection basis: yolo_agent_decision`
 - Still records `## Model Tier Decision` with `Selection basis: yolo_agent_decision` (default `frontier` unless the run is clearly local-executed)
 - Still runs `tenet_validate_clarity()` — if clarity is low, the agent fills gaps by reading the codebase rather than asking the user
@@ -192,11 +201,13 @@ When the user's requirements involve unfamiliar technologies, complex integratio
 - Do NOT proceed to spec or harness generation until the transcript file is written and the clarity gate passes.
 - If the user says "just build it" (without triggering YOLO mode), you MUST still ask the minimum required questions and record the answers.
 - In Full mode, do NOT proceed to spec unless `## Delivery Mode Decision` exists and records a valid selection basis.
+- Quick mode is a shallower interview, NOT a skip of the interview phase. Even in Quick mode, record the `## Mode Selection` block and confirm scope + acceptance criteria before spec/decomposition — apparent task clarity is not a license to skip the phase structure.
 
 ## 10. Adaptive Interview Length
 - **Greenfield project:** 2-3 rounds, 8-15 questions total.
 - **Brownfield/known scope:** 1-2 rounds, 5-8 questions total.
-- **Standard mode (quick clarification):** 1 round, 3-5 questions total.
+- **Standard mode:** 1 round, 3-5 questions total.
+- **Quick mode:** confirm scope + acceptance criteria — minimum 1-3 targeted questions or confirmations. Never zero (see § 9). The transcript still records the `## Mode Selection` block and these confirmations before spec/decomposition.
 
 ## 11. Crystallize Project Doctrine (greenfield only)
 
