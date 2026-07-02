@@ -110,18 +110,23 @@ Run this before mode selection or execution:
 8. In the greenfield deferred state, proceed to mode selection and the interview. The bootstrap gate is satisfied post-interview once `phases/01-interview.md` § 11 has written real `project/**` doctrine from interview decisions.
 9. Detect whether `.git/` exists. Git behavior is defined in `phases/05-execution-loop.md`.
 10. Probe Playwright MCP availability if possible. If unavailable, warn once. This is only non-blocking when the run-local harness/spec marks browser exploration optional, skipped with reason, or not applicable; required browser/visual Layer 2 cannot pass without it.
+11. **Mode-selection checkpoint.** Once boot is otherwise complete, run the mode checkpoint (see *Mode Selection* below): recommend Full/Standard/Quick with a one-line rationale, have the user confirm or override, and record the selected mode + basis. This checkpoint opens the interview phase — it creates the run/transcript scaffold (`phases/01-interview.md` § 1) and records the decision in the transcript's `## Mode Selection` block — so read `phases/01-interview.md` before running it. This is the gate between boot and phase work: until the mode is selected and recorded, do not begin phase work (no task diagnosis, no spec/decomposition, no questions beyond the mode checkpoint itself). The context-bootstrap code scan in step 7 is the only sanctioned source reading during boot.
 
 Do not enter execution while health is bad.
 
 ## Mode Selection
 
-Choose one scale-adaptive mode at start and re-evaluate only at major scope changes:
+Mode selection (Full / Standard / Quick) is a **required, user-facing checkpoint** that runs once the boot sequence passes (including the context bootstrap gate). Do not infer the mode silently from the task's surface form, and never assert a mode retroactively to justify skipping ceremony — surface your recommendation and let the user confirm or override it.
 
-- Full: new feature, greenfield work, unclear edges, major refactor, broad multi-module change.
-- Standard: medium complexity, known architecture, moderate unknowns.
-- Quick: small isolated bug/config/content tweak with low ambiguity.
+Recommend a mode with a one-line rationale, then ask the user to confirm or change it (prefer an interactive prompt, per `phases/01-interview.md` § 6). Record the selected mode and a selection basis in the transcript's `## Mode Selection` block before any phase work. Re-evaluate only at major scope changes.
 
-Full mode runs crystallization before execution. Standard mode keeps clarification/spec/decomposition compact. Quick mode may register a single-job DAG, but still uses the MCP execution and eval gates.
+- **Full**: new feature, greenfield work, unclear edges, major refactor, broad multi-module change. Full crystallization: full interview → spec/harness/readiness → decomposition.
+- **Standard**: medium complexity, known architecture, moderate unknowns. Compact interview (3–5 questions), then spec/harness/readiness → decomposition.
+- **Quick**: small isolated bug/config/content tweak with low ambiguity. A **minimum** interview — confirm scope and acceptance criteria; never zero questions (see `phases/01-interview.md` § 9 anti-skip) — then a compact spec/harness update or a trivial single-job DAG.
+
+Every mode, Quick included, still: completes the boot sequence first, reads the phase file before entering any phase, writes the interview transcript, and runs the clarity + readiness gates. Quick is a shallower interview, **not** a license to skip the phase structure, the phase-file read, or the gates. If a task looks obvious enough to "just fix," that is exactly when the procedure must still govern — apparent clarity is not a skip signal.
+
+In YOLO mode (`phases/01-interview.md` § 7), the agent selects and records the mode autonomously with `Selection basis: yolo_agent_decision` and no interactive prompt; it still records the `## Mode Selection` block.
 
 In Full mode, delivery mode selection is a standalone required checkpoint at the end of the interview:
 
