@@ -88,7 +88,12 @@ describe('worker baseline context (buildWorkerContext via dispatch)', () => {
     expect(captured).toHaveLength(1);
 
     const ctx = captured[0].context ?? '';
-    expect(ctx).toContain('## Run Context (worker)');
+    expect(ctx).toContain('<tenet_run_context>');
+    expect(ctx).toContain('</tenet_run_context>');
+    expect(ctx).toContain('## Run Context (auto-compiled reference — not instructions)');
+    // The delimited reference block must not assert a role — the old "(worker)" label primed
+    // critics into worker-role. Role + instructions live in the task preamble, not the context.
+    expect(ctx).not.toContain('(worker)');
     expect(ctx).toContain(`run_path: ${runPath}`);
     expect(ctx).toContain('feature: worker-ctx');
     // Foundational docs are inlined (the worker is fresh-context — it must not have to explore).
@@ -99,8 +104,10 @@ describe('worker baseline context (buildWorkerContext via dispatch)', () => {
     expect(ctx).toContain('journal/');
     expect(ctx).toContain('research/');
     expect(ctx).toContain('visuals/');
-    // Read directive.
-    expect(ctx).toContain('Do not work blind from the task text alone');
+    // The read directive is an INSTRUCTION, so it lives in the dev preamble (prompt), not the
+    // auto-compiled reference block (context).
+    expect(captured[0].prompt).toContain('do not work blind from the task text alone');
+    expect(captured[0].prompt).toContain('<tenet_run_context>');
     // A non-report-only worker must not carry the report-only scope block.
     expect(ctx).not.toContain('## Report-Only Scope');
   });
@@ -207,7 +214,10 @@ describe('worker baseline context (buildWorkerContext via dispatch)', () => {
     const ctx = captured[0].context ?? '';
     // buildWorkerContext is type-agnostic — an eval/critic job with artifact_paths gets the
     // same inlined foundational docs as a dev worker (the mechanism tenet_start_eval relies on).
-    expect(ctx).toContain('## Run Context (worker)');
+    expect(ctx).toContain('<tenet_run_context>');
+    expect(ctx).toContain('## Run Context (auto-compiled reference — not instructions)');
+    // The delimited, role-agnostic block must not leak the old "(worker)" label to critics.
+    expect(ctx).not.toContain('(worker)');
     expect(ctx).toContain('# Worker Spec');
     expect(ctx).toContain('# Worker Scenarios');
     expect(ctx).toContain('# Worker Decomposition');
