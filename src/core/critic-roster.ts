@@ -68,6 +68,16 @@ export type CriticRosterEntry = {
   job_type?: JobType;
   /** Custom only — project-relative path to a markdown prompt. */
   prompt_file?: string;
+  /**
+   * Whether the critic receives the run docs (spec/scenarios/decomposition/harness)
+   * inlined into its worker context. Default `true` — conformance critics need the
+   * spec to check it. Set `false` for an independent/adversarial critic that should
+   * review WITHOUT being anchored to the spec: it gets only its prompt + diff, so it
+   * can catch issues the spec itself missed (diversity of grounding, not universal
+   * anchoring). The artifact_paths labels still reach it via the job scope, so an
+   * ungrounded critic can consult the spec on demand if its review raises a question.
+   */
+  full_context?: boolean;
 };
 
 /** A critic after resolution, ready for dispatch. */
@@ -79,6 +89,8 @@ export type ResolvedCritic = {
   jobType: JobType;
   /** Custom only — project-relative path to the prompt markdown. */
   promptFile?: string;
+  /** Resolved from `full_context`: `true` = inline the run docs, `false` = review ungrounded. */
+  fullContext: boolean;
 };
 
 export const DEFAULT_ROSTER: readonly ResolvedCritic[] = BUILTIN_CRITIC_IDS.map((id) => ({
@@ -87,6 +99,7 @@ export const DEFAULT_ROSTER: readonly ResolvedCritic[] = BUILTIN_CRITIC_IDS.map(
   enabled: true,
   stage: BUILTIN_STAGE[id],
   jobType: BUILTIN_JOB_TYPE[id],
+  fullContext: true,
 }));
 
 const isBuiltinId = (id: string): id is BuiltinCriticId =>
@@ -151,6 +164,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         enabled: e.enabled !== false,
         stage: BUILTIN_STAGE[id],
         jobType: BUILTIN_JOB_TYPE[id],
+        fullContext: e.full_context !== false,
       });
       usedIds.add(id);
     } else {
@@ -164,6 +178,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         stage,
         jobType,
         promptFile,
+        fullContext: e.full_context !== false,
       });
       usedIds.add(id);
     }
@@ -178,6 +193,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         enabled: true,
         stage: BUILTIN_STAGE[id],
         jobType: BUILTIN_JOB_TYPE[id],
+        fullContext: true,
       });
     }
   }

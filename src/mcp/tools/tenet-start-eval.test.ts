@@ -321,6 +321,40 @@ describe('tenet_start_eval eval mode resolution', () => {
     // The false "you receive the spec" claim is gone (the docs are now actually inlined).
     expect(codeCritic?.params.prompt).not.toContain('You receive ONLY');
   });
+
+  it('does not propagate artifact_paths/run_path to a full_context:false critic (ungrounded review)', async () => {
+    const { store, handler } = createHarness();
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true, enabled: true },
+        { id: 'test_critic', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: true },
+        { id: 'adversarial', prompt_file: '.tenet/critics/adversarial.md', full_context: false },
+      ],
+    });
+    writeCriticPrompt(store, 'adversarial.md', '# Adversarial Critic\n\nReview the diff independently, without the spec.');
+
+    const runPath = '.tenet/runs/2026-07-02-adversarial';
+    const sourceId = createSourceJob(store, 'adversarial', {
+      run_path: runPath,
+      artifact_paths: { spec: `${runPath}/spec.md`, harness: `${runPath}/harness.md` },
+    });
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { done: true } }));
+    const adversarial = store.getJob(jobId(parsed, 'adversarial'));
+    const codeCritic = store.getJob(jobId(parsed, 'code_critic'));
+
+    // Ungrounded critic: no inlined run docs — it reviews independently of the spec.
+    expect(adversarial?.params.artifact_paths).toBeUndefined();
+    expect(adversarial?.params.run_path).toBeUndefined();
+    // Grounded built-in still gets them.
+    expect(codeCritic?.params.artifact_paths).toEqual({
+      spec: `${runPath}/spec.md`,
+      harness: `${runPath}/harness.md`,
+    });
+    expect(codeCritic?.params.run_path).toBe(runPath);
+  });
 });
 
 describe('tenet_start_eval configurable critic roster', () => {

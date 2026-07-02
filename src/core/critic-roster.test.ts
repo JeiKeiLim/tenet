@@ -96,6 +96,7 @@ describe('resolveRoster', () => {
       stage: 'security_critic',
       jobType: 'critic_eval',
       promptFile: '.tenet/critics/security.md',
+      fullContext: true,
     });
   });
 
@@ -113,6 +114,22 @@ describe('resolveRoster', () => {
       critics: [{ id: 'x', job_type: 'dev' as any, prompt_file: '.tenet/critics/x.md' }],
     });
     expect(byId(roster, 'x')?.jobType).toBe('critic_eval');
+  });
+
+  it('defaults full_context to true and honors full_context:false on built-in and custom', () => {
+    const roster = resolveRoster({
+      critics: [
+        { id: 'code_critic', builtin: true, full_context: false },
+        { id: 'adversarial', prompt_file: '.tenet/critics/adversarial.md', full_context: false },
+        { id: 'lint', prompt_file: '.tenet/critics/lint.md' }, // default true
+      ],
+    });
+    expect(byId(roster, 'code_critic')?.fullContext).toBe(false);
+    expect(byId(roster, 'adversarial')?.fullContext).toBe(false);
+    expect(byId(roster, 'lint')?.fullContext).toBe(true);
+    // Built-ins omitted from the file default to true.
+    expect(byId(roster, 'test_critic')?.fullContext).toBe(true);
+    expect(byId(roster, 'interaction_e2e')?.fullContext).toBe(true);
   });
 
   it('drops duplicate ids (first wins) and skips malformed entries', () => {
@@ -134,6 +151,7 @@ describe('resolveRoster', () => {
   it('DEFAULT_ROSTER is the 3 built-ins enabled', () => {
     expect(DEFAULT_ROSTER.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
     expect(DEFAULT_ROSTER.every((c) => c.enabled)).toBe(true);
+    expect(DEFAULT_ROSTER.every((c) => c.fullContext)).toBe(true);
   });
 });
 

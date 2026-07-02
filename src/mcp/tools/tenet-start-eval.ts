@@ -243,6 +243,8 @@ type CriticDispatch = {
   jobType: JobType;
   evalStage: string;
   prompt: string;
+  /** Whether to inline the run docs into this critic's worker context (resolved full_context). */
+  fullContext: boolean;
 };
 
 /**
@@ -269,18 +271,21 @@ const buildCriticDispatch = (
         return {
           jobType: critic.jobType,
           evalStage: critic.stage,
+          fullContext: critic.fullContext,
           prompt: jobScope + CODE_CRITIC_PREAMBLE + '## Implementation Output\n\n' + outputStr,
         };
       case 'test_critic':
         return {
           jobType: critic.jobType,
           evalStage: critic.stage,
+          fullContext: critic.fullContext,
           prompt: jobScope + TEST_CRITIC_PREAMBLE + '## Test Files and Spec\n\n' + outputStr,
         };
       case 'interaction_e2e':
         return {
           jobType: critic.jobType,
           evalStage: critic.stage,
+          fullContext: critic.fullContext,
           prompt: jobScope + PLAYWRIGHT_EVAL_PREAMBLE,
         };
       default:
@@ -304,6 +309,7 @@ const buildCriticDispatch = (
   return {
     jobType: critic.jobType,
     evalStage: critic.stage,
+    fullContext: critic.fullContext,
     prompt: jobScope + promptBody + '\n## Implementation Output\n\n' + outputStr,
   };
 };
@@ -386,12 +392,19 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         output,
         expected_eval_stages: expectedEvalStages,
         ...(resolvedFeature ? { feature: resolvedFeature } : {}),
-        // Propagate the run's artifact_paths + run_path so the critic's worker context
-        // (built on dispatch via buildWorkerContext) inlines the same spec/scenarios/
-        // decomposition/harness the dev worker sees. A critic must evaluate against the
-        // actual spec — not a label pointing at it.
-        ...(sourceJob?.params.artifact_paths ? { artifact_paths: sourceJob.params.artifact_paths } : {}),
-        ...(typeof sourceJob?.params.run_path === 'string' ? { run_path: sourceJob.params.run_path } : {}),
+        // Grounded critics (full_context !== false, the default) get the run's
+        // artifact_paths + run_path propagated so buildWorkerContext (run on dispatch)
+        // inlines the same spec/scenarios/decomposition/harness the dev worker sees — a
+        // conformance critic must evaluate against the actual spec. An ungrounded critic
+        // (full_context: false) reviews independently: no docs inlined, so it can catch
+        // issues the spec itself missed. The artifact_paths labels still reach it via the
+        // job scope, so it can consult the spec on demand.
+        ...(d.fullContext && sourceJob?.params.artifact_paths
+          ? { artifact_paths: sourceJob.params.artifact_paths }
+          : {}),
+        ...(d.fullContext && typeof sourceJob?.params.run_path === 'string'
+          ? { run_path: sourceJob.params.run_path }
+          : {}),
       });
 
       type Dispatched = { role: string; id: string; status: Job['status']; parentJobId?: string };
