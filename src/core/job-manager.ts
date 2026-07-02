@@ -737,10 +737,12 @@ export class JobManager {
    * Build the worker's run context (set on `invocation.context`, which every adapter
    * prepends to the task prompt). The worker is a fresh-context subprocess — unlike the
    * orchestrator it never sees `tenet_compile_context` output — so the foundational run
-   * docs (spec / decomposition / harness) are inlined here and the bulky/selective ones
-   * (journal / research / visuals) are path-referenced. Tier-independent and identical
+   * docs (spec / scenarios / decomposition / harness) are inlined here and the bulky/selective
+   * ones (journal / research / visuals) are path-referenced. Tier-independent and identical
    * for every run: the decomposition artifact already carries whatever granularity the
-   * run needs, so inlining it always propagates the right level of detail.
+   * run needs, so inlining it always propagates the right level of detail. Eval/critic jobs
+   * receive the same context — `tenet_start_eval` propagates the source job's artifact_paths
+   * and run_path, so a critic evaluates against the real spec instead of a label pointing at it.
    *
    * Returns undefined when there is nothing worker-specific to inject (e.g. a legacy job
    * with no run_path/artifact_paths) so the default dispatch path stays byte-identical.
@@ -753,12 +755,15 @@ export class JobManager {
     const reportOnly = job.params.report_only === true;
 
     const specMd = artifactPaths?.spec ? safeReadArtifact(projectPath, artifactPaths.spec, 'spec') : '';
+    const scenariosMd = artifactPaths?.scenarios
+      ? safeReadArtifact(projectPath, artifactPaths.scenarios, 'scenarios')
+      : '';
     const decompositionMd = artifactPaths?.decomposition
       ? safeReadArtifact(projectPath, artifactPaths.decomposition, 'decomposition')
       : '';
     const harnessMd = artifactPaths?.harness ? safeReadArtifact(projectPath, artifactPaths.harness, 'harness') : '';
 
-    if (!runPath && !specMd && !decompositionMd && !harnessMd && !reportOnly) {
+    if (!runPath && !specMd && !scenariosMd && !decompositionMd && !harnessMd && !reportOnly) {
       return undefined;
     }
 
@@ -767,6 +772,9 @@ export class JobManager {
     if (runPath) sections.push(`run_path: ${runPath}`);
 
     if (specMd) sections.push('', '## Spec (inlined — source of truth for this job)', specMd);
+    if (scenariosMd) {
+      sections.push('', '## Scenarios (inlined — success/failure shapes for this job)', scenariosMd);
+    }
     if (decompositionMd) {
       sections.push('', '## Decomposition (inlined — your job and its DAG context)', decompositionMd);
     }
