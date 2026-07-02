@@ -45,7 +45,7 @@ const CODE_CRITIC_PREAMBLE = [
   '## Code Critic — Purpose Alignment Check',
   '',
   'You are the CODE CRITIC. You have NO access to the author\'s reasoning or conversation.',
-  'You receive ONLY the spec, scenarios, harness, and the code diff.',
+  'Your run context (above) inlines the spec, scenarios, and harness; the implementation diff is under ## Implementation Output below.',
   '',
   'Check independently:',
   '- Does the implementation match the spec\'s intent FOR THIS JOB\'S SCOPE?',
@@ -188,7 +188,7 @@ const TEST_CRITIC_PREAMBLE = [
   '## Test Critic — Test Sufficiency Check',
   '',
   'You are the TEST CRITIC. You do NOT review the implementation code.',
-  'You receive ONLY the spec, scenarios, and the acceptance/integration test files.',
+  'Your run context (above) inlines the spec and scenarios; the test files are under ## Test Files and Spec below.',
   '',
   'Your job: determine whether these tests are SUFFICIENT to prove the features',
   'IN THIS JOB\'S SCOPE actually work. Do NOT fail for missing tests that cover',
@@ -352,11 +352,10 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
       const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
       const jobScope = buildJobScopeSection(stateStore, job_id);
       const projectPath = stateStore.projectPath;
+      const sourceJob = stateStore.getJob(job_id);
 
-      const resolvedFeature = feature ?? (() => {
-        const source = stateStore.getJob(job_id);
-        return source && typeof source.params.feature === 'string' ? source.params.feature : undefined;
-      })();
+      const resolvedFeature = feature ??
+        (sourceJob && typeof sourceJob.params.feature === 'string' ? sourceJob.params.feature : undefined);
 
       const parallelSafe = resolveEvalParallelSafe(stateStore, resolvedFeature);
 
@@ -387,6 +386,12 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         output,
         expected_eval_stages: expectedEvalStages,
         ...(resolvedFeature ? { feature: resolvedFeature } : {}),
+        // Propagate the run's artifact_paths + run_path so the critic's worker context
+        // (built on dispatch via buildWorkerContext) inlines the same spec/scenarios/
+        // decomposition/harness the dev worker sees. A critic must evaluate against the
+        // actual spec — not a label pointing at it.
+        ...(sourceJob?.params.artifact_paths ? { artifact_paths: sourceJob.params.artifact_paths } : {}),
+        ...(typeof sourceJob?.params.run_path === 'string' ? { run_path: sourceJob.params.run_path } : {}),
       });
 
       type Dispatched = { role: string; id: string; status: Job['status']; parentJobId?: string };

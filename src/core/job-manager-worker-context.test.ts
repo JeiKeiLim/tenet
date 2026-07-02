@@ -178,4 +178,39 @@ describe('worker baseline context (buildWorkerContext via dispatch)', () => {
     expect(ctx).toContain('# Worker Harness');
     expect(ctx).not.toContain('# Worker Decomposition');
   });
+
+  it('inlines spec/scenarios/decomposition/harness for an eval-type job (critic context)', async () => {
+    const { projectPath, manager, captured } = setup();
+    const runPath = '.tenet/runs/2026-07-02-eval-ctx';
+    writeRunDocs(projectPath, runPath);
+    // Scenarios is now part of the inlined set so a critic evaluates against real
+    // success/failure shapes instead of guessing them.
+    fs.writeFileSync(path.join(projectPath, runPath, 'scenarios.md'), '# Worker Scenarios\n\nSuccess/failure shapes.');
+
+    const job = manager.createPendingJob('eval', {
+      name: 'code-critic',
+      prompt: 'Criticize the implementation against the spec.',
+      feature: 'eval-ctx',
+      run_path: runPath,
+      artifact_paths: {
+        spec: `${runPath}/spec.md`,
+        scenarios: `${runPath}/scenarios.md`,
+        harness: `${runPath}/harness.md`,
+        decomposition: `${runPath}/decomposition.md`,
+      },
+    });
+
+    manager.dispatchJob(job.id);
+    await manager.waitForJob(job.id, null, 5_000);
+
+    expect(captured).toHaveLength(1);
+    const ctx = captured[0].context ?? '';
+    // buildWorkerContext is type-agnostic — an eval/critic job with artifact_paths gets the
+    // same inlined foundational docs as a dev worker (the mechanism tenet_start_eval relies on).
+    expect(ctx).toContain('## Run Context (worker)');
+    expect(ctx).toContain('# Worker Spec');
+    expect(ctx).toContain('# Worker Scenarios');
+    expect(ctx).toContain('# Worker Decomposition');
+    expect(ctx).toContain('# Worker Harness');
+  });
 });

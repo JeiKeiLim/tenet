@@ -291,6 +291,36 @@ describe('tenet_start_eval eval mode resolution', () => {
 
     await waitForAll(manager, parsed);
   });
+
+  it('propagates source artifact_paths + run_path onto critic jobs so they get inlined run docs', async () => {
+    const { store, handler } = createHarness();
+    const runPath = '.tenet/runs/2026-07-02-critic-ctx';
+    const sourceId = createSourceJob(store, 'critic-ctx', {
+      run_path: runPath,
+      artifact_paths: {
+        spec: `${runPath}/spec.md`,
+        scenarios: `${runPath}/scenarios.md`,
+        harness: `${runPath}/harness.md`,
+        decomposition: `${runPath}/decomposition.md`,
+      },
+    });
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { done: true } }));
+    const codeCritic = store.getJob(jobId(parsed, 'code_critic'));
+
+    // The critic job carries the run's artifact_paths + run_path so buildWorkerContext
+    // (run on dispatch) inlines the same spec/scenarios/decomposition/harness the dev
+    // worker sees — a critic evaluates against the real spec, not a label pointing at it.
+    expect(codeCritic?.params.run_path).toBe(runPath);
+    expect(codeCritic?.params.artifact_paths).toEqual({
+      spec: `${runPath}/spec.md`,
+      scenarios: `${runPath}/scenarios.md`,
+      harness: `${runPath}/harness.md`,
+      decomposition: `${runPath}/decomposition.md`,
+    });
+    // The false "you receive the spec" claim is gone (the docs are now actually inlined).
+    expect(codeCritic?.params.prompt).not.toContain('You receive ONLY');
+  });
 });
 
 describe('tenet_start_eval configurable critic roster', () => {
