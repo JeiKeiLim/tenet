@@ -33,7 +33,7 @@ beats "check for security issues."
   "critics": [
     { "id": "code_critic",     "builtin": true,  "enabled": true, "full_context": true },
     { "id": "test_critic",     "builtin": true,  "enabled": true, "full_context": true },
-    { "id": "interaction_e2e", "builtin": true,  "enabled": true, "full_context": true },
+    { "id": "interaction_e2e", "builtin": true,  "enabled": true, "full_context": false },
     {
       "id": "security",
       "builtin": false,
@@ -49,9 +49,11 @@ beats "check for security issues."
 
 - **Built-ins** (`builtin: true`): `enabled` and order are the usual levers
   (omit one to leave it enabled at its default position; `enabled: false` drops
-  it). `full_context` is honored here too — set `"full_context": false` on a
-  built-in (e.g. `code_critic`) to make it review independently of the spec.
-  Default `true`.
+  it). `full_context` is honored here too. `code_critic` and `test_critic` default
+  to `true` (conformance — they check against the spec/tests); `interaction_e2e`
+  defaults to `false` (it acts like a user — explore the surface, don't anchor to
+  the declared spec). Set `false` on a conformance built-in, or `true` on
+  `interaction_e2e`, to override either default.
   Note: the `interaction_e2e` critic handles CLI/API/library surfaces too —
   agent-brain shell e2e, not just browser — so for a CLI-only project you usually
   want it **enabled**. Only disable it if you want no public-surface e2e at all.
@@ -97,9 +99,10 @@ ungrounded custom critic:
 }
 ```
 
-Here `code_critic` (a built-in) and `adversarial` (custom) review from the code
-alone; `test_critic` and `interaction_e2e` stay grounded (default). Mixing is the
-point — diversity of grounding, not all-or-nothing.
+Here `code_critic` (overridden to `false`), `interaction_e2e` (ungrounded by
+default — it acts like a user), and `adversarial` (custom) review from the code
+alone; `test_critic` stays grounded. Mixing is the point — diversity of grounding,
+not all-or-nothing.
 
 ## Output contract (mandatory)
 

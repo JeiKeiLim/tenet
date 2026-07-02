@@ -75,7 +75,7 @@ const CRITICS_ROSTER_TEMPLATE = `{
   "critics": [
     { "id": "code_critic", "builtin": true, "enabled": true, "full_context": true },
     { "id": "test_critic", "builtin": true, "enabled": true, "full_context": true },
-    { "id": "interaction_e2e", "builtin": true, "enabled": true, "full_context": true },
+    { "id": "interaction_e2e", "builtin": true, "enabled": true, "full_context": false },
     {
       "id": "security",
       "builtin": false,
