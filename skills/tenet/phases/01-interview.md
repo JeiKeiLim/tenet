@@ -1,6 +1,8 @@
 # Phase 01: Interview
 
-This reference defines the mandatory interview phase for Tenet Full mode. Read and follow these instructions exactly to ensure project crystallization success.
+This reference defines the interview phase. **Full mode** runs it at full strength; **Standard** and **Quick** run a proportional subset (see § 10) but never skip it — Quick is a shallower interview, not a license to skip the phase. Read and follow these instructions exactly.
+
+The phase opens with the **mode-selection checkpoint** (selected mode + basis recorded in the `## Mode Selection` block in § 5) before the first interview question. See `SKILL.md` → Mode Selection.
 
 ## 1. Run Identity And Output File Path
 The interview transcript MUST be saved before proceeding to the next phase:
@@ -27,9 +29,11 @@ Ask at least one question from each category in the first round.
 | **Integration** | List external APIs, services, and third-party dependencies. |
 | **Edge Cases** | Address failure modes, rate limits, and concurrent user behavior. |
 
-## 3. Delivery Mode Gate
+## 3. Mode Decisions Gate (delivery_mode + model_tier)
 
-In Full mode, before calling `tenet_validate_clarity()`, ask one standalone delivery-mode question.
+In Full mode, before calling `tenet_validate_clarity()`, run a standalone checkpoint that captures two mode-like decisions: **delivery_mode** (how the run is sliced) and **model_tier** (the capability tier of the worker that will execute the jobs). Ask each as its own question — do not bury either inside a bundled defaults question, and do not infer either from approval of unrelated defaults.
+
+### 3a. Delivery mode (hard gate)
 
 Required prompt content:
 - Explain `autonomous`: one end-to-end run after pre-execution confirmation.
@@ -48,6 +52,17 @@ Invalid outcomes:
 - Delivery mode was buried in a multi-part defaults bundle.
 - User said "okay", "sounds good", or equivalent to unrelated defaults.
 - Pre-execution confirmation was used as retroactive delivery-mode approval.
+
+### 3b. Model tier (advisory — shapes decomposition granularity only)
+
+Ask which tier of model will execute the implementation jobs:
+
+- `frontier` (default): a strong frontier model executes the jobs. Decomposition produces today's goal-oriented DAG — fewer, larger jobs, each trusted to carry a goal and resolve its own details.
+- `local`: a smaller/local model executes the jobs. Decomposition produces a finer-grained DAG — more, smaller, single-responsibility jobs with explicit per-job acceptance criteria, because a weaker executor needs a tighter plan to stay on-spec.
+
+This is a **declaration**, not a detection — Tenet does not auto-detect the worker model; the user states it here. It is consumed **once**, by decomposition (phase 04), and is NOT written to spec front matter or any persisted field — its effect lives in the decomposition artifact. Default to `frontier` when the user is unsure: `frontier` (or absent) is byte-identical to today's behavior.
+
+Record the choice under `## Model Tier Decision` in the transcript (see § 5). Unlike delivery_mode, this is advisory, not a hard gate — a missing `## Model Tier Decision` is valid and means `frontier`.
 
 ## 4. Clarity Gate Mechanics
 After writing the interview transcript, call `tenet_validate_clarity()` to dispatch an independent agent that scores the transcript. Do NOT compute the score yourself.
@@ -83,6 +98,12 @@ Date: [ISO date]
 Mode: Full
 Rounds: [N]
 
+## Mode Selection
+- Prompt shown: [the recommendation + one-line basis you presented]
+- User response: [confirm, or override to a different mode]
+- Selected mode: full|standard|quick
+- Selection basis: explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision
+
 ## Clarity Score
 - Goal: [Score] (weight 0.4)
 - Constraints: [Score] (weight 0.3)  
@@ -111,6 +132,12 @@ Rounds: [N]
 - Selected delivery_mode: autonomous|agile
 - Selection basis: explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision
 
+## Model Tier Decision
+- Prompt shown: [exact text or concise summary]
+- User response: [exact response, or YOLO confirmation]
+- Selected model_tier: local|frontier
+- Selection basis: explicit_user_choice|defaulted_after_uncertainty_prompt|yolo_agent_decision
+
 ## Summary
 [Concise summary of project agreement]
 ```
@@ -132,7 +159,9 @@ When the user triggers YOLO mode, **confirm before activating**: "Entering yolo 
 Once confirmed, the agent:
 - Skips interactive interview questions — makes all decisions autonomously based on codebase analysis and brownfield scan
 - Still writes the interview transcript with decisions made and assumptions
+- Still records `## Mode Selection` with `Selection basis: yolo_agent_decision` (mode chosen deliberately — default Full unless the task is clearly a small isolated tweak, in which case Quick)
 - Still records `## Delivery Mode Decision` with `Selection basis: yolo_agent_decision`
+- Still records `## Model Tier Decision` with `Selection basis: yolo_agent_decision` (default `frontier` unless the run is clearly local-executed)
 - Still runs `tenet_validate_clarity()` — if clarity is low, the agent fills gaps by reading the codebase rather than asking the user
 - Still generates spec, scenarios, and decomposition — but without user confirmation at each step
 - YOLO mode ends at the pre-execution confirmation gate — the user always confirms before autonomous execution begins
@@ -172,11 +201,13 @@ When the user's requirements involve unfamiliar technologies, complex integratio
 - Do NOT proceed to spec or harness generation until the transcript file is written and the clarity gate passes.
 - If the user says "just build it" (without triggering YOLO mode), you MUST still ask the minimum required questions and record the answers.
 - In Full mode, do NOT proceed to spec unless `## Delivery Mode Decision` exists and records a valid selection basis.
+- Quick mode is a shallower interview, NOT a skip of the interview phase. Even in Quick mode, record the `## Mode Selection` block and confirm scope + acceptance criteria before spec/decomposition — apparent task clarity is not a license to skip the phase structure.
 
 ## 10. Adaptive Interview Length
 - **Greenfield project:** 2-3 rounds, 8-15 questions total.
 - **Brownfield/known scope:** 1-2 rounds, 5-8 questions total.
-- **Standard mode (quick clarification):** 1 round, 3-5 questions total.
+- **Standard mode:** 1 round, 3-5 questions total.
+- **Quick mode:** confirm scope + acceptance criteria — minimum 1-3 targeted questions or confirmations. Never zero (see § 9). The transcript still records the `## Mode Selection` block and these confirmations before spec/decomposition.
 
 ## 11. Crystallize Project Doctrine (greenfield only)
 

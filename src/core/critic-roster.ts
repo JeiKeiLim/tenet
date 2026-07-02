@@ -47,6 +47,20 @@ const BUILTIN_JOB_TYPE: Record<BuiltinCriticId, JobType> = {
 };
 
 /**
+ * Default `full_context` per built-in. code_critic and test_critic are conformance
+ * critics — they need the spec/scenarios inlined to check against them. interaction_e2e
+ * is the exploratory/user lane: it verifies the app works by using it like a real
+ * user, so it defaults to reviewing from the surface (ungrounded) instead of anchored
+ * to the declared spec/scenarios. An explicit `full_context` in the roster file always
+ * overrides these defaults.
+ */
+const BUILTIN_DEFAULT_FULL_CONTEXT: Record<BuiltinCriticId, boolean> = {
+  code_critic: true,
+  test_critic: true,
+  interaction_e2e: false,
+};
+
+/**
  * Legacy `.tenet/critics.json` files authored before the rename use the id
  * `playwright_eval`. Map that onto the current built-in so those files keep
  * resolving without a manual edit. This is the only place the legacy string is
@@ -68,6 +82,18 @@ export type CriticRosterEntry = {
   job_type?: JobType;
   /** Custom only — project-relative path to a markdown prompt. */
   prompt_file?: string;
+  /**
+   * Whether the critic receives the run docs (spec/scenarios/decomposition/harness)
+   * inlined into its worker context. Defaults to `true` for the conformance built-ins
+   * (code_critic, test_critic) and for custom critics, and `false` for interaction_e2e
+   * (it acts like a user — explore the surface, don't anchor to the spec). Set `false`
+   * explicitly for an independent/adversarial critic that should review WITHOUT being
+   * anchored to the spec: it gets only its prompt + diff, so it can catch issues the
+   * spec itself missed (diversity of grounding, not universal anchoring). The
+   * artifact_paths labels still reach it via the job scope, so an ungrounded critic
+   * can consult the spec on demand if its review raises a question.
+   */
+  full_context?: boolean;
 };
 
 /** A critic after resolution, ready for dispatch. */
@@ -79,6 +105,8 @@ export type ResolvedCritic = {
   jobType: JobType;
   /** Custom only — project-relative path to the prompt markdown. */
   promptFile?: string;
+  /** Resolved from `full_context`: `true` = inline the run docs, `false` = review ungrounded. */
+  fullContext: boolean;
 };
 
 export const DEFAULT_ROSTER: readonly ResolvedCritic[] = BUILTIN_CRITIC_IDS.map((id) => ({
@@ -87,6 +115,7 @@ export const DEFAULT_ROSTER: readonly ResolvedCritic[] = BUILTIN_CRITIC_IDS.map(
   enabled: true,
   stage: BUILTIN_STAGE[id],
   jobType: BUILTIN_JOB_TYPE[id],
+  fullContext: BUILTIN_DEFAULT_FULL_CONTEXT[id],
 }));
 
 const isBuiltinId = (id: string): id is BuiltinCriticId =>
@@ -151,6 +180,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         enabled: e.enabled !== false,
         stage: BUILTIN_STAGE[id],
         jobType: BUILTIN_JOB_TYPE[id],
+        fullContext: typeof e.full_context === 'boolean' ? e.full_context : BUILTIN_DEFAULT_FULL_CONTEXT[id],
       });
       usedIds.add(id);
     } else {
@@ -164,6 +194,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         stage,
         jobType,
         promptFile,
+        fullContext: e.full_context !== false,
       });
       usedIds.add(id);
     }
@@ -178,6 +209,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         enabled: true,
         stage: BUILTIN_STAGE[id],
         jobType: BUILTIN_JOB_TYPE[id],
+        fullContext: BUILTIN_DEFAULT_FULL_CONTEXT[id],
       });
     }
   }

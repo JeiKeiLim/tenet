@@ -12,7 +12,7 @@ import {
   resolveLatestScenariosDoc,
   toProjectRelativePath,
   type ArtifactPaths,
-} from './artifact-paths.js';
+} from '../../core/artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const READINESS_RUBRIC = `Score this feature's IMPLEMENTATION READINESS. You are reading the spec + harness (+ optional interview) and deciding whether the agent has enough information to BUILD AND VERIFY the feature.
@@ -38,6 +38,7 @@ For each category, assign one of: "ready", "partial", "blocked".
 - Are the acceptance criteria concrete enough to write tests against?
 - Are error-handling policies, rate-limit behavior, and edge cases specified?
 - Ambiguities that survived the clarity gate but only matter at build time (e.g., "what happens on 429?", "what's the retry policy?").
+- Are factual claims about the existing codebase (file paths, current behavior, existing modules/APIs) grounded in real files cited in the spec, not assumed or invented? An un-cited or fabricated codebase claim is a blocker — the spec must reflect the actual project (greenfield runs have no existing code to cite; this applies only to claims about code that should already exist).
 
 ### 2. Research & prior art
 - If the approach uses a specific library, algorithm, or protocol — has it been decided and investigated?
@@ -141,6 +142,38 @@ const SELECTED_DELIVERY_MODE_RE = /^\s*-\s*Selected delivery_mode:\s*(autonomous
 const SELECTION_BASIS_RE =
   /^\s*-\s*Selection basis:\s*(explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision)\b/im;
 
+// Deterministic spec-substance gate. Catches unambiguous placeholder specs (TODO /
+// FIXME / "placeholder" / lorem ipsum / ???) before dispatching the readiness model —
+// a spec that carries unresolved placeholders into decomposition is not ready to plan
+// against. Only PROSE is scanned: YAML front matter and fenced code blocks are stripped
+// first, so a `// TODO` stub the worker will legitimately replace inside a code sample
+// is not a false positive.
+const SPEC_PLACEHOLDER_PATTERNS: ReadonlyArray<RegExp> = [
+  /\bTODO\b/i,
+  /\bTBD\b/i,
+  /\bFIXME\b/i,
+  /\blorem ipsum\b/i,
+  /\bplaceholder\b/i,
+  /\bto be determined\b/i,
+  /\bto be decided\b/i,
+  /\?\?\?+/,
+];
+
+const stripSpecNonProse = (specMd: string): string =>
+  specMd
+    .replace(/^---\s*\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/~~~[\s\S]*?~~~/g, '');
+
+const getSpecSubstanceFailures = (specMd: string): string[] => {
+  const prose = stripSpecNonProse(specMd);
+  return SPEC_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(prose))
+    ? [
+        'Spec contains unresolved placeholder markers (TODO/TBD/FIXME/placeholder/lorem ipsum/???). A spec carried into decomposition must be concrete — resolve or remove them, then re-run readiness.',
+      ]
+    : [];
+};
+
 type FrontMatterResult = {
   data: Record<string, unknown> | null;
   error?: string;
@@ -201,6 +234,8 @@ const getReadinessPreflightFailures = (specMd: string, interviewMd?: string): st
   if (specDeliveryMode.error) {
     failures.push(specDeliveryMode.error);
   }
+
+  failures.push(...getSpecSubstanceFailures(specMd));
 
   if (specMode === 'agile' && !SLICE_PLAN_RE.test(specMd)) {
     failures.push('Spec declares delivery_mode: agile but is missing ## Slice plan.');

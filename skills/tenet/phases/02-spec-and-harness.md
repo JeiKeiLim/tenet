@@ -34,6 +34,8 @@ Before writing the spec, conduct comprehensive research on the technologies, API
 
 **Do NOT skip this step.** Writing a spec without researching the technologies leads to specs that can't be implemented, or implementations that use the wrong patterns.
 
+**Ground every codebase claim in real files.** When the spec references the existing project (a module, an API, a table, current behavior, a config value), verify it by reading the actual code and cite the file path inline (e.g. `src/auth/session.ts`). Do not assert how the codebase works from memory or assumption — an un-cited or fabricated codebase claim becomes a silent landmine at execution time, when the worker finds the code doesn't match the spec. If you cannot verify a claim against the real project, mark it `[unverified]` and resolve it before the spec passes the readiness gate. The readiness gate treats un-cited/invented codebase claims as a blocker. (Greenfield runs have no existing code to cite — this applies only to claims about code that should already exist.)
+
 ## 1. Exact File Paths
 CRITICAL: Write all run-local artifacts under `.tenet/runs/{run_slug}/` (paths below). Run artifacts do not live anywhere else.
 

@@ -480,4 +480,84 @@ describe('tenet_validate_readiness', () => {
       }),
     ).rejects.toThrow(/must be inside the project/);
   });
+
+  it('blocks decomposition when the spec is a placeholder (deterministic substance gate)', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-12-oauth/spec.md',
+      [
+        '---',
+        'delivery_mode: autonomous',
+        '---',
+        '',
+        '# OAuth Spec',
+        '',
+        'TODO: write the actual spec. This is a placeholder — fill in later.',
+      ].join('\n'),
+    );
+    writeFile(projectPath, '.tenet/runs/2026-06-12-oauth/harness.md', '# Harness');
+
+    const result = await handler({
+      feature: 'oauth',
+      artifact_paths: {
+        spec: '.tenet/runs/2026-06-12-oauth/spec.md',
+        harness: '.tenet/runs/2026-06-12-oauth/harness.md',
+        scenarios: null,
+        interview: null,
+      },
+    });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+    const output = manager.getJobResult(parsed.job_id as string).output as {
+      passed: boolean;
+      blockers: string[];
+    };
+
+    // The old gate would have dispatched this to the readiness model; the substance
+    // gate now blocks it deterministically before dispatch.
+    expect(job?.status).toBe('completed');
+    expect(output.passed).toBe(false);
+    expect(output.blockers.join('\n')).toMatch(/placeholder/i);
+  });
+
+  it('does not block a spec whose TODO lives inside a fenced code sample', async () => {
+    const { handler, projectPath, store, manager } = createHarness();
+    writeFile(
+      projectPath,
+      '.tenet/runs/2026-06-12-oauth/spec.md',
+      [
+        '---',
+        'delivery_mode: autonomous',
+        '---',
+        '',
+        '# OAuth Spec',
+        '',
+        'Users authenticate via OAuth2. A valid token returns 200 and a session cookie.',
+        '',
+        '```ts',
+        '// TODO: implement token exchange',
+        'export function exchange(code: string) {}',
+        '```',
+      ].join('\n'),
+    );
+    writeFile(projectPath, '.tenet/runs/2026-06-12-oauth/harness.md', '# Harness');
+
+    const result = await handler({
+      feature: 'oauth',
+      artifact_paths: {
+        spec: '.tenet/runs/2026-06-12-oauth/spec.md',
+        harness: '.tenet/runs/2026-06-12-oauth/harness.md',
+        scenarios: null,
+        interview: null,
+      },
+    });
+    const parsed = parseResult(result);
+    const job = store.getJob(parsed.job_id as string);
+
+    // No placeholder markers in prose (only inside a code block) → dispatched to the
+    // readiness model (rubric embedded in the prompt), not deterministically blocked.
+    expect(job?.params.prompt).toContain('IMPLEMENTATION READINESS');
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
 });

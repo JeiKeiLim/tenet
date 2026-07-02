@@ -6,8 +6,10 @@ the three built-in critics (code, test, interaction-e2e) under-cover.
 
 Tenet's eval gate is configurable. The critic set lives in
 `.tenet/critics.json`; each critic runs as an **independent-context eval job**
-(sees the job scope + your prompt, never the author's reasoning). This doc is how
-you design one so it actually plugs into the gate and the fix-routing.
+(sees the job scope + your prompt, never the author's reasoning). Grounded critics
+also get the run docs (spec/harness/...) inlined; an ungrounded critic reviews from
+the code alone — see `full_context` below. This doc is how you design one so it
+actually plugs into the gate and the fix-routing.
 
 ## What a critic is
 
@@ -29,23 +31,29 @@ beats "check for security issues."
 {
   "version": 1,
   "critics": [
-    { "id": "code_critic",     "builtin": true,  "enabled": true },
-    { "id": "test_critic",     "builtin": true,  "enabled": true },
-    { "id": "interaction_e2e", "builtin": true,  "enabled": true },
+    { "id": "code_critic",     "builtin": true,  "enabled": true, "full_context": true },
+    { "id": "test_critic",     "builtin": true,  "enabled": true, "full_context": true },
+    { "id": "interaction_e2e", "builtin": true,  "enabled": true, "full_context": false },
     {
       "id": "security",
       "builtin": false,
       "enabled": true,
       "stage": "security_critic",
       "job_type": "critic_eval",
-      "prompt_file": ".tenet/critics/security.md"
+      "prompt_file": ".tenet/critics/security.md",
+      "full_context": true
     }
   ]
 }
 ```
 
-- **Built-ins** (`builtin: true`): only `enabled` (and order) matter. Omitting
-  one leaves it enabled at its default position. Set `enabled: false` to drop it.
+- **Built-ins** (`builtin: true`): `enabled` and order are the usual levers
+  (omit one to leave it enabled at its default position; `enabled: false` drops
+  it). `full_context` is honored here too. `code_critic` and `test_critic` default
+  to `true` (conformance — they check against the spec/tests); `interaction_e2e`
+  defaults to `false` (it acts like a user — explore the surface, don't anchor to
+  the declared spec). Set `false` on a conformance built-in, or `true` on
+  `interaction_e2e`, to override either default.
   Note: the `interaction_e2e` critic handles CLI/API/library surfaces too —
   agent-brain shell e2e, not just browser — so for a CLI-only project you usually
   want it **enabled**. Only disable it if you want no public-surface e2e at all.
@@ -57,9 +65,44 @@ beats "check for security issues."
     `layer2_status`; otherwise `critic_eval`.
   - `prompt_file` — project-relative path to the prompt markdown. Missing file →
     the critic is skipped at dispatch with a warning (never fatal).
+  - `full_context` — optional, default `true`. When `true` (default), the critic
+    receives the run docs (spec/scenarios/decomposition/harness) inlined into its
+    context, same as a dev worker — use this for **conformance** critics that check
+    the work against the spec. When `false`, the critic gets ONLY its prompt + the
+    implementation output, with NO spec inlined — use this for an **independent /
+    adversarial** critic that should review without being anchored to the spec, so it
+    can catch issues the spec itself missed. (The artifact_paths labels still appear in
+    its job scope, so it can consult the spec on demand — independent, not blind.)
+    Applies to built-ins too; the built-ins default to `true`.
 
 The file is read live on every eval — edit it and the next `tenet_start_eval`
 reflects the change with no restart. Invalid JSON falls back to the 3 built-ins.
+
+## Grounding & backward compatibility
+
+`full_context` is optional and defaults to `true` on every critic — built-in or
+custom — so any existing `.tenet/critics.json` keeps working unchanged. No
+migration, no schema bump. Add `"full_context": false` to any entry when you want
+that critic to review independently of the spec (no docs inlined). It is honored
+on built-ins too — for example, to run `code_critic` ungrounded alongside an
+ungrounded custom critic:
+
+```json
+{
+  "version": 1,
+  "critics": [
+    { "id": "code_critic",     "builtin": true, "full_context": false },
+    { "id": "test_critic",     "builtin": true },
+    { "id": "interaction_e2e", "builtin": true },
+    { "id": "adversarial", "prompt_file": ".tenet/critics/adversarial.md", "full_context": false }
+  ]
+}
+```
+
+Here `code_critic` (overridden to `false`), `interaction_e2e` (ungrounded by
+default — it acts like a user), and `adversarial` (custom) review from the code
+alone; `test_critic` stays grounded. Mixing is the point — diversity of grounding,
+not all-or-nothing.
 
 ## Output contract (mandatory)
 

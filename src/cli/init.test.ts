@@ -352,7 +352,12 @@ describe('initProject', () => {
     const tenetRoot = path.join(projectPath, '.tenet');
     fs.mkdirSync(tenetRoot, { recursive: true });
     const clean = JSON.stringify(
-      { version: 1, critics: [{ id: 'interaction_e2e', builtin: true, enabled: true }] },
+      {
+        version: 1,
+        critics: [
+          { id: 'interaction_e2e', builtin: true, enabled: true, full_context: true },
+        ],
+      },
       null,
       2,
     );
@@ -361,6 +366,60 @@ describe('initProject', () => {
     initProject(projectPath, { upgrade: true });
 
     expect(fs.readFileSync(path.join(tenetRoot, 'critics.json'), 'utf8')).toBe(clean);
+  });
+
+  it('adds full_context to pre-existing critic entries on upgrade, preserving formatting', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+    // A pre-feature critics.json: compact one-line built-ins + a multi-line custom
+    // critic, none carrying full_context.
+    fs.writeFileSync(
+      path.join(tenetRoot, 'critics.json'),
+      '{\n  "version": 1,\n  "critics": [\n' +
+        '    { "id": "code_critic", "builtin": true, "enabled": true },\n' +
+        '    { "id": "test_critic", "builtin": true, "enabled": true },\n' +
+        '    {\n' +
+        '      "id": "security",\n' +
+        '      "builtin": false,\n' +
+        '      "enabled": false,\n' +
+        '      "stage": "security_critic",\n' +
+        '      "prompt_file": ".tenet/critics/security.md"\n' +
+        '    }\n' +
+        '  ]\n}\n',
+      'utf8',
+    );
+
+    initProject(projectPath, { upgrade: true });
+
+    const after = fs.readFileSync(path.join(tenetRoot, 'critics.json'), 'utf8');
+    // One-line built-ins gained full_context inline and stayed one-line.
+    expect(after).toContain(
+      '{ "id": "code_critic", "builtin": true, "enabled": true, "full_context": true }',
+    );
+    expect(after).toContain(
+      '{ "id": "test_critic", "builtin": true, "enabled": true, "full_context": true }',
+    );
+    // Multi-line custom critic: comma on the prior value, new key at the keys' indent.
+    expect(after).toContain(
+      '"prompt_file": ".tenet/critics/security.md",\n      "full_context": true\n    }',
+    );
+
+    // Idempotent: a second upgrade changes nothing.
+    initProject(projectPath, { upgrade: true });
+    expect(fs.readFileSync(path.join(tenetRoot, 'critics.json'), 'utf8')).toBe(after);
+  });
+
+  it('leaves an invalid critics.json untouched on upgrade', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+    const broken = '{ "version": 1, "critics": [ { "id": "code_critic" ] }';
+    fs.writeFileSync(path.join(tenetRoot, 'critics.json'), broken, 'utf8');
+
+    initProject(projectPath, { upgrade: true });
+
+    expect(fs.readFileSync(path.join(tenetRoot, 'critics.json'), 'utf8')).toBe(broken);
   });
 
   it('creates lifecycle docs during upgrade without overwriting existing project docs', () => {

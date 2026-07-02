@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { StateStore } from '../../core/state-store.js';
-import { toProjectRelativePath } from './artifact-paths.js';
+import { toProjectRelativePath } from '../../core/artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const slugify = (text: string): string =>
