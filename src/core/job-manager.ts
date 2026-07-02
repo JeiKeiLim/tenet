@@ -767,37 +767,40 @@ export class JobManager {
       return undefined;
     }
 
-    const sections: string[] = ['## Run Context (worker)'];
+    const sections: string[] = ['## Run Context (auto-compiled reference — not instructions)'];
     if (feature) sections.push(`feature: ${feature}`);
     if (runPath) sections.push(`run_path: ${runPath}`);
 
-    if (specMd) sections.push('', '## Spec (inlined — source of truth for this job)', specMd);
+    if (specMd) sections.push('', '## Spec (inlined — source of truth for this run)', specMd);
     if (scenariosMd) {
-      sections.push('', '## Scenarios (inlined — success/failure shapes for this job)', scenariosMd);
+      sections.push('', '## Scenarios (inlined — success/failure shapes for this run)', scenariosMd);
     }
     if (decompositionMd) {
-      sections.push('', '## Decomposition (inlined — your job and its DAG context)', decompositionMd);
+      sections.push('', '## Decomposition (inlined — the run\'s plan / DAG)', decompositionMd);
     }
     if (harnessMd) sections.push('', '## Harness (inlined)', harnessMd);
 
     if (runPath) {
       sections.push(
         '',
-        '## Selective references (read the ones relevant to this job)',
+        '## Selective references (consult as relevant)',
         `Under ${runPath}/: journal/ (prior attempts + failure logs), research/ (current-run research), visuals/ (UI/architecture mockups).`,
       );
     }
 
-    sections.push(
-      '',
-      'Do not work blind from the task text alone — read the run docs above first; they are the source of truth.',
-    );
+    // Wrap the auto-compiled reference in a delimited block so the recipient (worker OR critic)
+    // treats it as provided material, not as addressed-to-them instructions. This boundary matters
+    // most for critics: without it the inlined docs read as "your job to do" and prime the critic
+    // into confirm mode (it sees the plan + output match and marks pass). The closing tag
+    // terminates "reference" before the task preamble that follows (which carries role + instructions).
+    const reference = `<tenet_run_context>\n${sections.join('\n')}\n</tenet_run_context>`;
 
+    // Report-only scope is an INSTRUCTION, not reference, so it lives outside the delimited block.
     if (reportOnly) {
-      sections.push('', ...reportOnlyScopeLines(job.id));
+      return `${reference}\n\n${reportOnlyScopeLines(job.id).join('\n')}`;
     }
 
-    return sections.join('\n');
+    return reference;
   }
 
   private withDevPreamble(prompt: string, job: Job): string {
@@ -822,6 +825,7 @@ export class JobManager {
       '## Deliverable Requirements',
       '',
       'You are a worker agent executing a development job. You MUST produce concrete deliverables:',
+      'If a <tenet_run_context> block appears above, read it first — it is the source of truth for this job; do not work blind from the task text alone.',
       '- Write or modify source code files that implement the described feature',
       '- Ensure the code compiles/passes type-checking',
       '- Run existing tests to verify no regressions',

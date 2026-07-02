@@ -325,6 +325,14 @@ describe('tenet_start_eval eval mode resolution', () => {
     const e2e = store.getJob(jobId(parsed, 'interaction_e2e'));
     expect(e2e?.params.artifact_paths).toBeUndefined();
     expect(e2e?.params.run_path).toBeUndefined();
+
+    // A grounded critic (code_critic, full_context: true default) leads its prompt with a
+    // description of the inlined <tenet_run_context> block — auto-compiled REFERENCE, not
+    // instructions — so it verifies against the docs instead of pattern-matching them onto the
+    // output and marking pass. An ungrounded critic (no block) gets no such description.
+    expect(codeCritic?.params.prompt).toContain('## Run Context (auto-compiled reference)');
+    expect(codeCritic?.params.prompt).toContain('AUTO-COMPILED REFERENCE');
+    expect(e2e?.params.prompt).not.toContain('## Run Context (auto-compiled reference)');
   });
 
   it('does not propagate artifact_paths/run_path to a full_context:false critic (ungrounded review)', async () => {
@@ -359,6 +367,10 @@ describe('tenet_start_eval eval mode resolution', () => {
       harness: `${runPath}/harness.md`,
     });
     expect(codeCritic?.params.run_path).toBe(runPath);
+
+    // Grounded critic leads with the run-context description; the ungrounded custom critic does not.
+    expect(codeCritic?.params.prompt).toContain('## Run Context (auto-compiled reference)');
+    expect(adversarial?.params.prompt).not.toContain('## Run Context (auto-compiled reference)');
   });
 });
 

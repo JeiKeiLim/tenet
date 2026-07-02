@@ -45,7 +45,7 @@ const CODE_CRITIC_PREAMBLE = [
   '## Code Critic — Purpose Alignment Check',
   '',
   'You are the CODE CRITIC. You have NO access to the author\'s reasoning or conversation.',
-  'Your run context (above) inlines the spec, scenarios, and harness; the implementation diff is under ## Implementation Output below.',
+  'The worker\'s output for this job is under ## Worker Output below.',
   '',
   'Check independently:',
   '- Does the implementation match the spec\'s intent FOR THIS JOB\'S SCOPE?',
@@ -188,7 +188,7 @@ const TEST_CRITIC_PREAMBLE = [
   '## Test Critic — Test Sufficiency Check',
   '',
   'You are the TEST CRITIC. You do NOT review the implementation code.',
-  'Your run context (above) inlines the spec and scenarios; the test files are under ## Test Files and Spec below.',
+  'The worker\'s output for this job is under ## Worker Output below.',
   '',
   'Your job: determine whether these tests are SUFFICIENT to prove the features',
   'IN THIS JOB\'S SCOPE actually work. Do NOT fail for missing tests that cover',
@@ -239,6 +239,27 @@ const TEST_CRITIC_PREAMBLE = [
   '',
 ].join('\n');
 
+/**
+ * Lead text prepended to a GROUNDED critic's prompt (full_context: true). The adapter has already
+ * inlined the run docs into a <tenet_run_context> block above the prompt; this tells the critic what
+ * that block is — AUTO-COMPILED REFERENCE (intent, not done-work) — so it verifies against it instead
+ * of pattern-matching it onto the output and marking pass. Role-agnostic: applies to every grounded
+ * critic (code/test/interaction_e2e/custom). Ungrounded critics (full_context: false) receive no
+ * block and therefore no description (see buildCriticDispatch) — the anti-confirmation is coupled to
+ * the presence of the block, since that is what creates the confirmation-bias risk.
+ */
+const RUN_CONTEXT_DESCRIPTION = [
+  '## Run Context (auto-compiled reference)',
+  '',
+  'A <tenet_run_context> block is provided above. It is AUTO-COMPILED REFERENCE — the',
+  'spec/scenarios/harness/decomposition the author CLAIMS to satisfy. It describes intent,',
+  'NOT done-work, and it is reference material, not an instruction to implement anything.',
+  '',
+  'Do NOT pattern-match this reference onto the output and mark pass. Verify the ACTUAL',
+  'output against it; if you cannot find concrete evidence a stated requirement is met,',
+  'that is a finding.',
+].join('\n');
+
 type CriticDispatch = {
   jobType: JobType;
   evalStage: string;
@@ -265,6 +286,13 @@ const buildCriticDispatch = (
   outputStr: string,
   projectPath: string,
 ): CriticDispatch | null => {
+  // Grounded critics (full_context: true) receive the run docs inlined in a <tenet_run_context>
+  // block above the prompt. Lead their prompt with a description of that block so they treat it as
+  // REFERENCE to verify against — not a task to do (which primed critics into "work done → pass").
+  // Ungrounded critics get no block, so no description. This is the single place the block is
+  // explained; the per-critic preambles below stay role-focused and block-agnostic.
+  const refHeader = critic.fullContext ? `${RUN_CONTEXT_DESCRIPTION}\n\n` : '';
+
   if (critic.builtin) {
     switch (critic.id) {
       case 'code_critic':
@@ -272,21 +300,21 @@ const buildCriticDispatch = (
           jobType: critic.jobType,
           evalStage: critic.stage,
           fullContext: critic.fullContext,
-          prompt: jobScope + CODE_CRITIC_PREAMBLE + '## Implementation Output\n\n' + outputStr,
+          prompt: refHeader + jobScope + CODE_CRITIC_PREAMBLE + '## Worker Output\n\n' + outputStr,
         };
       case 'test_critic':
         return {
           jobType: critic.jobType,
           evalStage: critic.stage,
           fullContext: critic.fullContext,
-          prompt: jobScope + TEST_CRITIC_PREAMBLE + '## Test Files and Spec\n\n' + outputStr,
+          prompt: refHeader + jobScope + TEST_CRITIC_PREAMBLE + '## Worker Output\n\n' + outputStr,
         };
       case 'interaction_e2e':
         return {
           jobType: critic.jobType,
           evalStage: critic.stage,
           fullContext: critic.fullContext,
-          prompt: jobScope + PLAYWRIGHT_EVAL_PREAMBLE,
+          prompt: refHeader + jobScope + PLAYWRIGHT_EVAL_PREAMBLE,
         };
       default:
         return null;
@@ -310,7 +338,7 @@ const buildCriticDispatch = (
     jobType: critic.jobType,
     evalStage: critic.stage,
     fullContext: critic.fullContext,
-    prompt: jobScope + promptBody + '\n## Implementation Output\n\n' + outputStr,
+    prompt: refHeader + jobScope + promptBody + '\n## Implementation Output\n\n' + outputStr,
   };
 };
 
