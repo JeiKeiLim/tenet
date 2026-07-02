@@ -13,6 +13,13 @@
 
 For Full mode runs with an interview transcript, verify the spec front-matter `delivery_mode` matches `## Delivery Mode Decision` in the transcript. If the transcript decision is missing or mismatched, stop before acceptance tests, decomposition, or job registration; return to the relevant crystallization phase. Pre-execution confirmation cannot retroactively satisfy delivery-mode selection.
 
+**Also read the interview transcript's `## Model Tier Decision`** (phase 01 § 3b) to shape DAG granularity. Unlike `delivery_mode`, model_tier lives only in the transcript — it is not a spec front-matter field, because it is consumed once (here) and its effect is captured in the decomposition artifact you are about to write.
+
+- `model_tier: frontier` (or the section is absent — e.g. Standard/Quick mode, or a run that skipped the Full-mode gate) → produce today's goal-oriented DAG: fewer, larger jobs, each trusted to carry a goal and resolve its own details. Byte-identical to default behavior.
+- `model_tier: local` → produce a finer-grained DAG: more, smaller, single-responsibility jobs, each with explicit per-job acceptance criteria and minimal implicit context. A weaker executor needs a tighter, more explicit plan to stay on-spec.
+
+This composes with `delivery_mode`: `agile` + `local` means sliced **and** fine-grained (apply both — per-slice DAG, fine-grained within the slice).
+
 Before decomposition, verify required visual artifacts exist when the feature has a user-facing or interactive surface (UI, game/canvas, visual app, TUI, CLI workflow, API workflow, or similar). If required visuals are missing, stop and run `phases/03-visuals.md` before writing the DAG.
 
 ## 2. File Structure (STRICT)

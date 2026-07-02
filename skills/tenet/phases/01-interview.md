@@ -27,9 +27,11 @@ Ask at least one question from each category in the first round.
 | **Integration** | List external APIs, services, and third-party dependencies. |
 | **Edge Cases** | Address failure modes, rate limits, and concurrent user behavior. |
 
-## 3. Delivery Mode Gate
+## 3. Mode Decisions Gate (delivery_mode + model_tier)
 
-In Full mode, before calling `tenet_validate_clarity()`, ask one standalone delivery-mode question.
+In Full mode, before calling `tenet_validate_clarity()`, run a standalone checkpoint that captures two mode-like decisions: **delivery_mode** (how the run is sliced) and **model_tier** (the capability tier of the worker that will execute the jobs). Ask each as its own question — do not bury either inside a bundled defaults question, and do not infer either from approval of unrelated defaults.
+
+### 3a. Delivery mode (hard gate)
 
 Required prompt content:
 - Explain `autonomous`: one end-to-end run after pre-execution confirmation.
@@ -48,6 +50,17 @@ Invalid outcomes:
 - Delivery mode was buried in a multi-part defaults bundle.
 - User said "okay", "sounds good", or equivalent to unrelated defaults.
 - Pre-execution confirmation was used as retroactive delivery-mode approval.
+
+### 3b. Model tier (advisory — shapes decomposition granularity only)
+
+Ask which tier of model will execute the implementation jobs:
+
+- `frontier` (default): a strong frontier model executes the jobs. Decomposition produces today's goal-oriented DAG — fewer, larger jobs, each trusted to carry a goal and resolve its own details.
+- `local`: a smaller/local model executes the jobs. Decomposition produces a finer-grained DAG — more, smaller, single-responsibility jobs with explicit per-job acceptance criteria, because a weaker executor needs a tighter plan to stay on-spec.
+
+This is a **declaration**, not a detection — Tenet does not auto-detect the worker model; the user states it here. It is consumed **once**, by decomposition (phase 04), and is NOT written to spec front matter or any persisted field — its effect lives in the decomposition artifact. Default to `frontier` when the user is unsure: `frontier` (or absent) is byte-identical to today's behavior.
+
+Record the choice under `## Model Tier Decision` in the transcript (see § 5). Unlike delivery_mode, this is advisory, not a hard gate — a missing `## Model Tier Decision` is valid and means `frontier`.
 
 ## 4. Clarity Gate Mechanics
 After writing the interview transcript, call `tenet_validate_clarity()` to dispatch an independent agent that scores the transcript. Do NOT compute the score yourself.
@@ -111,6 +124,12 @@ Rounds: [N]
 - Selected delivery_mode: autonomous|agile
 - Selection basis: explicit_user_choice|defaulted_after_explicit_choice_prompt|yolo_agent_decision
 
+## Model Tier Decision
+- Prompt shown: [exact text or concise summary]
+- User response: [exact response, or YOLO confirmation]
+- Selected model_tier: local|frontier
+- Selection basis: explicit_user_choice|defaulted_after_uncertainty_prompt|yolo_agent_decision
+
 ## Summary
 [Concise summary of project agreement]
 ```
@@ -133,6 +152,7 @@ Once confirmed, the agent:
 - Skips interactive interview questions — makes all decisions autonomously based on codebase analysis and brownfield scan
 - Still writes the interview transcript with decisions made and assumptions
 - Still records `## Delivery Mode Decision` with `Selection basis: yolo_agent_decision`
+- Still records `## Model Tier Decision` with `Selection basis: yolo_agent_decision` (default `frontier` unless the run is clearly local-executed)
 - Still runs `tenet_validate_clarity()` — if clarity is low, the agent fills gaps by reading the codebase rather than asking the user
 - Still generates spec, scenarios, and decomposition — but without user confirmation at each step
 - YOLO mode ends at the pre-execution confirmation gate — the user always confirms before autonomous execution begins
