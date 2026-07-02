@@ -523,6 +523,7 @@ function upgradeProject(projectPath: string, options?: InitOptions): void {
 
   migrateLegacyDocuments(tenetRoot, { enabled: options?.migrateLegacy === true });
   migrateLegacyCriticRosterId(projectPath);
+  migrateCriticRosterFullContext(projectPath);
 
   // Overwrite skill files (these are tenet-owned, not user-edited)
   copySkillDirs(projectPath);
@@ -569,6 +570,71 @@ const migrateLegacyCriticRosterId = (projectPath: string): void => {
   // custom critic's job_type — both should become interaction_e2e.
   fs.writeFileSync(rosterPath, raw.replace(/playwright_eval/g, 'interaction_e2e'), 'utf8');
   console.log('Updated .tenet/critics.json: renamed playwright_eval → interaction_e2e.');
+};
+
+/**
+ * Append `"full_context": true` to a single flat critic-entry object that lacks it,
+ * preserving the entry's one-line or multi-line style. See
+ * migrateCriticRosterFullContext.
+ */
+const addFullContextToEntry = (entry: string): string => {
+  if (entry.includes('"full_context"')) {
+    return entry;
+  }
+  // Multi-line entry whose closing brace sits on its own line: comma the last value
+  // and insert a new key line at the keys' indent.
+  const indentMatch = entry.match(/\n([ \t]+)"/);
+  const indent = indentMatch ? indentMatch[1] : '  ';
+  const multiline = entry.replace(
+    /(\S)(\s*\n[ \t]*\})$/,
+    `$1,\n${indent}"full_context": true$2`,
+  );
+  if (multiline !== entry) {
+    return multiline;
+  }
+  // Brace on the value's line (incl. pure one-liners): insert before the captured
+  // trailing whitespace + brace so the closing brace is preserved.
+  return entry.replace(/(\s*\})$/, `, "full_context": true$1`);
+};
+
+/**
+ * Add `"full_context": true` to every critic entry in a project's
+ * `.tenet/critics.json` that lacks it. Surfaces the grounded/ungrounded option in
+ * the file itself so pre-existing configs discover it on `tenet init --upgrade`
+ * without reading the docs.
+ *
+ * Like migrateLegacyCriticRosterId above, this is a targeted transform that
+ * preserves the user's formatting: one-line entries stay one-line, multi-line
+ * entries keep their indentation and key order, and only the missing key is
+ * appended. Idempotent — a no-op once every entry already carries full_context.
+ * Invalid JSON is left untouched (parsed first as a guard; never write back a
+ * corrupt transform).
+ */
+const migrateCriticRosterFullContext = (projectPath: string): void => {
+  const rosterPath = path.join(projectPath, '.tenet', 'critics.json');
+  if (!fs.existsSync(rosterPath)) {
+    return;
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(rosterPath, 'utf8');
+  } catch {
+    return;
+  }
+  // Guard: only transform well-formed JSON — a corrupt file is left for the user.
+  try {
+    JSON.parse(raw);
+  } catch {
+    return;
+  }
+  // Critic entries are flat objects (no nested braces); each `{ ... }` here is one
+  // entry. Append full_context to those missing it, preserving style.
+  const migrated = raw.replace(/\{[^{}]*\}/g, (entry) => addFullContextToEntry(entry));
+  if (migrated === raw) {
+    return;
+  }
+  fs.writeFileSync(rosterPath, migrated, 'utf8');
+  console.log('Updated .tenet/critics.json: added full_context to critic entries.');
 };
 
 const backupStateDb = (tenetRoot: string): string | null => {
