@@ -127,7 +127,8 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
   registerTool(
     'tenet_compile_context',
     {
-      description: 'Compile bootstrap context for a job',
+      description:
+        'Compile the orchestrator working context for a job (spec/harness/decomposition/doctrine + evidence listings). Returns context to the orchestrator only — it is not forwarded to the worker subprocess, which receives its own run context on dispatch.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
       }),
@@ -237,7 +238,12 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
       const reportOnly = job.params.report_only === true;
 
       const compiled = [
-        `# Compiled Context`,
+        `# Compiled Context (orchestrator aid)`,
+        '',
+        '**You are the orchestrator, not the worker.** Do not implement code directly — every implementation action goes through `tenet_start_job`, which dispatches a fresh worker subprocess. This compiled context is YOUR working context; it is not forwarded to workers (workers receive their own run context on dispatch).',
+        '',
+        'If you are unsure of the loop rules, re-read `phases/05-execution-loop.md` before acting.',
+        '',
         `job_id: ${job.id}`,
         `job_type: ${job.type}`,
         `job_name: ${jobName}`,
