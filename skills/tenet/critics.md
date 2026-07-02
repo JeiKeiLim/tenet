@@ -46,8 +46,11 @@ beats "check for security issues."
 }
 ```
 
-- **Built-ins** (`builtin: true`): only `enabled` (and order) matter. Omitting
-  one leaves it enabled at its default position. Set `enabled: false` to drop it.
+- **Built-ins** (`builtin: true`): `enabled` and order are the usual levers
+  (omit one to leave it enabled at its default position; `enabled: false` drops
+  it). `full_context` is honored here too — set `"full_context": false` on a
+  built-in (e.g. `code_critic`) to make it review independently of the spec.
+  Default `true`.
   Note: the `interaction_e2e` critic handles CLI/API/library surfaces too —
   agent-brain shell e2e, not just browser — so for a CLI-only project you usually
   want it **enabled**. Only disable it if you want no public-surface e2e at all.
@@ -71,6 +74,31 @@ beats "check for security issues."
 
 The file is read live on every eval — edit it and the next `tenet_start_eval`
 reflects the change with no restart. Invalid JSON falls back to the 3 built-ins.
+
+## Grounding & backward compatibility
+
+`full_context` is optional and defaults to `true` on every critic — built-in or
+custom — so any existing `.tenet/critics.json` keeps working unchanged. No
+migration, no schema bump. Add `"full_context": false` to any entry when you want
+that critic to review independently of the spec (no docs inlined). It is honored
+on built-ins too — for example, to run `code_critic` ungrounded alongside an
+ungrounded custom critic:
+
+```json
+{
+  "version": 1,
+  "critics": [
+    { "id": "code_critic",     "builtin": true, "full_context": false },
+    { "id": "test_critic",     "builtin": true },
+    { "id": "interaction_e2e", "builtin": true },
+    { "id": "adversarial", "prompt_file": ".tenet/critics/adversarial.md", "full_context": false }
+  ]
+}
+```
+
+Here `code_critic` (a built-in) and `adversarial` (custom) review from the code
+alone; `test_critic` and `interaction_e2e` stay grounded (default). Mixing is the
+point — diversity of grounding, not all-or-nothing.
 
 ## Output contract (mandatory)
 
