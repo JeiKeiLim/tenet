@@ -96,6 +96,7 @@ describe('resolveRoster', () => {
       stage: 'security_critic',
       jobType: 'critic_eval',
       promptFile: '.tenet/critics/security.md',
+      fullContext: true,
     });
   });
 
@@ -113,6 +114,30 @@ describe('resolveRoster', () => {
       critics: [{ id: 'x', job_type: 'dev' as any, prompt_file: '.tenet/critics/x.md' }],
     });
     expect(byId(roster, 'x')?.jobType).toBe('critic_eval');
+  });
+
+  it('defaults full_context per built-in and honors explicit overrides', () => {
+    // interaction_e2e defaults to false (acts like a user); the conformance built-ins
+    // and custom critics default to true. Explicit full_context always wins.
+    const explicit = resolveRoster({
+      critics: [
+        { id: 'code_critic', builtin: true, full_context: false }, // override true → false
+        { id: 'interaction_e2e', builtin: true, full_context: true }, // override false → true
+        { id: 'adversarial', prompt_file: '.tenet/critics/adversarial.md', full_context: false },
+      ],
+    });
+    expect(byId(explicit, 'code_critic')?.fullContext).toBe(false);
+    expect(byId(explicit, 'interaction_e2e')?.fullContext).toBe(true);
+    expect(byId(explicit, 'adversarial')?.fullContext).toBe(false);
+
+    // Omitted entries take their per-builtin default.
+    const defaults = resolveRoster({
+      critics: [{ id: 'lint', prompt_file: '.tenet/critics/lint.md' }],
+    });
+    expect(byId(defaults, 'code_critic')?.fullContext).toBe(true);
+    expect(byId(defaults, 'test_critic')?.fullContext).toBe(true);
+    expect(byId(defaults, 'interaction_e2e')?.fullContext).toBe(false);
+    expect(byId(defaults, 'lint')?.fullContext).toBe(true); // custom default true
   });
 
   it('drops duplicate ids (first wins) and skips malformed entries', () => {
@@ -134,6 +159,9 @@ describe('resolveRoster', () => {
   it('DEFAULT_ROSTER is the 3 built-ins enabled', () => {
     expect(DEFAULT_ROSTER.map((c) => c.id)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
     expect(DEFAULT_ROSTER.every((c) => c.enabled)).toBe(true);
+    expect(DEFAULT_ROSTER.find((c) => c.id === 'code_critic')?.fullContext).toBe(true);
+    expect(DEFAULT_ROSTER.find((c) => c.id === 'test_critic')?.fullContext).toBe(true);
+    expect(DEFAULT_ROSTER.find((c) => c.id === 'interaction_e2e')?.fullContext).toBe(false);
   });
 });
 

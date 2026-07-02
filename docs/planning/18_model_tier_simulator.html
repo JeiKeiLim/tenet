@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tenet — Model Tier &amp; Worker Context Simulator</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --ink: #e6e9ef;
+    --muted: #9aa3b2;
+    --dim: #6b7280;
+    --line: #2a2f3a;
+    --accent: #7c9cff;
+    --accent-2: #5ad6a0;
+    --warn: #ff6b6b;
+    --amber: #f0b04b;
+    --frontier: #7c9cff;
+    --local: #f0b04b;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+    font-size: 15px;
+  }
+  code, pre, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; }
+  a { color: var(--accent); }
+
+  header.top {
+    padding: 22px 28px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  header.top h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: -0.01em; }
+  header.top .sub { color: var(--muted); font-size: 13px; }
+  header.top .ref { color: var(--dim); font-size: 12px; margin-top: 6px; }
+
+  /* sticky control bar */
+  .controls {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; gap: 22px; align-items: center; flex-wrap: wrap;
+    background: rgba(15,17,21,0.92); backdrop-filter: blur(8px);
+    padding: 12px 28px; border-bottom: 1px solid var(--line);
+  }
+  .ctl-group { display: flex; align-items: center; gap: 10px; }
+  .ctl-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+  .seg button {
+    border: 0; background: transparent; color: var(--muted);
+    padding: 6px 14px; border-radius: 999px; cursor: pointer; font-size: 13px; font-weight: 600;
+    transition: all .15s ease;
+  }
+  .seg button.on { background: var(--accent); color: #0f1115; }
+  .seg.tier button.on.frontier { background: var(--frontier); color: #0f1115; }
+  .seg.tier button.on.local { background: var(--local); color: #0f1115; }
+  .seg.fix button.on.bad { background: var(--warn); color: #0f1115; }
+  .seg.fix button.on.good { background: var(--accent-2); color: #0f1115; }
+
+  main { padding: 26px 28px 80px; max-width: 1180px; margin: 0 auto; }
+  section { margin-bottom: 34px; }
+  h2 { font-size: 16px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 .n { color: var(--dim); font-weight: 400; margin-right: 8px; }
+  .lede { color: var(--muted); font-size: 13px; margin: 0 0 16px; max-width: 780px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px;
+  }
+
+  /* data flow diagram */
+  .flow { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .lane { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .lane h3 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .lane .who { font-size: 12px; color: var(--dim); margin-bottom: 12px; }
+  .node {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0;
+    font-size: 13px;
+  }
+  .node .t { font-weight: 700; }
+  .node .d { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .arrow { text-align: center; color: var(--dim); font-size: 18px; margin: 2px 0; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 700; }
+  .badge.ok { background: rgba(90,214,160,0.15); color: var(--accent-2); }
+  .badge.bad { background: rgba(255,107,107,0.15); color: var(--warn); }
+  .badge.info { background: rgba(124,156,255,0.15); color: var(--accent); }
+
+  /* decomposition dag */
+  .dag { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .job {
+    border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; font-size: 13px;
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    background: var(--panel-2);
+  }
+  .job .name { font-weight: 600; }
+  .job .scope { color: var(--dim); font-size: 11px; }
+  .job .tag { font-size: 10px; padding: 2px 7px; border-radius: 999px; background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+  .stat { display: inline-flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .stat b { color: var(--ink); }
+
+  /* prompt preview */
+  pre.preview {
+    background: #0b0d12; border: 1px solid var(--line); border-radius: 8px; padding: 14px;
+    font-size: 12.5px; line-height: 1.5; overflow: auto; max-height: 460px; margin: 0;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .preview .h { color: var(--accent); }
+  .preview .warn { color: var(--warn); }
+  .preview .ok { color: var(--accent-2); }
+  .preview .dim { color: var(--dim); }
+  .preview .inlined { color: var(--amber); }
+
+  /* stepper */
+  .steps { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .step-btn {
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+    padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .step-btn.active { border-color: var(--accent); color: var(--accent); }
+  .step-detail { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font-size: 13px; min-height: 90px; }
+  .step-detail .lab { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 12px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
+
+  .callout {
+    border-left: 3px solid var(--accent); background: rgba(124,156,255,0.06);
+    padding: 10px 14px; border-radius: 0 8px 8px 0; font-size: 13px; color: var(--muted); margin-top: 12px;
+  }
+  .callout.warn { border-color: var(--warn); background: rgba(255,107,107,0.06); }
+
+  footer { color: var(--dim); font-size: 12px; text-align: center; padding: 24px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>Tenet — Model Tier &amp; Worker Context</h1>
+  <div class="sub">Interactive simulator for the design in <code>18_model_tier_and_worker_context.md</code></div>
+  <div class="ref">Toggle the controls to see how context flow, decomposition granularity, and the worker prompt change.</div>
+</header>
+
+<div class="controls">
+  <div class="ctl-group">
+    <span class="ctl-label">model_tier</span>
+    <div class="seg tier" id="seg-tier">
+      <button data-tier="frontier" class="on frontier">Frontier (default)</button>
+      <button data-tier="local">Local</button>
+    </div>
+  </div>
+  <div class="ctl-group">
+    <span class="ctl-label">worker context</span>
+    <div class="seg fix" id="seg-fix">
+      <button data-fix="after" class="on good">After fix (U1)</button>
+      <button data-fix="before">Before fix (today)</button>
+    </div>
+  </div>
+</div>
+
+<main>
+
+  <!-- SECTION 1: data flow -->
+  <section>
+    <h2><span class="n">1</span>Two context paths</h2>
+    <p class="lede">
+      Today there is a half-built bridge. <code>tenet_compile_context</code> returns the assembled
+      context to the <b>orchestrator</b> only; the <b>worker</b> subprocess is dispatched with just the
+      dev preamble + task. The fix (U1) builds the worker's context in the dispatch path — these stay
+      two separate mechanisms.
+    </p>
+    <div class="card">
+      <div class="flow">
+        <div class="lane">
+          <h3>Orchestrator path</h3>
+          <div class="who">host agent running the tenet skill · frontier or local</div>
+          <div class="node">
+            <div class="t">tenet_compile_context(job_id)</div>
+            <div class="d">assembles spec · decomposition · project doctrine · harness · listings</div>
+          </div>
+          <div class="arrow">↓ returns to</div>
+          <div class="node">
+            <div class="t">Orchestrator context <span class="badge info">U2 role-preamble</span></div>
+            <div class="d">"you are the orchestrator, not the worker — dispatch via tenet_start_job"</div>
+          </div>
+        </div>
+        <div class="lane">
+          <h3>Worker path <span id="worker-badge"></span></h3>
+          <div class="who">fresh subprocess · context-cold · tier = <span id="worker-tier-label">frontier</span></div>
+          <div class="node">
+            <div class="t">tenet_start_job → toInvocation → adapter</div>
+            <div class="d">builds worker context from stored run_path + artifact_paths</div>
+          </div>
+          <div class="arrow">↓ prepends as</div>
+          <div class="node">
+            <div class="t" id="worker-recv-title">Worker prompt</div>
+            <div class="d" id="worker-recv-detail">Run Context + dev preamble + task</div>
+          </div>
+        </div>
+      </div>
+      <div class="callout" id="flow-callout"></div>
+    </div>
+  </section>
+
+  <!-- SECTION 2: decomposition -->
+  <section>
+    <h2><span class="n">2</span>Decomposition granularity</h2>
+    <p class="lede">
+      <code>model_tier</code> changes the shape of the DAG the decomposition phase produces.
+      Frontier = goal-oriented jobs with latitude; Local = smaller, single-responsibility jobs with
+      explicit acceptance criteria.
+    </p>
+    <div class="card">
+      <div class="stat" id="dag-stat"></div>
+      <div class="dag" id="dag"></div>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--frontier)"></span>frontier shape</span>
+        <span><span class="swatch" style="background:var(--local)"></span>local shape</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 3: worker prompt -->
+  <section>
+    <h2><span class="n">3</span>What the worker actually receives</h2>
+    <p class="lede">
+      The exact prompt sent to the worker subprocess. Flip <b>Before fix</b> to see the blind-worker gap.
+      Both tiers get spec + decomposition + harness inlined — only the decomposition <i>content</i> differs
+      (detailed for local, coarse for frontier).
+    </p>
+    <div class="card">
+      <pre class="preview" id="worker-prompt"></pre>
+    </div>
+  </section>
+
+  <!-- SECTION 4: stepper -->
+  <section>
+    <h2><span class="n">4</span>One job cycle, step through</h2>
+    <p class="lede">What happens between <code>tenet_continue</code> and the eval gate, with the fix applied.</p>
+    <div class="card">
+      <div class="steps" id="steps"></div>
+      <div class="step-detail" id="step-detail"></div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  Companion to <code>docs/planning/18_model_tier_and_worker_context.md</code> · Tenet design simulator
+</footer>
+
+<script>
+const state = { tier: "frontier", fix: "after", step: 0 };
+
+const FEATURE = "user-auth";
+const RUN = ".tenet/runs/2026-07-02-user-auth";
+
+const DAG = {
+  frontier: [
+    { name: "auth-setup",      scope: "models, config, password hashing",  tag: "goal-oriented" },
+    { name: "signup-login",    scope: "endpoints + UI for auth flow",      tag: "goal-oriented" },
+    { name: "session-mw",      scope: "auth middleware + session persist", tag: "goal-oriented" },
+    { name: "acceptance",      scope: "e2e: signup→login→protected route", tag: "goal-oriented" },
+  ],
+  local: [
+    { name: "user-model",         scope: "schema + types only",                tag: "single-resp" },
+    { name: "db-migration",       scope: "create users table",                 tag: "single-resp" },
+    { name: "password-hash-util", scope: "hash/verify helper + unit test",     tag: "single-resp" },
+    { name: "signup-api",         scope: "POST /signup endpoint + test",       tag: "single-resp" },
+    { name: "login-api",          scope: "POST /login endpoint + test",        tag: "single-resp" },
+    { name: "auth-middleware",    scope: "session check + 401 path + test",    tag: "single-resp" },
+    { name: "signup-ui",          scope: "form + submission handler",          tag: "single-resp" },
+    { name: "login-ui",           scope: "form + redirect on success",         tag: "single-resp" },
+    { name: "acceptance-tests",   scope: "signup→login→protected happy + fail", tag: "single-resp" },
+  ],
+};
+
+const ARTIFACT_PATHS = {
+  spec: `${RUN}/spec.md`,
+  harness: `${RUN}/harness.md`,
+  decomposition: `${RUN}/decomposition.md`,
+  scenarios: `${RUN}/scenarios-2026-07-02-user-auth.md`,
+  interview: `${RUN}/interview.md`,
+};
+
+// ---- renderers ----
+function renderControls() {
+  document.querySelectorAll("#seg-tier button").forEach(b =>
+    b.classList.toggle("on", b.dataset.tier === state.tier));
+  document.querySelectorAll("#seg-fix button").forEach(b =>
+    b.classList.toggle("on", b.dataset.fix === state.fix));
+}
+
+function renderFlow() {
+  document.getElementById("worker-tier-label").textContent = state.tier;
+  const badge = document.getElementById("worker-badge");
+  const title = document.getElementById("worker-recv-title");
+  const detail = document.getElementById("worker-recv-detail");
+  const callout = document.getElementById("flow-callout");
+
+  if (state.fix === "before") {
+    badge.innerHTML = '<span class="badge bad">BLIND</span>';
+    title.textContent = "Worker prompt (blind)";
+    detail.textContent = "dev preamble + task only — no run_path, no spec path";
+    callout.className = "callout warn";
+    callout.innerHTML =
+      "Today: the worker is <b>never told</b> the run path or where spec/decomposition live. " +
+      "Frontier workers self-compensate by exploring <code>.tenet/runs/&lt;slug&gt;/</code>; " +
+      "local workers usually do not, and work from the task text alone. The docs falsely claim " +
+      "the worker reads the compiled context — that is the landmine U2 corrects.";
+  } else {
+    badge.innerHTML = '<span class="badge ok">INFORMED</span>';
+    title.textContent = "Worker prompt (informed)";
+    detail.textContent = `inlined spec + decomposition + harness (same both tiers) + dev preamble + task`;
+    callout.className = "callout";
+    callout.innerHTML =
+      "After U1: the dispatch path (<code>toInvocation</code>) builds a Run Context block from the " +
+      "job's stored <code>run_path</code> + <code>artifact_paths</code> and sets it on " +
+      "<code>invocation.context</code> — the half-built bridge the adapters already prepend. " +
+      "<b>Same shape for both tiers:</b> spec + decomposition + harness are always inlined. " +
+      "The decomposition <i>content</i> is what differs (detailed for local, coarse for frontier) — " +
+      "so the worker receives tier-appropriate detail for free, with no tier branching in the dispatch path.";
+  }
+}
+
+function renderDag() {
+  const jobs = DAG[state.tier];
+  const color = state.tier === "frontier" ? "var(--frontier)" : "var(--local)";
+  document.getElementById("dag-stat").innerHTML =
+    `<span><b>${jobs.length}</b> jobs</span>` +
+    `<span>shape: <b style="color:${color}">${state.tier}</b></span>` +
+    `<span>delivery_mode: <b>autonomous</b></span>`;
+  document.getElementById("dag").innerHTML = jobs.map(j => `
+    <div class="job">
+      <span><span class="name" style="color:${color}">${j.name}</span>
+        <span class="scope">— ${j.scope}</span></span>
+      <span class="tag">${j.tag}</span>
+    </div>`).join("");
+}
+
+function renderWorkerPrompt() {
+  const el = document.getElementById("worker-prompt");
+  const task = "Implement signup + login with password hashing and session persistence.";
+
+  if (state.fix === "before") {
+    el.innerHTML =
+      '<span class="warn">## Deliverable Requirements</span>\n' +
+      'You are a worker agent executing a development job...\n' +
+      '(smoke check, git commit, doctrine-drift rules)\n\n' +
+      '<span class="warn">## Task</span>\n' + task + '\n\n' +
+      '<span class="dim"># ── nothing else ──────────────────────────────</span>\n' +
+      '<span class="dim"># no run_path, no spec path, no decomposition</span>\n' +
+      '<span class="dim"># worker must explore the repo to find context</span>';
+    return;
+  }
+
+  let html = "";
+  html += '<span class="ok">## Run Context</span>\n';
+  html += `run_path: <span class="h">${RUN}</span>\n`;
+  html += `feature: <span class="h">${FEATURE}</span>\n`;
+
+  html += '\n<span class="ok">## Spec (inlined — both tiers)</span>\n';
+  html += '<span class="dim"># User Auth — acceptance criteria</span>\n';
+  html += '<span class="dim"># - POST /signup creates user, returns 201</span>\n';
+  html += '<span class="dim"># - POST /login sets session cookie, redirects /dashboard</span>\n';
+  html += '<span class="dim"># - invalid credentials → 401, stays on /login</span>\n';
+
+  html += '\n<span class="ok">## Decomposition (inlined — content is tier-appropriate)</span>\n';
+  if (state.tier === "local") {
+    html += '<span class="inlined"># local → many small jobs. this job = signup-api</span>\n';
+    html += '<span class="inlined"># depends_on: user-model, db-migration, password-hash-util</span>\n';
+    html += '<span class="inlined"># acceptance: POST /signup valid body → 201 + row; bad body → 400</span>\n';
+  } else {
+    html += '<span class="inlined"># frontier → coarse goal-oriented jobs. this job = signup-login</span>\n';
+    html += '<span class="inlined"># goal: endpoints + UI for the auth flow, with session persistence</span>\n';
+  }
+
+  html += '\n<span class="ok">## Harness (inlined)</span>\n';
+  html += '<span class="dim"># build: pnpm build · test: pnpm test · dev: pnpm dev</span>\n';
+
+  html += `\n<span class="dim"># selective (read if relevant): ${RUN}/journal/ · research/ · visuals/</span>\n`;
+
+  html += '\n\n<span class="ok">## Deliverable Requirements</span>\n';
+  html += '(smoke check, git commit, doctrine-drift rules)\n\n';
+  html += '<span class="ok">## Task</span>\n' + task;
+  el.innerHTML = html;
+}
+
+const STEP_DEFS = [
+  { lab: "process steer", title: "tenet_process_steer()",
+    body: "Read user_messages first (always full), then capped agent_messages. Retire handled steers. The orchestrator stays responsive here." },
+  { lab: "next job", title: "tenet_continue()",
+    body: "Returns the next pending job from the DAG with its runtime id. This is where the orchestrator identity matters — it must not implement the job itself." },
+  { lab: "compile context", title: "tenet_compile_context(job_id)",
+    body: "Returns the assembled context to the ORCHESTRATOR, now with the U2 role-preamble on top: \"you are the orchestrator, not the worker.\"" },
+  { lab: "start job", title: "tenet_start_job(job_id)",
+    body: "Dispatches. The server builds the worker's Run Context (run_path + inlined spec/decomposition/harness) and sets it on invocation.context — the worker is no longer blind. Same for both tiers." },
+  { lab: "wait", title: "tenet_job_wait(job_id)",
+    body: "Background, non-blocking, exponential backoff (30→45→67→100→120s). Orchestrator stays responsive to steering between checks." },
+  { lab: "result + eval", title: "tenet_job_result → tenet_start_eval",
+    body: "Fetch output, then dispatch the configured critics (.tenet/critics.json). All returned eval jobs must pass; a context-limit critic exit is not a pass." },
+];
+
+function renderSteps() {
+  document.getElementById("steps").innerHTML = STEP_DEFS.map((s, i) =>
+    `<button class="step-btn ${i === state.step ? "active" : ""}" data-step="${i}">${i + 1}. ${s.lab}</button>`
+  ).join("");
+  const s = STEP_DEFS[state.step];
+  document.getElementById("step-detail").innerHTML =
+    `<div class="lab">step ${state.step + 1} of ${STEP_DEFS.length}</div>` +
+    `<div style="margin-top:6px"><code>${s.title}</code></div>` +
+    `<div style="margin-top:8px; color:var(--muted)">${s.body}</div>`;
+}
+
+function renderAll() {
+  renderControls();
+  renderFlow();
+  renderDag();
+  renderWorkerPrompt();
+  renderSteps();
+}
+
+// ---- wire up ----
+document.getElementById("seg-tier").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.tier = b.dataset.tier; renderAll();
+});
+document.getElementById("seg-fix").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.fix = b.dataset.fix; renderAll();
+});
+document.getElementById("steps").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.step = Number(b.dataset.step); renderSteps();
+});
+
+renderAll();
+</script>
+</body>
+</html>

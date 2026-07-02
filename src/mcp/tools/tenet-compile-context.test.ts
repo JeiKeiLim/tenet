@@ -50,6 +50,35 @@ afterEach(() => {
 });
 
 describe('tenet_compile_context artifact paths', () => {
+  it('opens with the orchestrator role-preamble and never carries worker-bound report-only scope', async () => {
+    const { store, handler } = createHarness();
+    writeFile(store.projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Spec');
+    writeFile(store.projectPath, '.tenet/harness/current.md', '# Harness');
+    writeFile(store.projectPath, '.tenet/decomposition/2026-04-16-oauth.md', '# Decomposition');
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: {
+        feature: 'oauth',
+        name: 'final-report',
+        prompt: 'verify',
+        report_only: true,
+      },
+      retryCount: 0,
+      maxRetries: 0,
+    });
+
+    const parsed = parseResult(await handler({ job_id: job.id }));
+
+    // Orchestrator discipline is re-asserted at the very top of the compiled context.
+    expect(parsed.context.startsWith('# Compiled Context (orchestrator aid)')).toBe(true);
+    expect(parsed.context).toContain('You are the orchestrator, not the worker');
+    expect(parsed.context).toContain('tenet_start_job');
+    // The Report-Only Scope block is worker-bound and lives in the dispatch path, not here.
+    expect(parsed.context).not.toContain('## Report-Only Scope');
+  });
+
   it('reads exact artifact paths stored on the job instead of feature fallback files', async () => {
     const { store, handler } = createHarness();
     writeFile(store.projectPath, '.tenet/spec/custom-current.md', '# Current Spec');

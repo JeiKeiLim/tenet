@@ -11,6 +11,53 @@ import {
 } from './runtime-config.js';
 import { StateStore } from './state-store.js';
 import { DEFAULT_EVAL_STAGES } from './critic-roster.js';
+import { readArtifactFile, type ArtifactPaths } from './artifact-paths.js';
+
+/**
+ * Extract a typed {@link ArtifactPaths} from an untyped `job.params.artifact_paths`
+ * value. Returns undefined for missing/non-object values so the worker-context
+ * builder degrades gracefully for legacy/quick jobs that carry no exact paths.
+ */
+const getJobArtifactPaths = (value: unknown): ArtifactPaths | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as ArtifactPaths;
+};
+
+/**
+ * Read an artifact file for the worker, degrading to empty string if the path dangles.
+ * Unlike the strict {@link readArtifactFile} used at registration (which throws to fail
+ * fast on a bad path), the worker dispatch path must not crash a whole job because one
+ * doc is missing post-migration — partial context beats blocking the job.
+ */
+const safeReadArtifact = (projectPath: string, relativePath: string, label: string): string => {
+  try {
+    return readArtifactFile(projectPath, relativePath, label);
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * Report-Only Scope block — worker-bound instructions for report-only jobs. Lives in the
+ * worker dispatch path (not `tenet_compile_context`) because it must reach the worker
+ * subprocess, which never sees compile_context output.
+ */
+const reportOnlyScopeLines = (jobId: string): string[] => [
+  '## Report-Only Scope',
+  '',
+  'You are in REPORT-ONLY mode. You MUST NOT edit project files (other than writing your final report).',
+  '',
+  'If verification reveals a blocking finding that must be resolved before this report can be trustworthy:',
+  '',
+  `1. Call \`tenet_report_blocking_finding({ job_id: "${jobId}", finding, why_it_blocks_report, recommended_followup, suspected_files })\`.`,
+  '2. Your job will be paused (status: blocked_on_finding).',
+  '3. A linked child dev job will investigate/resolve the finding and pass its own evals.',
+  '4. Your job will auto-resume with fresh context once the finding is resolved.',
+  '',
+  'Do NOT edit files yourself. Do NOT silently work around the bug. Do NOT abandon the report.',
+];
 
 type JobManagerConfig = {
   maxParallelAgents?: number;
@@ -632,7 +679,7 @@ export class JobManager {
       : job.type === 'integration_test'
         ? this.withIntegrationTestPreamble(rawPrompt, job)
         : rawPrompt;
-    const context = typeof job.params.context === 'string' ? job.params.context : undefined;
+    const context = this.buildWorkerContext(job);
 
     const maxTurnsRaw = job.params.maxTurns;
     const maxTurns =
@@ -684,6 +731,73 @@ export class JobManager {
       allowedTools,
       extraArgs: this.adapterRegistry.getJobExtraArgs(adapterName, job.type),
     };
+  }
+
+  /**
+   * Build the worker's run context (set on `invocation.context`, which every adapter
+   * prepends to the task prompt). The worker is a fresh-context subprocess — unlike the
+   * orchestrator it never sees `tenet_compile_context` output — so the foundational run
+   * docs (spec / scenarios / decomposition / harness) are inlined here and the bulky/selective
+   * ones (journal / research / visuals) are path-referenced. Tier-independent and identical
+   * for every run: the decomposition artifact already carries whatever granularity the
+   * run needs, so inlining it always propagates the right level of detail. Eval/critic jobs
+   * receive the same context — `tenet_start_eval` propagates the source job's artifact_paths
+   * and run_path, so a critic evaluates against the real spec instead of a label pointing at it.
+   *
+   * Returns undefined when there is nothing worker-specific to inject (e.g. a legacy job
+   * with no run_path/artifact_paths) so the default dispatch path stays byte-identical.
+   */
+  private buildWorkerContext(job: Job): string | undefined {
+    const projectPath = this.stateStore.projectPath;
+    const runPath = typeof job.params.run_path === 'string' ? job.params.run_path : undefined;
+    const feature = typeof job.params.feature === 'string' ? job.params.feature : '';
+    const artifactPaths = getJobArtifactPaths(job.params.artifact_paths);
+    const reportOnly = job.params.report_only === true;
+
+    const specMd = artifactPaths?.spec ? safeReadArtifact(projectPath, artifactPaths.spec, 'spec') : '';
+    const scenariosMd = artifactPaths?.scenarios
+      ? safeReadArtifact(projectPath, artifactPaths.scenarios, 'scenarios')
+      : '';
+    const decompositionMd = artifactPaths?.decomposition
+      ? safeReadArtifact(projectPath, artifactPaths.decomposition, 'decomposition')
+      : '';
+    const harnessMd = artifactPaths?.harness ? safeReadArtifact(projectPath, artifactPaths.harness, 'harness') : '';
+
+    if (!runPath && !specMd && !scenariosMd && !decompositionMd && !harnessMd && !reportOnly) {
+      return undefined;
+    }
+
+    const sections: string[] = ['## Run Context (worker)'];
+    if (feature) sections.push(`feature: ${feature}`);
+    if (runPath) sections.push(`run_path: ${runPath}`);
+
+    if (specMd) sections.push('', '## Spec (inlined — source of truth for this job)', specMd);
+    if (scenariosMd) {
+      sections.push('', '## Scenarios (inlined — success/failure shapes for this job)', scenariosMd);
+    }
+    if (decompositionMd) {
+      sections.push('', '## Decomposition (inlined — your job and its DAG context)', decompositionMd);
+    }
+    if (harnessMd) sections.push('', '## Harness (inlined)', harnessMd);
+
+    if (runPath) {
+      sections.push(
+        '',
+        '## Selective references (read the ones relevant to this job)',
+        `Under ${runPath}/: journal/ (prior attempts + failure logs), research/ (current-run research), visuals/ (UI/architecture mockups).`,
+      );
+    }
+
+    sections.push(
+      '',
+      'Do not work blind from the task text alone — read the run docs above first; they are the source of truth.',
+    );
+
+    if (reportOnly) {
+      sections.push('', ...reportOnlyScopeLines(job.id));
+    }
+
+    return sections.join('\n');
   }
 
   private withDevPreamble(prompt: string, job: Job): string {
