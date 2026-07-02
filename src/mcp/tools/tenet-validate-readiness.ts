@@ -12,7 +12,7 @@ import {
   resolveLatestScenariosDoc,
   toProjectRelativePath,
   type ArtifactPaths,
-} from './artifact-paths.js';
+} from '../../core/artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const READINESS_RUBRIC = `Score this feature's IMPLEMENTATION READINESS. You are reading the spec + harness (+ optional interview) and deciding whether the agent has enough information to BUILD AND VERIFY the feature.
