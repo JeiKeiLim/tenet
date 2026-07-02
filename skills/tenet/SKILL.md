@@ -76,7 +76,7 @@ Do not invent tool calls or runtime state. If a named Tenet MCP tool is missing,
 ## Core Invariants
 
 1. Every implementation job runs through Tenet MCP: `tenet_continue` -> `tenet_compile_context` -> `tenet_start_job` -> `tenet_job_wait` -> `tenet_job_result`.
-2. Context is compiled per job with `tenet_compile_context`; do not substitute raw file dumps.
+2. Context is compiled per job with `tenet_compile_context` for the **orchestrator's** working context; do not substitute raw file dumps. This context is not forwarded to workers — the dispatch path builds each worker's own run context (spec/decomposition/harness inlined) automatically.
 3. Generation and validation are separate contexts.
 4. Eval is a hard blocking gate. A failed eval must be retried, remediated, or blocked before dependent work proceeds.
 5. Harness enforcement applies in all modes.

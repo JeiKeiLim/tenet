@@ -161,7 +161,7 @@ Typical cases: final acceptance sweeps, architectural reviews, test-flakiness au
 
 ### What happens automatically
 
-When a report-only job's context is compiled, `tenet_compile_context` prepends a **Report-Only Scope** preamble telling the worker:
+When a report-only job is dispatched, the worker dispatch path prepends a **Report-Only Scope** preamble telling the worker:
 
 - You MUST NOT edit project files.
 - If you find a blocking finding that must be resolved for the report to be trustworthy, call `tenet_report_blocking_finding({ job_id, finding, why_it_blocks_report, recommended_followup, suspected_files })` instead of editing.

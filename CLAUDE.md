@@ -73,11 +73,11 @@ Tenet uses a document lifecycle layout. `tenet init` scaffolds only this layout;
 - **Portable snapshots** — `.tenet/state-snapshot/` (Git-safe snapshots from `tenet db snapshot`).
 - **Configurable eval critics** — `.tenet/critics.json` (roster of enabled built-in + custom critics) and `.tenet/critics/*.md` (custom-critic prompts). Read live by `tenet_start_eval` on every eval; missing/invalid file falls back to the 3 built-ins. Authored via the critic-designer doc `skills/tenet/critics.md`. The blocking-finding resume gate tracks the same configured set via the `expected_eval_stages` each critic job carries.
 
-Current-run document identity flows through `artifact_paths`: `tenet_validate_readiness` validates exact spec/harness/scenarios/interview paths, `tenet_register_jobs` stores those plus `decomposition` (and `run_path`/`run_slug`) on every job, and `tenet_compile_context` reads the stored paths. Feature-only filename lookup is a compatibility fallback only; it uses strict dated document patterns rather than loose `*-{feature}.md` matching.
+Current-run document identity flows through `artifact_paths`: `tenet_validate_readiness` validates exact spec/harness/scenarios/interview paths, `tenet_register_jobs` stores those plus `decomposition` (and `run_path`/`run_slug`) on every job, and `tenet_compile_context` reads the stored paths. `tenet_compile_context` assembles the **orchestrator's** working context (its output returns to the host agent running the skill — it is not forwarded to the worker subprocess, which gets its own run context built on dispatch). Feature-only filename lookup is a compatibility fallback only; it uses strict dated document patterns rather than loose `*-{feature}.md` matching.
 
 `tenet_register_jobs` requires a `feature` slug that propagates to all jobs in the DAG, and current runs should also pass `artifact_paths` so job context cannot drift to stale documents.
 
-Dev-type jobs get a "Deliverable Requirements" preamble prepended to their prompt, with extra retry context when `retryCount > 0`.
+Dev-type jobs get a "Deliverable Requirements" preamble prepended to their prompt, with extra retry context when `retryCount > 0`. Every dispatched worker also receives a **run-context block** on `invocation.context` (which all adapters prepend to the prompt): the foundational run docs (spec/decomposition/harness) are inlined, journal/research/visuals are path-referenced, plus a read directive — built from the job's stored `run_path`/`artifact_paths` by the dispatch path in `toInvocation`, not by `tenet_compile_context`. Report-only jobs additionally carry a Report-Only Scope block on this same path.
 
 ## Conventions
 

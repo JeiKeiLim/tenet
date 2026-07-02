@@ -179,7 +179,7 @@ tenet_register_jobs({
 })
 ```
 
-Do not rely on feature-only document lookup for new runs. The registered jobs carry `run_slug`, `run_path`, and exact `artifact_paths` into `tenet_compile_context`, so implementation workers read the same spec/harness/scenarios/interview/decomposition that passed the readiness gate.
+Do not rely on feature-only document lookup for new runs. The registered jobs carry `run_slug`, `run_path`, and exact `artifact_paths`. `tenet_compile_context` assembles the **orchestrator's** working context from them — it is not forwarded to workers. Workers receive their own run context on dispatch: the dispatch path inlines the spec/decomposition/harness and path-references journal/research/visuals automatically, so every role reads the same docs that passed the readiness gate.
 
 ## 7. Execution Protocol (CRITICAL)
 1. **Write Acceptance Tests First**: Generate test stubs from scenarios before writing the DAG.
