@@ -31,16 +31,17 @@ beats "check for security issues."
 {
   "version": 1,
   "critics": [
-    { "id": "code_critic",     "builtin": true,  "enabled": true },
-    { "id": "test_critic",     "builtin": true,  "enabled": true },
-    { "id": "interaction_e2e", "builtin": true,  "enabled": true },
+    { "id": "code_critic",     "builtin": true,  "enabled": true, "full_context": true },
+    { "id": "test_critic",     "builtin": true,  "enabled": true, "full_context": true },
+    { "id": "interaction_e2e", "builtin": true,  "enabled": true, "full_context": true },
     {
       "id": "security",
       "builtin": false,
       "enabled": true,
       "stage": "security_critic",
       "job_type": "critic_eval",
-      "prompt_file": ".tenet/critics/security.md"
+      "prompt_file": ".tenet/critics/security.md",
+      "full_context": true
     }
   ]
 }
