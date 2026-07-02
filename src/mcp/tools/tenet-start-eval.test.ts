@@ -320,6 +320,11 @@ describe('tenet_start_eval eval mode resolution', () => {
     });
     // The false "you receive the spec" claim is gone (the docs are now actually inlined).
     expect(codeCritic?.params.prompt).not.toContain('You receive ONLY');
+
+    // interaction_e2e defaults to ungrounded (it acts like a user) — no inlined docs.
+    const e2e = store.getJob(jobId(parsed, 'interaction_e2e'));
+    expect(e2e?.params.artifact_paths).toBeUndefined();
+    expect(e2e?.params.run_path).toBeUndefined();
   });
 
   it('does not propagate artifact_paths/run_path to a full_context:false critic (ungrounded review)', async () => {
