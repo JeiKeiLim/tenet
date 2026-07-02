@@ -6,8 +6,10 @@ the three built-in critics (code, test, interaction-e2e) under-cover.
 
 Tenet's eval gate is configurable. The critic set lives in
 `.tenet/critics.json`; each critic runs as an **independent-context eval job**
-(sees the job scope + your prompt, never the author's reasoning). This doc is how
-you design one so it actually plugs into the gate and the fix-routing.
+(sees the job scope + your prompt, never the author's reasoning). Grounded critics
+also get the run docs (spec/harness/...) inlined; an ungrounded critic reviews from
+the code alone — see `full_context` below. This doc is how you design one so it
+actually plugs into the gate and the fix-routing.
 
 ## What a critic is
 
@@ -57,6 +59,15 @@ beats "check for security issues."
     `layer2_status`; otherwise `critic_eval`.
   - `prompt_file` — project-relative path to the prompt markdown. Missing file →
     the critic is skipped at dispatch with a warning (never fatal).
+  - `full_context` — optional, default `true`. When `true` (default), the critic
+    receives the run docs (spec/scenarios/decomposition/harness) inlined into its
+    context, same as a dev worker — use this for **conformance** critics that check
+    the work against the spec. When `false`, the critic gets ONLY its prompt + the
+    implementation output, with NO spec inlined — use this for an **independent /
+    adversarial** critic that should review without being anchored to the spec, so it
+    can catch issues the spec itself missed. (The artifact_paths labels still appear in
+    its job scope, so it can consult the spec on demand — independent, not blind.)
+    Applies to built-ins too; the built-ins default to `true`.
 
 The file is read live on every eval — edit it and the next `tenet_start_eval`
 reflects the change with no restart. Invalid JSON falls back to the 3 built-ins.
