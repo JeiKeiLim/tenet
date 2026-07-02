@@ -132,6 +132,8 @@ Ask a dedicated question that presents both options. Do not bury delivery mode i
 
 Default to `autonomous` only after the user has seen both options and responds with uncertainty or no preference. Record the prompt, response, selected mode, and selection basis in the interview transcript; copy the selected mode to spec front matter as `delivery_mode`.
 
+The same checkpoint also captures **model_tier** (`frontier` | `local`) — a declaration of the worker's capability tier that shapes decomposition granularity only (`frontier` = today's goal-oriented DAG; `local` = finer-grained DAG with explicit per-job acceptance criteria). Unlike `delivery_mode`, `model_tier` is advisory and is NOT copied to spec front matter: it stays in the transcript and is consumed once by decomposition. Default `frontier` (byte-identical to today). See `phases/01-interview.md` § 3 and `phases/04-decomposition.md`.
+
 ## Phase Map
 
 Read the relevant phase file before executing that phase. The phrase "read" means opening the file contents in the current session, not assuming prior knowledge.
