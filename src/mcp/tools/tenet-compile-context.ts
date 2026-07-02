@@ -8,7 +8,7 @@ import {
   resolveLatestScenariosDoc,
   toProjectRelativePath,
   type ArtifactPaths,
-} from './artifact-paths.js';
+} from '../../core/artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const readIfExists = (filePath: string): string => {
@@ -236,25 +236,6 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
       const jobDeps = Array.isArray(job.params.depends_on) ? (job.params.depends_on as string[]).join(', ') : 'none';
       const reportOnly = job.params.report_only === true;
 
-      const reportOnlyPreamble = reportOnly
-        ? [
-            '',
-            '## Report-Only Scope',
-            '',
-            'You are in REPORT-ONLY mode. You MUST NOT edit project files (other than writing your final report).',
-            '',
-            'If verification reveals a blocking finding that must be resolved before this report can be trustworthy:',
-            '',
-            `1. Call \`tenet_report_blocking_finding({ job_id: "${job.id}", finding, why_it_blocks_report, recommended_followup, suspected_files })\`.`,
-            '2. Your job will be paused (status: blocked_on_finding).',
-            '3. A linked child dev job will investigate/resolve the finding and pass its own evals.',
-            '4. Your job will auto-resume with fresh context once the finding is resolved.',
-            '',
-            'Do NOT edit files yourself. Do NOT silently work around the bug. Do NOT abandon the report.',
-            '',
-          ].join('\n')
-        : '';
-
       const compiled = [
         `# Compiled Context`,
         `job_id: ${job.id}`,
@@ -266,7 +247,6 @@ export const registerTenetCompileContextTool = (registerTool: RegisterTool, stat
         ...(artifactPaths ? [`artifact_paths: ${JSON.stringify(artifactPaths)}`] : []),
         `job_dependencies: ${jobDeps}`,
         ...(reportOnly ? ['report_only: true'] : []),
-        reportOnlyPreamble,
         '## Job Assignment',
         jobPrompt,
         ...projectDocs,

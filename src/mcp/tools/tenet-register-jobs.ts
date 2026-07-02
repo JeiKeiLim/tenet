@@ -6,7 +6,7 @@ import {
   normalizeArtifactPaths,
   toProjectRelativePath,
   type ArtifactPaths,
-} from './artifact-paths.js';
+} from '../../core/artifact-paths.js';
 import { jsonResult, type RegisterTool } from './utils.js';
 
 const jobEntrySchema = z.object({
