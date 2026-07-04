@@ -280,6 +280,17 @@ Every mode still runs the full phase structure — interview, spec, decompositio
 | **Standard** | Compact interview (3–5 questions), then spec/harness/readiness → decomposition | Known architecture, moderate unknowns |
 | **Quick** | Minimum interview (confirm scope + acceptance), compact spec or a trivial single-job DAG | Small isolated bug/config/content tweak |
 
+## Delivery Modes
+
+Every run also picks a cadence in the interview — `delivery_mode: autonomous | agile`:
+
+| Mode | Cadence |
+|------|---------|
+| **autonomous** (default) | One end-to-end run, no mid-run checkpoints — fire and walk away |
+| **agile** | Sliced delivery: a plan-checkpoint after the upfront visuals, then per-slice decompose → build → eval → use-checkpoint. Each slice ships a runnable, eval-passing app. At every checkpoint you can `approve`, `redirect`, or `cancel` |
+
+Agile is for when you want to steer mid-run; autonomous is for when you want to fire-and-forget. Either way, every job and every slice still runs the full independent-critic / eval gate — agile changes cadence, not rigor.
+
 ## Crash Recovery
 
 Tenet is built for long autonomous runs where crashes are expected:
