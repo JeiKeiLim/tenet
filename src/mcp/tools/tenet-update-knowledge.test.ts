@@ -101,6 +101,67 @@ describe('tenet_update_knowledge', () => {
     expect(content).toContain(`source_job: ${job.id}`);
   });
 
+  it('routes a journal entry through source_job_id ancestry when the named job lacks run_path', async () => {
+    const { store, handler } = createHarness();
+    // The source dev job carries the run_path.
+    const sourceJob = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'source job', run_path: '.tenet/runs/2026-06-12-oauth' },
+      retryCount: 0,
+      maxRetries: 0,
+    });
+    // The named job is an ungrounded critic: source_job_id → the dev job, but no run_path of its
+    // own (tenet_start_eval only propagates run_path to grounded critics). The entry must still
+    // land in the source job's run journal, not the top-level .tenet/journal/.
+    const criticJob = store.createJob({
+      type: 'critic_eval',
+      status: 'completed',
+      params: { name: 'code critic', source_job_id: sourceJob.id },
+      retryCount: 0,
+      maxRetries: 0,
+    });
+
+    const result = parseResult(await handler({
+      title: 'Critic Note',
+      job_id: criticJob.id,
+      type: 'journal',
+      findings: { summary: 'via ancestry' },
+    }));
+
+    expect(result.file).toMatch(/^\.tenet\/runs\/2026-06-12-oauth\/journal\/\d{4}-\d{2}-\d{2}_critic-note\.md$/);
+    const content = fs.readFileSync(path.join(store.projectPath, result.file), 'utf8');
+    expect(content).toContain(`source_job: ${criticJob.id}`);
+  });
+
+  it('routes through parent_job_id ancestry when source_job_id is absent', async () => {
+    const { store, handler } = createHarness();
+    const parentJob = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'parent', run_path: '.tenet/runs/2026-06-12-oauth' },
+      retryCount: 0,
+      maxRetries: 0,
+    });
+    const childJob = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'child' },
+      retryCount: 0,
+      maxRetries: 0,
+      parentJobId: parentJob.id,
+    });
+
+    const result = parseResult(await handler({
+      title: 'Child Note',
+      job_id: childJob.id,
+      type: 'journal',
+      findings: { summary: 'via parent' },
+    }));
+
+    expect(result.file).toMatch(/^\.tenet\/runs\/2026-06-12-oauth\/journal\/\d{4}-\d{2}-\d{2}_child-note\.md$/);
+  });
+
   it('keeps legacy journal routing for jobs without run_path', async () => {
     const { store, handler } = createHarness();
     const job = store.createJob({

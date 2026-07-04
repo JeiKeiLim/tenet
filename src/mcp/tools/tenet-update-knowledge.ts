@@ -14,17 +14,38 @@ const slugify = (text: string): string =>
 
 const datePrefix = (): string => new Date().toISOString().slice(0, 10);
 
-const getRunPath = (stateStore: StateStore, jobId: string): string | undefined => {
-  const job = stateStore.getJob(jobId);
-  if (!job || typeof job.params.run_path !== 'string') {
-    return undefined;
-  }
+// Cap the ancestry walk so a malformed parent/source chain can never loop unboundedly.
+const MAX_RUN_PATH_HOPS = 5;
 
-  try {
-    return toProjectRelativePath(stateStore.projectPath, job.params.run_path, 'job.params.run_path');
-  } catch {
-    return undefined;
+/**
+ * Resolve the run-relative journal path for a job. If the named job has no `run_path`, walk
+ * its ancestry — `source_job_id` first (a critic points at the dev/eval job it evaluates,
+ * which carries `run_path`), then `parent_job_id` (chained children) — until a job with a
+ * usable `run_path` is found. This routes a journal entry to the run it belongs to even when
+ * the named job itself lacks `run_path` (an ungrounded critic, an ad-hoc child), instead of
+ * dropping it to the top-level `.tenet/journal/`. Returns undefined when no ancestor carries
+ * a `run_path`, preserving the legacy `.tenet/journal/` fallback for genuinely run-less jobs.
+ */
+const getRunPath = (stateStore: StateStore, jobId: string): string | undefined => {
+  const visited = new Set<string>();
+  let currentId: string | undefined = jobId;
+  for (let hop = 0; hop < MAX_RUN_PATH_HOPS && currentId && !visited.has(currentId); hop++) {
+    visited.add(currentId);
+    const job = stateStore.getJob(currentId);
+    if (!job) {
+      break;
+    }
+    if (typeof job.params.run_path === 'string') {
+      try {
+        return toProjectRelativePath(stateStore.projectPath, job.params.run_path, 'job.params.run_path');
+      } catch {
+        // Invalid path on this job — keep walking; an ancestor may carry a valid one.
+      }
+    }
+    const sourceId = typeof job.params.source_job_id === 'string' ? job.params.source_job_id : undefined;
+    currentId = sourceId ?? job.parentJobId ?? undefined;
   }
+  return undefined;
 };
 
 export const registerTenetUpdateKnowledgeTool = (registerTool: RegisterTool, stateStore: StateStore): void => {
