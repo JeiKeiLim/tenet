@@ -195,9 +195,10 @@ const TEST_CRITIC_PREAMBLE = [
   'features assigned to later jobs.',
   '',
   '### THE ORACLE PROBLEM (critical awareness)',
-  'The same AI agent wrote both the code AND the tests. Research shows this creates',
+  'The same AI agent wrote both the code AND the tests. This creates',
   '"oracle leakage" — tests that verify what was IMPLEMENTED rather than what was INTENDED.',
-  'Test precision drops to ~6% when the same context writes both. You MUST check for this.',
+  'Tests written from the same context as the implementation tend to assert the code\'s current',
+  'behavior, not the required behavior — so they pass even when the feature is wrong. You MUST check for this.',
   '',
   '### Test Quality Checklist',
   'For each scenario IN THIS JOB\'S SCOPE, check:',
@@ -373,7 +374,15 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         'Returns a jobs[] list of every dispatched critic (variable length). Wait for all to complete. ALL must pass.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
-        output: z.record(z.string(), z.unknown()),
+        output: z
+          .record(z.string(), z.unknown())
+          .default({})
+          .describe(
+            'Worker output to hand to the critics (diff summary, file list, report, etc.). ' +
+            'Optional — if omitted, critics receive an empty object and simply have less to review. ' +
+            'Supply it when you can; degrading gracefully here is preferable to the tool failing closed ' +
+            'and wedging the caller on a missing arg.',
+          ),
         feature: z
           .string()
           .optional()
@@ -383,7 +392,10 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
       }),
     },
     async ({ job_id, output, feature }) => {
-      const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+      // `output` defaults to {} via the schema, but normalize defensively so a caller that
+      // somehow supplies undefined still degrades gracefully instead of producing "undefined".
+      const outputObj = output ?? {};
+      const outputStr = typeof outputObj === 'string' ? outputObj : JSON.stringify(outputObj, null, 2);
       const jobScope = buildJobScopeSection(stateStore, job_id);
       const projectPath = stateStore.projectPath;
       const sourceJob = stateStore.getJob(job_id);
@@ -417,7 +429,7 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         eval_stage: d.evalStage,
         name: `${d.evalStage} for ${job_id.slice(0, 8)}`,
         prompt: d.prompt,
-        output,
+        output: outputObj,
         expected_eval_stages: expectedEvalStages,
         ...(resolvedFeature ? { feature: resolvedFeature } : {}),
         // Grounded critics (full_context !== false, the default) get the run's
