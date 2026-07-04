@@ -23,7 +23,7 @@ class MockAdapter implements AgentAdapter {
 
 type CapturedHandler = (args: {
   job_id: string;
-  output: Record<string, unknown>;
+  output?: Record<string, unknown>;
   feature?: string;
 }) => Promise<CallToolResult>;
 
@@ -230,6 +230,27 @@ describe('tenet_start_eval eval mode resolution', () => {
     const parsed = parseResult(result);
 
     expect(parsed.eval_parallel_safe).toBe(true);
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('degrades gracefully when output is omitted — dispatches critics with empty output (#29)', async () => {
+    const { store, manager, handler } = createHarness();
+    const sourceId = createSourceJob(store, 'oauth');
+
+    // No `output` supplied. The schema defaults it to {} instead of failing closed, so a stuck
+    // host agent can no longer wedge itself on a missing required arg — critics just get less.
+    const result = await handler({ job_id: sourceId });
+    const parsed = parseResult(result);
+
+    expect(parsed.critics_dispatched).toBe(3);
+    const codeCritic = store.getJob(jobId(parsed, 'code_critic'));
+    const testCritic = store.getJob(jobId(parsed, 'test_critic'));
+    expect((codeCritic?.params.prompt as string).includes('## Worker Output\n\n{}')).toBe(true);
+    expect((testCritic?.params.prompt as string).includes('## Worker Output\n\n{}')).toBe(true);
+    // The fabricated precision statistic is gone from every critic prompt.
+    expect((codeCritic?.params.prompt as string).includes('~6%')).toBe(false);
+    expect((testCritic?.params.prompt as string).includes('~6%')).toBe(false);
 
     await waitForAll(manager, parsed);
   });
