@@ -1,0 +1,18 @@
+project_name: "tenet"
+default_status: "To Do"
+statuses: ["To Do", "In Progress", "Done"]
+labels: []
+definition_of_done: []
+date_format: yyyy-mm-dd
+max_column_width: 20
+default_editor: "nvim"
+auto_open_browser: true
+default_port: 6420
+remote_operations: false
+auto_commit: false
+filesystem_only: false
+zero_padded_ids: 3
+bypass_git_hooks: true
+check_active_branches: false
+active_branch_days: 30
+task_prefix: "task"
