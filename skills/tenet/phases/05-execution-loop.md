@@ -1,6 +1,6 @@
 # Autonomous Execution Loop
 
-The core of Tenet is the tracked execution loop. You must use the `tenet_*` MCP tools for all job operations. Direct subagent calls or manual code writing during this phase bypasses job tracking, evaluation, and steering.
+The core of Tenet is the tracked execution loop. You must use the `tenet_*` MCP tools for all job operations. All job work — run inline or delegated to a host sub-agent — must flow through tenet MCP tools. Untracked work (manual code writing, direct file edits, or a sub-agent that bypasses tenet tools) breaks job tracking, evaluation, and steering.
 
 ## Prerequisite
 
@@ -29,6 +29,7 @@ Execute this sequence for every job cycle:
 5.  **Brief User**: Tell the user which job was dispatched and that they can interact while it runs.
 6.  **Background Status Check**: Dispatch `tenet_job_wait(job_id="...")` as a **background task**.
     Omit `wait_seconds` for an instant status check, or set a bounded `wait_seconds` for long-polling. Use exponential backoff between checks: 30s → 45s → 67s → 100s → 120s (cap).
+    **Delegate this span (steps 6–10: wait → eval → wait → gather) to a single tracked sub-agent** (see **Tracked Sub-Agent Delegation** under Operational Rules) instead of running it inline — it is mechanical and pollutes your context, especially on long runs. Run it inline only for short runs, or if your host can't grant a sub-agent tenet MCP access.
     When the background task completes:
     - If `is_terminal` is false: check steer, report progress to user, wait (backoff), dispatch another check with the returned `cursor`.
     - If `is_terminal` is true: proceed to step 7.
@@ -94,8 +95,25 @@ tenet_start_job(job_type="dev", params={
 
 ## Operational Rules
 
-### Use MCP Tools, Not Subagents
-Dispatch work via `tenet_start_job`. Do not call subagents directly. Do not write implementation code yourself during the execution loop. If `tenet_start_job` returns a failure about missing adapters, tell the user to configure the agent via `tenet config --agent <name>`.
+### Use MCP Tools, Not Untracked Work
+Dispatch work via `tenet_start_job`. Do not write implementation code yourself during the execution loop. You MAY delegate a slice of the loop (e.g. the wait→eval→wait→gather span) to a host sub-agent, but only if every operation the sub-agent performs is a tenet MCP tool call (see **Tracked Sub-Agent Delegation** below). A sub-agent that edits files, writes code, or otherwise bypasses tenet tools is forbidden for the same reason manual code writing is. If `tenet_start_job` returns a failure about missing adapters, tell the user to configure the agent via `tenet config --agent <name>`.
+
+### Tracked Sub-Agent Delegation (recommended)
+
+Hand the wait→eval→wait→gather span (steps 6–10) to a single host sub-agent so your main context stays clean — the repeated status checks of a long run otherwise fill it with poll noise. The sub-agent checks the worker's status, dispatches critics via `tenet_start_eval`, waits on every returned job, and returns a per-critic PASS/FAIL summary. You then resume the work only the orchestrator owns: steer check (step 1), brief-user (step 5), git fallback commit + context-limit/split decisions (step 7), `tenet_update_knowledge` (step 11), status sync (step 12), and finding-category routing.
+
+Run the span inline only for short runs, or when your host cannot grant a sub-agent tenet MCP access.
+
+The sub-agent must:
+
+- **Wait with backoff, never one blocking call.** Loop `tenet_job_wait` on the 30s → 45s → 67s → 100s → 120s (cap) schedule, re-calling with the returned `cursor` until `is_terminal`. A single `wait_seconds=120` returns non-terminal after at most 120s and cannot cover a long job.
+- **Read the critic count from the tool, never hardcode it.** `tenet_start_eval` returns a variable-length `jobs[]`; loop `tenet_job_wait` across every returned ID until all are terminal. In sequential `execution_mode`, later critics stay pending until their parent completes.
+- **Parse the rubric, not a top-level `passed`.** `tenet_job_result` returns `{job_id, status, output, error, duration_ms}` — there is no top-level `passed` field. The critic's verdict is rubric JSON nested in `output.output`; extract it and read `passed` from there.
+- **Apply the three-way classifier.** A terminal critic with no valid rubric JSON (context-limit / error / empty body) is **not** a pass — retry as-is, then split after 2 consecutive context-limits. Never accept a context-limited critic as a pass.
+- **Process steer within the delegated window.** The sub-agent re-checks `tenet_process_steer()` between waits so an emergency halt or new directive is not missed while you are not driving the loop directly.
+- **Return a structured summary** (per-critic PASS/FAIL + failure reasons). The orchestrator resumes from there.
+
+The sub-agent must NOT edit files, write code, or perform any non-tenet operation — if it does, it has left the tracked loop and the run is no longer reliable.
 
 ### Project Doctrine Write Boundary
 Normal implementation, integration, eval, spec, decomposition, harness, and visual jobs must not edit `.tenet/project/**`. They may read project doctrine and write run-local evidence under `.tenet/runs/<run-slug>/**`.

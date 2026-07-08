@@ -188,7 +188,7 @@ Examples:
 
 Read `phases/05-execution-loop.md` before starting execution.
 
-- Use Tenet MCP tools only. Do not call host subagents directly and do not manually implement job code during the execution loop.
+- Use Tenet MCP tools only. Do not manually implement job code during the execution loop. You may delegate a slice of the loop (the wait→eval→wait→gather span) to a host sub-agent provided every operation it performs is a tenet MCP tool call (see `phases/05-execution-loop.md` § Tracked Sub-Agent Delegation).
 - Dispatch `tenet_job_wait` as background/non-blocking status checks with backoff. Stay responsive to user steering between checks.
 - Pass the original job ID to `tenet_start_eval`; pass `feature` when known.
 - `tenet_start_eval` dispatches the configured critics and returns them as a variable-length `jobs[]` list (plus `execution_mode`). Wait on every job in that list; do not assume a fixed count or that all critics are already running.
