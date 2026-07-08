@@ -80,6 +80,11 @@ jobs:
         # npm 10.9.7, and `npm install -g npm@latest` fails on hosted runners
         # with MODULE_NOT_FOUND during self-upgrade. npx sidesteps both by
         # running a sandboxed copy of the latest npm directly.
+        # Co-install `sigstore` (-p sigstore): recent npm@latest does not bundle
+        # sigstore into the npx sandbox, so --provenance crashes with
+        # "Cannot find module 'sigstore'" from libnpmpublish. -p sigstore makes
+        # it resolvable. (Hit on v26.7.3; v26.7.0-.2 happened to resolve an
+        # npm@latest that still bundled it.)
         # --provenance requires id-token: write (set above).
         # --access public because this is a scoped package (@jeikeilim/*).
-        run: npx --yes npm@latest publish --provenance --access public
+        run: npx --yes -p npm@latest -p sigstore -- npm publish --provenance --access public
