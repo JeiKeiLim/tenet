@@ -3,10 +3,10 @@ id: TASK-037
 title: >-
   Loop-reliability redesign — design investigation & grounding audit (parked:
   measure first)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-08 22:09'
-updated_date: '2026-07-08 23:03'
+updated_date: '2026-07-08 23:28'
 labels:
   - design
   - orchestrator
@@ -91,8 +91,8 @@ Server-side **critic gate** (dev job can't advance until its critics pass) + **`
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Empirical failure data collected from a real weak-orchestrator (qwen3.6) run: where the loop actually breaks (job_wait / start_eval / all-must-pass / out-of-band), with transcript or log evidence
-- [ ] #2 tenet_report feasibility empirically verified: a real worker/critic subprocess is run and confirmed able (or unable) to call a tenet MCP tool, given the adapter --allowedTools flag vs the project-config permissions written by tenet init
-- [ ] #3 Decision recorded on whether the weak orchestrator routes work through the job machine at all (if it works out-of-band via direct edits/subagents, no server-side gate helps — documented and approach adjusted)
+- [x] #2 tenet_report feasibility empirically verified: a real worker/critic subprocess is run and confirmed able (or unable) to call a tenet MCP tool, given the adapter --allowedTools flag vs the project-config permissions written by tenet init
+- [x] #3 Decision recorded on whether the weak orchestrator routes work through the job machine at all (if it works out-of-band via direct edits/subagents, no server-side gate helps — documented and approach adjusted)
 - [ ] #4 If proceeding to build: gate placed at BOTH dispatchJob AND startJob (never at continue/getNextRunnableJob), specific to the dev→critic edge (not a blanket pending→running block), with a fail-branch + terminal escape + atomic evaluation
 - [ ] #5 Strict must-pass reconciled with TASK-036 tiering and a finite retry budget / terminal escape (no infinite loop under the max_retries=-1 default)
 <!-- AC:END -->
@@ -105,3 +105,9 @@ created: 2026-07-08 23:03
 2026-07-09 resolution: Open Question #1 (sub-agent feasibility) is CONFIRMED — user verified host sub-agents can call tenet MCP tools on all 3 CLIs (Claude Code, Codex, OpenCode). Chose the cheap prompt-only path over the full server-side stack: the 3 execution-loop subagent prohibitions were over-broad (they targeted the mechanism, not the harm — the stated rationale was "bypasses job tracking", and a sub-agent that routes through tenet tools bypasses nothing). Narrowed them to ban untracked work, and added a "Tracked Sub-Agent Delegation (recommended)" subsection to skills/tenet/phases/05-execution-loop.md plus a matching SKILL.md Execution Rule. The full server-side gate / eval_round / tenet_report / watchdog stack remains PARKED — only revisit if the delegation recommendation fails to hold. Acceptance test: run qwen3.6 with the new prompt and confirm the runs that previously did NOT delegate now do.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Investigation concluded; decision = do NOT build the full server-side stack (gate/eval_round/tenet_report/watchdog) - parked as premature. Shipped the cheap prompt-only path instead (tracked sub-agent delegation, v26.7.3; see TASK-012). Feasibility (AC#2) confirmed for all 3 CLIs. Routing (AC#3): qwen routes through the job machine. AC#1 (committed transcript) not collected - anecdotal + user confirmation deemed sufficient for the downscoped decision. ACs #4/#5 N/A (gate not built by decision).
+<!-- SECTION:FINAL_SUMMARY:END -->
