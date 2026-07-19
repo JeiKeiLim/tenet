@@ -30,6 +30,7 @@ import {
   UNLIMITED_RETRIES,
 } from '../core/runtime-config.js';
 import { runDbBackup, runDbCheck, runDbRestoreSnapshot, runDbSnapshot } from './db.js';
+import { runCleanupCommand, type CleanupFlags } from './db-cleanup.js';
 import { showStatus } from './status.js';
 
 const resolveProjectPath = (project?: string): string => path.resolve(project ?? process.cwd());
@@ -408,6 +409,55 @@ const run = async (): Promise<void> => {
         process.exitCode = 1;
       }
     });
+
+  dbCommand
+    .command('cleanup')
+    .description('Reclaim SQLite bloat: delete old finished jobs / activity logs, then compact')
+    .option('--project <path>', 'Project path', '.')
+    .option('--keep-days <n>', 'Remove finished work older than N days')
+    .option('--before <date>', 'Remove finished work older than a date (YYYY-MM-DD)')
+    .option('--mode <mode>', 'all (remove finished work) | events-only (trim logs, keep all results)', 'all')
+    .option('--dry-run', 'Show what would happen; change nothing')
+    .option('--yes', 'Skip the interactive confirmation')
+    .option('--no-archive', 'Do not archive removed job records before deleting')
+    .action(
+      async (options: {
+        project: string;
+        keepDays?: string;
+        before?: string;
+        mode?: string;
+        dryRun?: boolean;
+        yes?: boolean;
+        archive: boolean;
+      }) => {
+        const projectPath = resolveProjectPath(options.project);
+        let keepDays: number | undefined;
+        if (options.keepDays !== undefined) {
+          keepDays = Number.parseInt(options.keepDays, 10);
+          if (Number.isNaN(keepDays)) {
+            console.error('--keep-days must be a whole number of days');
+            process.exitCode = 1;
+            return;
+          }
+        }
+        const flags: CleanupFlags = {
+          keepDays,
+          before: options.before,
+          mode: options.mode === 'events-only' ? 'events-only' : 'all',
+          dryRun: options.dryRun === true,
+          yes: options.yes === true,
+          noArchive: options.archive === false,
+        };
+        try {
+          await runCleanupCommand(projectPath, flags);
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error(error.message);
+          }
+          process.exitCode = 1;
+        }
+      },
+    );
 
   program
     .command('config')

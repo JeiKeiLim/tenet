@@ -96,6 +96,66 @@ export type RestoreDatabaseOptions = {
   force?: boolean;
 };
 
+/**
+ * Job statuses that represent finished work — the only statuses cleanup ever
+ * deletes. The cleanup DELETE clauses filter on this list, so the "in-flight
+ * work is immortal" gate is enforced in SQL, not just hidden in the UI.
+ */
+export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['completed', 'failed', 'cancelled'];
+
+/** Job statuses that represent in-flight / resumable work — never prunable. */
+export const NON_TERMINAL_JOB_STATUSES: readonly JobStatus[] = [
+  'pending',
+  'running',
+  'blocked',
+  'blocked_on_finding',
+];
+
+const TERMINAL_STATUS_LIST_SQL = TERMINAL_JOB_STATUSES.map((status) => `'${status}'`).join(', ');
+
+export type CleanupCategoryBytes = {
+  eventsData: number;
+  jobsOutput: number;
+  jobsParams: number;
+  jobsError: number;
+};
+
+export type CleanupReclaimTotals = {
+  jobCount: number;
+  eventCount: number;
+  bytes: number;
+};
+
+export type CleanupReclaimEntry = {
+  cutoffMs: number;
+  all: CleanupReclaimTotals;
+  eventsOnly: { eventCount: number; bytes: number };
+};
+
+export type CleanupPreview = {
+  fileBytes: number;
+  walBytes: number;
+  shmBytes: number;
+  pageSize: number;
+  pageCount: number;
+  freelistCount: number;
+  categoryBytes: CleanupCategoryBytes;
+  statusCounts: Record<string, number>;
+  orphanEvents: { count: number; bytes: number };
+  reclaim: CleanupReclaimEntry[];
+};
+
+export type CleanupPruneResult = {
+  deletedJobs: number;
+  deletedEvents: number;
+  orphanEventsSwept: number;
+  archivedJobs: number;
+  bytesBefore: number;
+  bytesAfter: number;
+  vacuumed: boolean;
+  vacuumError?: string;
+};
+
 export class DbHealthError extends Error {
   constructor(public readonly report: DbHealthReport) {
     const details = [
@@ -154,6 +214,26 @@ const fileSize = (filePath: string): number | null => {
 };
 
 const sqliteString = (value: string): string => `'${value.replace(/'/g, "''")}'`;
+
+/**
+ * Fold a series of (timestamp, bytes) samples into the {count, bytes} strictly
+ * older than a cutoff. Module-level so the reclaim-curve logic is unit-testable
+ * without a DB.
+ */
+const tallyOlderThan = (
+  samples: ReadonlyArray<{ t: number; bytes: number }>,
+  cutoffMs: number,
+): { count: number; bytes: number } => {
+  let count = 0;
+  let bytes = 0;
+  for (const sample of samples) {
+    if (sample.t < cutoffMs) {
+      count += 1;
+      bytes += sample.bytes;
+    }
+  }
+  return { count, bytes };
+};
 
 const pragmaTextRows = (db: Database.Database, pragma: string): string[] => {
   const result = db.pragma(pragma) as unknown;
@@ -597,6 +677,206 @@ export class StateStore {
   getTotalCount(): number {
     const row = this.db.prepare('SELECT COUNT(*) AS count FROM jobs').get() as { count: number };
     return row.count;
+  }
+
+  /**
+   * Sum of LENGTH(column) across a table — the byte footprint of one category
+   * (events.data, jobs.output, jobs.params, jobs.error). Used by the cleanup
+   * preview to break the DB down by what's actually taking up space.
+   */
+  private byteSum(sql: string): number {
+    const row = this.db.prepare(sql).get() as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Read-only preview for `tenet db cleanup`: file/page stats, per-category
+   * bytes, status counts, orphan events, and a per-cutoff reclaim curve for
+   * both "remove old finished work" (all) and "trim logs only" (events-only).
+   * Every figure is computed from the live DB so the rendered output is correct
+   * for any DB shape (1 MB, 10 GB, day-old or year-old). Performs no writes.
+   *
+   * The reclaim curve is built by pulling three (age, bytes) series once and
+   * folding them per cutoff in JS — so N cutoffs cost three scans, not N*3.
+   */
+  getCleanupPreview(cutoffsMs: readonly number[]): CleanupPreview {
+    const { dbPath, walPath, shmPath } = statePaths(this.projectPath);
+
+    const categoryBytes: CleanupCategoryBytes = {
+      eventsData: this.byteSum('SELECT COALESCE(SUM(LENGTH(data)), 0) AS n FROM events'),
+      jobsOutput: this.byteSum('SELECT COALESCE(SUM(LENGTH(output)), 0) AS n FROM jobs'),
+      jobsParams: this.byteSum('SELECT COALESCE(SUM(LENGTH(params)), 0) AS n FROM jobs'),
+      jobsError: this.byteSum('SELECT COALESCE(SUM(LENGTH(error)), 0) AS n FROM jobs'),
+    };
+
+    const statusRows = this.db
+      .prepare('SELECT status, COUNT(*) AS count FROM jobs GROUP BY status')
+      .all() as StatusCountRow[];
+    const statusCounts: Record<string, number> = {};
+    for (const row of statusRows) {
+      statusCounts[row.status] = row.count;
+    }
+
+    const orphanRow = this.db
+      .prepare(
+        'SELECT COUNT(*) AS count, COALESCE(SUM(LENGTH(data)), 0) AS bytes ' +
+          'FROM events WHERE job_id NOT IN (SELECT id FROM jobs)',
+      )
+      .get() as { count: number; bytes: number };
+
+    // (age, bytes) series — one scan each, lengths only (no blob bodies).
+    const terminalJobs = this.db
+      .prepare(
+        `SELECT COALESCE(completed_at, created_at) AS t,
+                LENGTH(params) + COALESCE(LENGTH(output), 0) + COALESCE(LENGTH(error), 0) AS bytes
+         FROM jobs WHERE status IN (${TERMINAL_STATUS_LIST_SQL})`,
+      )
+      .all() as Array<{ t: number; bytes: number }>;
+
+    const terminalJobEvents = this.db
+      .prepare(
+        `SELECT COALESCE(j.completed_at, j.created_at) AS t, COALESCE(LENGTH(e.data), 0) AS bytes
+         FROM events e JOIN jobs j ON e.job_id = j.id
+         WHERE j.status IN (${TERMINAL_STATUS_LIST_SQL})`,
+      )
+      .all() as Array<{ t: number; bytes: number }>;
+
+    const eventsByTime = this.db
+      .prepare('SELECT timestamp AS t, COALESCE(LENGTH(data), 0) AS bytes FROM events')
+      .all() as Array<{ t: number; bytes: number }>;
+
+    const reclaim: CleanupReclaimEntry[] = cutoffsMs.map((cutoffMs) => {
+      const jobs = tallyOlderThan(terminalJobs, cutoffMs);
+      const evts = tallyOlderThan(terminalJobEvents, cutoffMs);
+      const oldEvents = tallyOlderThan(eventsByTime, cutoffMs);
+      return {
+        cutoffMs,
+        all: { jobCount: jobs.count, eventCount: evts.count, bytes: jobs.bytes + evts.bytes },
+        eventsOnly: { eventCount: oldEvents.count, bytes: oldEvents.bytes },
+      };
+    });
+
+    return {
+      fileBytes: fileSize(dbPath) ?? 0,
+      walBytes: fileSize(walPath) ?? 0,
+      shmBytes: fileSize(shmPath) ?? 0,
+      pageSize: simpleNumberPragma(this.db, 'page_size') ?? 0,
+      pageCount: simpleNumberPragma(this.db, 'page_count') ?? 0,
+      freelistCount: simpleNumberPragma(this.db, 'freelist_count') ?? 0,
+      categoryBytes,
+      statusCounts,
+      orphanEvents: { count: orphanRow.count, bytes: orphanRow.bytes },
+      reclaim,
+    };
+  }
+
+  /**
+   * Destructive cleanup: archive prunable job rows (optional, "all" mode only),
+   * delete old finished work or old event logs, sweep orphan events, then
+   * checkpoint + VACUUM. The status gate is re-checked in every DELETE WHERE,
+   * so a job whose status changed between the archive SELECT and the delete is
+   * archived harmlessly but never deleted. Safe to run while a server has the
+   * DB open — SQLite WAL lets the delete + VACUUM run concurrently (verified);
+   * a busy_timeout absorbs momentary write contention.
+   *
+   * VACUUM can't run inside a transaction, so it runs after the delete txn
+   * commits. If it fails (e.g. SQLITE_BUSY under heavy concurrent load) the
+   * deletes still stand; the result carries `vacuumed: false` + `vacuumError`.
+   */
+  pruneCleanup(opts: {
+    mode: 'all' | 'events-only';
+    cutoffMs: number;
+    archivePath?: string;
+    vacuum?: boolean;
+  }): CleanupPruneResult {
+    if (this.readonlyMode) {
+      throw new Error('cannot prune on a read-only StateStore');
+    }
+    const { dbPath } = statePaths(this.projectPath);
+    const bytesBefore = fileSize(dbPath) ?? 0;
+    const vacuum = opts.vacuum !== false;
+
+    // 1. Archive prunable job rows (streamed — low memory even for a 1 GiB+
+    //    output column). Events are not archived: they are transition logs.
+    let archivedJobs = 0;
+    if (opts.archivePath && opts.mode === 'all') {
+      fs.mkdirSync(path.dirname(opts.archivePath), { recursive: true });
+      const fd = fs.openSync(opts.archivePath, 'w');
+      try {
+        const stmt = this.db.prepare(
+          `SELECT * FROM jobs WHERE status IN (${TERMINAL_STATUS_LIST_SQL}) AND COALESCE(completed_at, created_at) < ?`,
+        );
+        for (const row of stmt.iterate(opts.cutoffMs) as IterableIterator<JobRow>) {
+          fs.writeSync(fd, `${JSON.stringify(row)}\n`);
+          archivedJobs += 1;
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+
+    // 2. Delete in one transaction; the status gate is re-checked in each WHERE.
+    const deletes = this.db.transaction(() => {
+      let deletedJobs = 0;
+      let deletedEvents = 0;
+      if (opts.mode === 'all') {
+        const cascade = this.db
+          .prepare(
+            `DELETE FROM events WHERE job_id IN (
+               SELECT id FROM jobs WHERE status IN (${TERMINAL_STATUS_LIST_SQL})
+                 AND COALESCE(completed_at, created_at) < ?)`,
+          )
+          .run(opts.cutoffMs);
+        deletedEvents += cascade.changes;
+        deletedJobs = this.db
+          .prepare(
+            `DELETE FROM jobs WHERE status IN (${TERMINAL_STATUS_LIST_SQL})
+               AND COALESCE(completed_at, created_at) < ?`,
+          )
+          .run(opts.cutoffMs).changes;
+      } else {
+        deletedEvents += this.db.prepare('DELETE FROM events WHERE timestamp < ?').run(opts.cutoffMs).changes;
+      }
+      // Sweep orphan events (job gone, or never existed) in both modes.
+      const orphanSweep = this.db
+        .prepare('DELETE FROM events WHERE job_id NOT IN (SELECT id FROM jobs)')
+        .run();
+      return { deletedJobs, deletedEvents, orphanEventsSwept: orphanSweep.changes };
+    })();
+
+    // 3. Checkpoint + VACUUM (outside the txn). Best-effort checkpoint; a VACUUM
+    //    failure is reported, not fatal — the deletes already committed.
+    let vacuumed = false;
+    let vacuumError: string | undefined;
+    if (vacuum) {
+      try {
+        this.checkpoint('TRUNCATE');
+      } catch {
+        /* checkpoint before VACUUM is best-effort */
+      }
+      try {
+        this.db.exec('VACUUM');
+        vacuumed = true;
+        // VACUUM writes the compacted db through the WAL. Checkpoint again so the
+        // main file actually shrinks (and the WAL sidecar truncates) now, not on a
+        // later close — otherwise a small resulting DB stays in the WAL and the
+        // file-size win is invisible until the process exits.
+        this.checkpoint('TRUNCATE');
+      } catch (error) {
+        vacuumError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    this.syncStatusFiles();
+
+    return {
+      ...deletes,
+      archivedJobs,
+      bytesBefore,
+      bytesAfter: fileSize(dbPath) ?? 0,
+      vacuumed,
+      vacuumError,
+    };
   }
 
   getBlockedJobs(): Job[] {

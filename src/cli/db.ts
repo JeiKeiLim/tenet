@@ -3,15 +3,18 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { StateStore, type DbHealthReport, type RestoreDatabaseOptions } from '../core/state-store.js';
 
-const timestamp = (): string =>
+export const timestamp = (): string =>
   new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
 
-const formatBytes = (bytes: number): string => {
+export const formatBytes = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
   const kib = bytes / 1024;
   if (kib < 1024) return `${kib.toFixed(1)} KiB`;
   const mib = kib / 1024;
-  return `${mib.toFixed(1)} MiB`;
+  if (mib < 1024) return `${mib.toFixed(1)} MiB`;
+  const gib = mib / 1024;
+  if (gib < 1024) return `${gib.toFixed(2)} GiB`;
+  return `${(gib / 1024).toFixed(2)} TiB`;
 };
 
 const printFileInfo = (label: string, filePath: string): void => {
