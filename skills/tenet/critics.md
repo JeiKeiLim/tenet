@@ -1,8 +1,10 @@
 # Critic Designer — authoring a custom evaluation critic
 
 On demand. Not a numbered loop phase — read this when the user asks Tenet to
-"create a <X> critic for this repo," or when a run keeps hitting a failure class
-the three built-in critics (code, test, interaction-e2e) under-cover.
+"create a <X> critic for this repo," when a run keeps hitting a failure class
+the three built-in critics (code, test, interaction-e2e) under-cover, or when
+**Critic Tailoring** (`phases/02-spec-and-harness.md` § 4.5) sends you here to
+draft a run-scoped critic from the just-written spec.
 
 Tenet's eval gate is configurable. The critic set lives in
 `.tenet/critics.json`; each critic runs as an **independent-context eval job**
@@ -78,6 +80,44 @@ beats "check for security issues."
 The file is read live on every eval — edit it and the next `tenet_start_eval`
 reflects the change with no restart. Invalid JSON falls back to the 3 built-ins.
 
+## Two scopes: global vs run-scoped critics
+
+Custom critics live in **two scopes**, both wired through the same roster file.
+`prompt_file` is resolved as project-relative or absolute, so either path shape
+just works — no code change is needed to use either scope.
+
+- **Global (durable):** `.tenet/critics/<id>.md`. Hand-authored (via the Design
+  Workflow below) for risk surfaces that apply to every run in this repo — e.g.
+  a security critic for a payments API, an a11y critic for a UI project. Listed
+  in `.tenet/critics.json` with `prompt_file: ".tenet/critics/<id>.md"`. Persists
+  across runs; revise by hand or via the critic designer on demand.
+- **Run-scoped (ephemeral):** `.tenet/runs/<run-slug>/critics/<id>.md`. Generated
+  by the **Critic Tailoring** step (`phases/02-spec-and-harness.md` § 4.5) from the
+  just-written interview/spec — for risks *this* feature surfaces that the
+  built-ins and existing global critics under-cover. Listed in `.tenet/critics.json`
+  with `prompt_file: ".tenet/runs/<run-slug>/critics/<id>.md"`. Pruned or promoted
+  at run end (see *Run-end critic lifecycle* below).
+
+The roster is the single dispatch list — it mixes global and run-scoped entries
+freely. At run end, the run-scoped entries are either dropped (the default) or
+promoted to global (if the critic caught a real failure this run and the risk
+applies repo-wide). This keeps the roster from accumulating stale per-run critics
+while preserving the ones that earned a durable place.
+
+A run-scoped roster entry looks identical to a global one except for the path:
+
+```json
+{
+  "id": "oauth-token-leak",
+  "builtin": false,
+  "enabled": true,
+  "stage": "oauth_token_leak_critic",
+  "job_type": "critic_eval",
+  "prompt_file": ".tenet/runs/2026-07-20-oauth/critics/oauth-token-leak.md",
+  "full_context": true
+}
+```
+
 ## Grounding & backward compatibility
 
 `full_context` is optional and defaults to `true` on every critic — built-in or
@@ -131,6 +171,12 @@ not-passed. So end the prompt with the literal contract line above.
 
 ## Design workflow
 
+This section covers **two entry points**: the durable global-critic workflow
+(on-demand, hand-authored) and the **run-tailoring workflow** (called from
+`phases/02-spec-and-harness.md` § 4.5 with the spec already in hand).
+
+### A. Global critic (durable, on-demand)
+
 1. **Find the gap.** Read `.tenet/project/**` (especially `testing.md`,
    `architecture.md`) and recent run journals under `.tenet/runs/*/journal/`.
    What failure class keeps slipping past the three built-ins? Pick a concrete
@@ -141,13 +187,69 @@ not-passed. So end the prompt with the literal contract line above.
    output contract line. The prompt receives the job scope preamble (eval-only
    within this job) plus a `## Implementation Output` section automatically —
    tell it to inspect that output.
-3. **Register** the critic in `.tenet/critics.json` with `enabled: true`.
+3. **Register** the critic in `.tenet/critics.json` with `enabled: true` and
+   `prompt_file: ".tenet/critics/<id>.md"`.
 4. **Smoke-test.** Run `tenet_start_eval` against one completed job, then
    `tenet_job_result` on the critic's job id. Confirm its output parses (has
    `passed` + `findings` with valid `category`) and that a deliberate violation
    in the output makes it fail.
 5. **Watch reliability.** If the critic routinely fails to emit the contract,
    tighten the prompt's closing instruction before trusting its verdict.
+
+### B. Run-tailored critic (ephemeral, called from the spec phase)
+
+You are invoked by `phases/02-spec-and-harness.md` § 4.5 with `interview.md`,
+`spec.md`, and `scenarios.md` already written for this run. §4.5 owns the full
+procedure — three steps: orphan sweep → review global critics against this run's
+spec → generate run-scoped critics for gaps the enabled globals don't cover.
+Read §4.5 and follow it; don't re-derive the procedure here.
+
+This section is the **prompt-shape reference** for Step 2's generate part — how
+to write the critic prompt file once §4.5 has identified a gap.
+
+- **Write the prompt** at `.tenet/runs/<run-slug>/critics/<id>.md` (create the
+  directory). Same prompt shape as global critics: state the focus, what counts
+  as a finding, the severity rule (everything is blocking), and end with the
+  output contract line (see *Output contract* above). Use a `stage` name that
+  matches the critic's focus (e.g. `oauth_token_leak_critic`).
+- **Register** each run-scoped critic in `.tenet/critics.json` with
+  `prompt_file: ".tenet/runs/<run-slug>/critics/<id>.md"`. Preserve all existing
+  entries (built-ins + global customs, including any Step 1 disabled) — append
+  only.
+- **Prefer reuse over creation.** If a still-enabled global critic already covers
+  the gap, do not create a run-scoped duplicate — the global one already runs on
+  every eval.
+- **Defer if no gaps.** If the spec surfaces no risks beyond what the built-ins
+  and enabled globals already cover, write no run-scoped critic and record that
+  decision in the run journal (`tenet_update_knowledge(type="journal", ...)`)
+  so the run-end lifecycle step knows tailoring was considered, not skipped by
+  mistake.
+
+### Run-end critic lifecycle
+
+At run completion (`phases/05-execution-loop.md` → *Run Completion*), after the
+doctrine drift review, handle run-scoped critics before the final report:
+
+1. **For each run-scoped critic** (roster entries whose `prompt_file` is under
+   `.tenet/runs/<run-slug>/critics/`):
+   - **Default: drop.** Remove its roster entry from `.tenet/critics.json` and
+     leave the prompt file in `.tenet/runs/<run-slug>/critics/` (it dies with the
+     run directory; no cleanup needed). This is the right call when the critic
+     passed on every job it ran against, or the run had no jobs that exercised
+     its focus.
+   - **Promote to global** if **both** are true: (a) the critic caught at least
+     one real failure this run (a `passed: false` that triggered a dev retry and
+     the retry fixed the issue), and (b) the risk applies repo-wide, not just to
+     this feature. To promote: move the prompt file to `.tenet/critics/<id>.md`,
+     rewrite the roster entry's `prompt_file` to the new path, and note the
+     promotion in the run journal.
+2. **Restore disabled globals.** For any global critic Step 1 disabled for this
+   run, set `enabled: true` again unless the run surfaced a reason to keep it
+   off (in which case a doctrine-drift note was already written in Step 1). A
+   disable is per-run by default; it must not silently persist into the next run.
+3. **Never block the run** on this step. State the count (dropped / promoted /
+   disabled-restored) in the final report and continue. The user can revise
+   global promotions between runs by hand.
 
 ## Worked example — a security critic
 
