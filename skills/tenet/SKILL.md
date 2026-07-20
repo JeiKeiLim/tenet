@@ -181,8 +181,8 @@ Examples:
 - Readiness gate: after spec/harness/scenarios and required visuals, call `tenet_validate_readiness` with exact `artifact_paths` and resolve blockers before decomposition.
 - Plan/use checkpoints: in agile mode, block until the user responds with `approve`, `redirect: ...`, `cancel`, or `done` as defined in `phases/07-agile-checkpoints.md`.
 - Pre-execution gate: before dispatching a DAG or slice DAG, summarize mode, job count, key spec decisions, and harness constraints. Ask for confirmation unless the user explicitly asked to start without oversight.
-- Eval gate: after every completed job, call `tenet_start_eval(...)` and wait according to the returned `execution_mode`. The critic set comes from `.tenet/critics.json` (3 built-in by default; the project may disable any and add custom critics). All returned eval jobs must pass.
-- To add a repo-specific critic (security, a11y, API contract, etc.), follow `critics.md` (the critic designer) — it produces the roster entry + prompt file so you don't hand-write prompts.
+- Eval gate: after every completed job, call `tenet_start_eval(...)` and wait according to the returned `execution_mode`. The critic set comes from `.tenet/critics.json` (3 built-in by default; the project may disable any and add custom critics — **global** at `.tenet/critics/*.md` and **run-scoped** at `.tenet/runs/<run-slug>/critics/*.md` from the Critic Tailoring step). All returned eval jobs must pass.
+- To add a repo-specific critic (security, a11y, API contract, etc.) by hand, follow `critics.md` (the critic designer) — it produces the roster entry + prompt file so you don't hand-write prompts. To tailor critics to a feature's risks automatically during a run, the spec phase runs Critic Tailoring (`phases/02-spec-and-harness.md` § 4.5); the run-end lifecycle prunes or promotes them (same section, *Run-end critic lifecycle*).
 
 ## Execution Rules
 

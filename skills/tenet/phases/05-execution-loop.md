@@ -93,6 +93,8 @@ tenet_start_job(job_type="dev", params={
 
 `allow_project_doctrine_edits: true` authorizes the `.tenet/project/**` edit and is eval-safe — the code critic's `scope_conflict` check honors it (see `phases/06-evaluation.md`). After the job passes eval, **re-run the bootstrap gate** (`phases/00-context-bootstrap.md`) to confirm doctrine is coherent, then set the proposal's `status: applied`. Doctrine is re-synthesized and re-gated, not raw-patched — that is what "maintained correctly" means.
 
+After the doctrine drift review, handle run-scoped critics per the **Run-end critic lifecycle** in `phases/02-spec-and-harness.md` § 4.5 (prune or promote run-scoped critics; never block the run). That step owns the bookkeeping — from the execution loop's perspective a critic is just another eval job.
+
 ## Operational Rules
 
 ### Use MCP Tools, Not Untracked Work
