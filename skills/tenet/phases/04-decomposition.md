@@ -15,7 +15,7 @@ For Full mode runs with an interview transcript, verify the spec front-matter `d
 
 **Also read the interview transcript's `## Model Tier Decision`** (phase 01 § 3b) to shape DAG granularity. Unlike `delivery_mode`, model_tier lives only in the transcript — it is not a spec front-matter field, because it is consumed once (here) and its effect is captured in the decomposition artifact you are about to write.
 
-- `model_tier: frontier` (or the section is absent — e.g. Standard/Quick mode, or a run that skipped the Full-mode gate) → produce today's goal-oriented DAG: fewer, larger jobs, each trusted to carry a goal and resolve its own details. Byte-identical to default behavior.
+- `model_tier: frontier` (or the section is absent — valid only as a fallback; model_tier is asked in all modes, so a missing section means the user deferred and the default applies) → produce today's goal-oriented DAG: fewer, larger jobs, each trusted to carry a goal and resolve its own details. Byte-identical to default behavior.
 - `model_tier: local` → produce a finer-grained DAG: more, smaller, single-responsibility jobs, each with explicit per-job acceptance criteria and minimal implicit context. A weaker executor needs a tighter, more explicit plan to stay on-spec.
 
 This composes with `delivery_mode`: `agile` + `local` means sliced **and** fine-grained (apply both — per-slice DAG, fine-grained within the slice).

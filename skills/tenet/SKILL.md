@@ -128,16 +128,10 @@ Every mode, Quick included, still: completes the boot sequence first, reads the 
 
 In YOLO mode (`phases/01-interview.md` § 7), the agent selects and records the mode autonomously with `Selection basis: yolo_agent_decision` and no interactive prompt; it still records the `## Mode Selection` block.
 
-In Full mode, delivery mode selection is a standalone required checkpoint at the end of the interview:
+At the end of the interview, two mode-like decisions are captured (see `phases/01-interview.md` § 3 for the full procedure):
 
-- `autonomous`: one end-to-end run with no mid-run user checkpoints.
-- `agile`: sliced delivery with an initial plan-checkpoint and use-checkpoints after each slice.
-
-Ask a dedicated question that presents both options. Do not bury delivery mode inside a bundled defaults question, and do not infer it from approval of unrelated defaults.
-
-Default to `autonomous` only after the user has seen both options and responds with uncertainty or no preference. Record the prompt, response, selected mode, and selection basis in the interview transcript; copy the selected mode to spec front matter as `delivery_mode`.
-
-The same checkpoint also captures **model_tier** (`frontier` | `local`) — a declaration of the worker's capability tier that shapes decomposition granularity only (`frontier` = today's goal-oriented DAG; `local` = finer-grained DAG with explicit per-job acceptance criteria). Unlike `delivery_mode`, `model_tier` is advisory and is NOT copied to spec front matter: it stays in the transcript and is consumed once by decomposition. Default `frontier` (byte-identical to today). See `phases/01-interview.md` § 3 and `phases/04-decomposition.md`.
+- **delivery_mode** (`autonomous` | `agile`) — Full mode only. Copied to spec front matter.
+- **model_tier** (`frontier` | `local`) — all modes (Full, Standard, Quick). Advisory; stays in the transcript, consumed once by decomposition. Default `frontier`.
 
 ## Phase Map
 
