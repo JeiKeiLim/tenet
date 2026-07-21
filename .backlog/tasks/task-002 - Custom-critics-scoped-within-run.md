@@ -1,10 +1,10 @@
 ---
 id: TASK-002
 title: Custom critics scoped within run
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-07 02:16'
-updated_date: '2026-07-20 22:28'
+updated_date: '2026-07-21 22:21'
 labels:
   - skill
 dependencies: []
@@ -20,9 +20,9 @@ On top of default critics + user custom critics, tenet should suggest run-specif
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Tenet generates run-specific critic suggestions from interview/spec context
-- [ ] #2 Run-specific critics are applied alongside default and user custom critics
-- [ ] #3 Related to #13 (weak model critics) and #24 (critic model selection)
+- [x] #1 Tenet generates run-specific critic suggestions from interview/spec context
+- [x] #2 Run-specific critics are applied alongside default and user custom critics
+- [x] #3 Related to #13 (weak model critics) and #24 (critic model selection)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,3 +62,9 @@ Decision (2026-07-20): run-local roster file (.tenet/runs/<run-slug>/critics.jso
 
 Follow-ups: TASK-048 (run-local roster + merge), TASK-007 (per-job critics), TASK-036 (tiers), TASK-045 (model-tier-aware critic splitting), TASK-004 (critic model selection).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented run-scoped critics + Critic Tailoring step (commit 5ab0d5e). Two-scope layout: global .tenet/critics/*.md (durable, hand-authored via critics.md) + run-scoped .tenet/runs/<run-slug>/critics/*.md (ephemeral, generated per run). New §4.5 in phases/02-spec-and-harness.md runs after readiness gate: orphan sweep, global-critic review, run-scoped critic generation. Run-end lifecycle prunes/promotes at run completion. No code change — prompt_file already resolves project-relative paths (src/mcp/tools/tenet-start-eval.ts:325-331). Follow-up: TASK-048 (run-local roster + merge), TASK-045 (critic designer adapts to local model tier), TASK-014 (wire model_tier to subprocess args). Mode-selection timing fix (commit b477571) split boot-time Full/Standard/Quick from end-of-interview delivery_mode + model_tier, made model_tier asked in all three modes.
+<!-- SECTION:FINAL_SUMMARY:END -->
