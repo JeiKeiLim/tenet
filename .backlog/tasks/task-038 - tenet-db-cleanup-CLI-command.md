@@ -1,14 +1,14 @@
 ---
 id: TASK-038
 title: tenet db cleanup CLI command
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-09 03:59'
-updated_date: '2026-07-18 14:50'
+updated_date: '2026-07-19 22:46'
 labels: []
 dependencies: []
 priority: high
-ordinal: 38000
+ordinal: 6000
 ---
 
 ## Description
