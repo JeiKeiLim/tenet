@@ -10,9 +10,9 @@ The pre-execution confirmation gate in `phases/04-decomposition.md` MUST also be
 
 ## Non-Blocking Execution (CRITICAL)
 
-`tenet_job_wait` returns instantly when `wait_seconds` is omitted or `0`. It can also long-poll for up to 120 seconds when `wait_seconds` is provided. The recommended orchestration pattern is periodic background checks with exponential backoff: 30s -> 45s -> 67s -> 100s -> 120s cap.
+`tenet_job_wait` returns instantly when `wait_seconds` is omitted or `0`. It can also long-poll for up to 120 seconds when `wait_seconds` is provided. The recommended orchestration pattern is a spawned sub-agent doing periodic checks with exponential backoff: 30s -> 45s -> 67s -> 100s -> 120s cap.
 
-**Never** call `tenet_job_wait` in a tight foreground loop. Use a bounded `wait_seconds` or schedule each check as a separate background task. Between checks, the orchestrator remains responsive to user interaction.
+**Never** call `tenet_job_wait` in a tight foreground loop. Use a bounded `wait_seconds` or delegate the check cycle to a spawned sub-agent. While the sub-agent owns the wait span, the orchestrator remains responsive to user interaction.
 
 ## Mandatory Tool Sequence
 
@@ -27,10 +27,10 @@ Execute this sequence for every job cycle:
 4.  **Start Job**: `tenet_start_job(job_id="<next_job.id>")`
     Dispatches the registered job for execution. The MCP server transitions it from pending to running and allocates an agent.
 5.  **Brief User**: Tell the user which job was dispatched and that they can interact while it runs.
-6.  **Background Status Check**: Dispatch `tenet_job_wait(job_id="...")` as a **background task**.
+6.  **Spawn Sub-Agent**: Spawn a tracked sub-agent to own this span (steps 6–10), and dispatch `tenet_job_wait(job_id="...")` from within it.
     Omit `wait_seconds` for an instant status check, or set a bounded `wait_seconds` for long-polling. Use exponential backoff between checks: 30s → 45s → 67s → 100s → 120s (cap).
-    **Delegate this span (steps 6–10: wait → eval → wait → gather) to a single tracked sub-agent** (see **Tracked Sub-Agent Delegation** under Operational Rules) instead of running it inline — it is mechanical and pollutes your context, especially on long runs. Run it inline only for short runs, or if your host can't grant a sub-agent tenet MCP access.
-    When the background task completes:
+    **Delegate this span (steps 6–10: wait → eval → wait → gather) to a single tracked sub-agent by default** (see **Tracked Sub-Agent Delegation** under Operational Rules) — it is mechanical and pollutes your context, especially on long runs. Run it inline only when delegation is provably impossible: the DAG is a single `dev` job with no eval, **or** a spawn attempt returned an error, **or** your host exposes no sub-agent spawning mechanism. Do not choose inline based on a guess that the run is "short" — at job #1 every run looks short, and the cost of an unnecessary spawn is far smaller than poll noise across a long run.
+    When the sub-agent completes:
     - If `is_terminal` is false: check steer, report progress to user, wait (backoff), dispatch another check with the returned `cursor`.
     - If `is_terminal` is true: proceed to step 7.
 7.  **Get Result**: `tenet_job_result(job_id="...")`
@@ -100,11 +100,11 @@ After the doctrine drift review, handle run-scoped critics per the **Run-end cri
 ### Use MCP Tools, Not Untracked Work
 Dispatch work via `tenet_start_job`. Do not write implementation code yourself during the execution loop. You MAY delegate a slice of the loop (e.g. the wait→eval→wait→gather span) to a host sub-agent, but only if every operation the sub-agent performs is a tenet MCP tool call (see **Tracked Sub-Agent Delegation** below). A sub-agent that edits files, writes code, or otherwise bypasses tenet tools is forbidden for the same reason manual code writing is. If `tenet_start_job` returns a failure about missing adapters, tell the user to configure the agent via `tenet config --agent <name>`.
 
-### Tracked Sub-Agent Delegation (recommended)
+### Tracked Sub-Agent Delegation (default)
 
 Hand the wait→eval→wait→gather span (steps 6–10) to a single host sub-agent so your main context stays clean — the repeated status checks of a long run otherwise fill it with poll noise. The sub-agent checks the worker's status, dispatches critics via `tenet_start_eval`, waits on every returned job, and returns a per-critic PASS/FAIL summary. You then resume the work only the orchestrator owns: steer check (step 1), brief-user (step 5), git fallback commit + context-limit/split decisions (step 7), `tenet_update_knowledge` (step 11), status sync (step 12), and finding-category routing.
 
-Run the span inline only for short runs, or when your host cannot grant a sub-agent tenet MCP access.
+Delegation is the default. Run the span inline only when delegation is provably impossible — the DAG is a single `dev` job with no eval, **or** a spawn attempt returned an error, **or** your host exposes no sub-agent spawning mechanism. Do not default to inline because the run "looks short" — every run looks short at job #1, and a sub-agent is cheap relative to poll noise across a long run. If you are unsure whether your host can spawn a sub-agent with tenet MCP access, **try the spawn** and let the result decide; never assume no.
 
 The sub-agent must:
 
@@ -131,14 +131,11 @@ Also drop a `### doctrine-drift: <file>` marker at the spot in the run doc (e.g.
 
 Only explicit context-bootstrap, an authorized doctrine-maintenance job (`allow_project_doctrine_edits: true`), or direct user-requested doctrine work may edit `.tenet/project/**`. Drift notes are the input that keeps `.tenet/project/**` from silently rotting — they are collected into durable proposals at run completion (see **Run Completion — Doctrine Drift Review** below).
 
-### Background Status Check Pattern
-`tenet_job_wait` returns instantly by default, or long-polls when `wait_seconds` is set. The orchestrator dispatches bounded waits as background tasks and waits between checks using exponential backoff: start at 30 seconds, multiply by 1.5× each cycle, cap at 120 seconds. Between checks:
-- The orchestrator is fully responsive to user interaction
-- Steer messages are processed on each check cycle
-- The user sees progress updates
+### Sub-Agent Wait Pattern
+`tenet_job_wait` returns instantly by default, or long-polls when `wait_seconds` is set. The sub-agent dispatches bounded waits and re-checks on the exponential backoff schedule: start at 30 seconds, multiply by 1.5× each cycle, cap at 120 seconds. Between checks, the sub-agent re-runs `tenet_process_steer()` so an emergency halt or new directive is not missed while the orchestrator is not driving the loop directly.
 
 ### User Interaction During Execution
-Between background wait notifications, the user can:
+While the sub-agent owns the wait span, the user can:
 - Send messages to the orchestrator
 - Add steer directives (DIRECTIVE: prefix)
 - Request emergency halt (EMERGENCY: prefix)
