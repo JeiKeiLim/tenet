@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import spawn from 'cross-spawn';
 import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 
@@ -39,11 +39,11 @@ export class OpenCodeAdapter implements AgentAdapter {
         child.kill('SIGTERM');
       }, effectiveTimeout);
 
-      child.stdout.on('data', (chunk: Buffer | string) => {
+      child.stdout!.on('data', (chunk: Buffer | string) => {
         stdout += chunk.toString();
       });
 
-      child.stderr.on('data', (chunk: Buffer | string) => {
+      child.stderr!.on('data', (chunk: Buffer | string) => {
         stderr += chunk.toString();
       });
 

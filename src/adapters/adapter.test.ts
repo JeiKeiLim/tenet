@@ -5,13 +5,9 @@ import { AdapterRegistry, parseAdapterExtraArgs } from './index.js';
 
 const spawnMock = vi.fn();
 
-vi.mock('node:child_process', async () => {
-  const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
-  return {
-    ...actual,
-    spawn: (...args: unknown[]) => spawnMock(...args),
-  };
-});
+vi.mock('cross-spawn', () => ({
+  default: (...args: unknown[]) => spawnMock(...args),
+}));
 
 // Dynamic import so vi.mock takes effect before the adapters bind their spawn reference.
 const { ClaudeAdapter } = await import('./claude-adapter.js');
