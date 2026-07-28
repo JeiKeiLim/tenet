@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import spawn from 'cross-spawn';
 import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 
@@ -64,8 +64,8 @@ export class ClaudeAdapter implements AgentAdapter {
       );
 
       // Write prompt to stdin and close it
-      child.stdin.write(prompt);
-      child.stdin.end();
+      child.stdin!.write(prompt);
+      child.stdin!.end();
 
       let stdout = '';
       let stderr = '';
@@ -77,11 +77,11 @@ export class ClaudeAdapter implements AgentAdapter {
         child.kill('SIGTERM');
       }, effectiveTimeout);
 
-      child.stdout.on('data', (chunk: Buffer | string) => {
+      child.stdout!.on('data', (chunk: Buffer | string) => {
         stdout += chunk.toString();
       });
 
-      child.stderr.on('data', (chunk: Buffer | string) => {
+      child.stderr!.on('data', (chunk: Buffer | string) => {
         stderr += chunk.toString();
       });
 
