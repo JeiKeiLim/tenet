@@ -339,4 +339,47 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     const output = 'I began my review but ran out of context before finishing.';
     expect(extractRubricJson(output)).toBeNull();
   });
+
+  it('extractRubricJson never picks a nested passed object over the top-level verdict', async () => {
+    const { extractRubricJson } = await import('../core/job-manager.js');
+
+    // t1: failing verdict + trailing tool result with nested passed:true —
+    // must return the FAILING verdict, not false-green the gate.
+    const t1 = [
+      'V: {"passed": false, "stage": "code_critic", "findings": [{"category":"product_bug","detail":"x"}]}',
+      'Tool output: {"results": [{"name": "syntax", "passed": true}]}',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1).not.toBeNull();
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+
+    // t2: passing verdict + trailing object with nested passed:false —
+    // must return the PASSING verdict, not false-strand the parent.
+    const t2 = [
+      'V: {"passed": true, "stage": "code_critic", "findings": []}',
+      '{"checks": {"lint": {"passed": false}}}',
+    ].join('\n');
+    const r2 = extractRubricJson(t2);
+    expect(r2).not.toBeNull();
+    expect(r2?.passed).toBe(true);
+    expect(r2?.stage).toBe('code_critic');
+  });
+
+  it('extractRubricJson handles the custom-critic shape (nested assertions in the top-level verdict)', async () => {
+    const { extractRubricJson } = await import('../core/job-manager.js');
+    const output = JSON.stringify({
+      passed: true,
+      stage: 'credit_ledger_integrity',
+      assertions: [
+        { name: 'append_only', passed: true, evidence: 'ledger is append-only' },
+        { name: 'audit_fields', passed: true, evidence: 'created_at set' },
+      ],
+      findings: [],
+    });
+    const parsed = extractRubricJson(output);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.passed).toBe(true);
+    expect(parsed?.stage).toBe('credit_ledger_integrity');
+  });
 });

@@ -74,11 +74,13 @@ const sleep = async (ms: number): Promise<void> =>
   });
 
 /**
- * Scan a string for JSON objects and return the rightmost one that carries a
- * boolean `passed` key — the rubric shape every critic preamble mandates
- * ("End with: {…passed…}"). Robust against prose containing braces (`try { }`
- * isn't valid JSON; `{"mode": "strict"}` has no `passed` key), so a code
- * snippet quoted before/after the verdict can't mis-target the parse.
+ * Scan a string for JSON objects and return the rightmost TOP-LEVEL one that
+ * carries a boolean `passed` key — the rubric shape every critic preamble
+ * mandates ("End with: {…passed…}"). Robust against prose containing braces
+ * (`try { }` isn't valid JSON; `{"mode": "strict"}` has no `passed` key), and
+ * against nested `passed` objects (custom critics embed assertions like
+ * `{"assertions": [{"passed": true}]}` — those must never be picked over the
+ * top-level verdict, or a failing critic could false-green the gate).
  */
 const findRightmostPassedObject = (text: string): Record<string, unknown> | null => {
   const stack: number[] = [];
@@ -108,6 +110,11 @@ const findRightmostPassedObject = (text: string): Record<string, unknown> | null
     }
     if (ch === '}' && stack.length > 0) {
       const start = stack.pop() as number;
+      // Only top-level objects count. Nested objects (assertion arrays, tool
+      // results quoted in prose) are never verdicts.
+      if (stack.length !== 0) {
+        continue;
+      }
       try {
         const parsed = JSON.parse(text.slice(start, i + 1)) as unknown;
         if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).passed === 'boolean') {
@@ -137,7 +144,12 @@ export const extractRubricJson = (rawOutput: unknown): Record<string, unknown> |
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object') {
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        typeof (parsed as Record<string, unknown>).passed === 'boolean'
+      ) {
         return parsed as Record<string, unknown>;
       }
     } catch {
@@ -1074,8 +1086,10 @@ export class JobManager {
     // "green gate, still wrong code" failure). If any sibling predates the
     // stamp (existing DBs), fall back to per-stage-newest so old stuck
     // parents still recover.
-    const allStamped = siblings.every((s) => typeof s.params.eval_round === 'string');
-    if (allStamped && siblings.length > 0) {
+    const allStamped =
+      siblings.length > 0 &&
+      siblings.every((s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '');
+    if (allStamped) {
       this.checkBlockingFindingResumeByRound(siblings, blockedParentId, sourceJobId);
       return;
     }
@@ -1102,7 +1116,9 @@ export class JobManager {
     let newestCreatedAt = -1;
     for (const [roundId, jobs] of byRound) {
       const maxCreated = jobs.reduce((m, j) => (j.createdAt > m ? j.createdAt : m), -1);
-      if (maxCreated > newestCreatedAt) {
+      // >= (not >): on a same-ms tie, keep the later-seen round (iteration
+      // order is createdAt ASC), never the stale one.
+      if (maxCreated >= newestCreatedAt) {
         newestCreatedAt = maxCreated;
         newestRoundId = roundId;
       }

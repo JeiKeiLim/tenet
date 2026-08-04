@@ -115,7 +115,7 @@ export class OpenCodeAdapter implements AgentAdapter {
         clearTimeout(timeout);
         resolve({
           success: false,
-          output: stdout,
+          output: extractTextPartsFromNdjson(stdout) ?? stdout,
           error: error.message,
           durationMs: Date.now() - startedAt,
         });
