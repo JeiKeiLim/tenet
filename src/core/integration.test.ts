@@ -433,6 +433,74 @@ describe('integration: blocking finding auto-resume', () => {
     expect(store.getJob(parent.id)?.status).toBe('pending');
   });
 
+  it('C6 (round-id, sequential): parent stays blocked until the LAST chained critic of the green round completes', async () => {
+    const { store, manager, startEval, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    // Sequential mode (default when no parallel verdict): critics run in roster
+    // order, each chained after its predecessor completes.
+    store.setConfig('eval_parallel_safe:credit-fixes', 'false');
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const ids = async (): Promise<Record<string, string>> => {
+      const result = await startEval({ job_id: childId, output: {}, feature: 'credit-fixes' });
+      const parsed = parseResult(result);
+      const out: Record<string, string> = {};
+      for (const role of ['code_critic', 'test_critic', 'interaction_e2e']) {
+        out[role] = jobId(parsed, role);
+      }
+      return out;
+    };
+
+    // Round 1: all three chain, code_critic fails → parent stays blocked.
+    const round1 = await ids();
+    await manager.waitForJob(round1.code_critic, null, 5_000);
+    await manager.waitForJob(round1.test_critic, null, 5_000);
+    await manager.waitForJob(round1.interaction_e2e, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // Round 2: startEval in sequential mode chains test_critic and
+    // interaction_e2e as pending behind code_critic — assert the chaining
+    // (parentJobId set, eval_round stamped, not running yet) deterministically
+    // before any critic completes.
+    const round2 = await ids();
+    const t2 = store.getJob(round2.test_critic);
+    const p2 = store.getJob(round2.interaction_e2e);
+    expect(t2?.status).toBe('pending');
+    expect(t2?.parentJobId).toBe(round2.code_critic);
+    expect(typeof t2?.params.eval_round).toBe('string');
+    expect(p2?.status).toBe('pending');
+    expect(p2?.parentJobId).toBe(round2.test_critic);
+
+    // Wait for the whole chained round; only after the LAST critic completes
+    // may the parent resume.
+    await manager.waitForJob(round2.code_critic, null, 5_000);
+    await manager.waitForJob(round2.test_critic, null, 5_000);
+    await manager.waitForJob(round2.interaction_e2e, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('pending');
+  });
+
   it('C5 (round-id): newest round missing a stage does NOT mix with older round (no cross-round unblock)', async () => {
     // The exact scenario the user flagged: round 1's test_critic PASS must NOT
     // combine with round 2's code_critic PASS when round 2 is missing
