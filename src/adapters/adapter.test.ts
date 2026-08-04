@@ -240,6 +240,58 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     expect(response.output).not.toContain('"type":"tool_use"');
   });
 
+  it('joins multiple text events in stream order (real streams emit many)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    spawnMock.mockImplementation(() => makeFakeChild(0, ndjson));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    const zeroFindings = response.output.indexOf('zero-findings recheck');
+    const verdict = response.output.indexOf('All 12 tests pass');
+    expect(zeroFindings).toBeGreaterThanOrEqual(0);
+    expect(verdict).toBeGreaterThan(zeroFindings);
+  });
+
+  it('end-to-end: collapsed output yields a passed rubric through extractRubricJson', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    spawnMock.mockImplementation(() => makeFakeChild(0, ndjson));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    // Mirror of JobManager.extractRubricJson — the production gate path.
+    const extractRubricJson = (rawOutput: string): Record<string, unknown> | null => {
+      const stripped = rawOutput.trim();
+      const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const candidates = fenced ? [fenced[1].trim(), stripped] : [stripped];
+      for (const candidate of candidates) {
+        try {
+          const parsed = JSON.parse(candidate) as Record<string, unknown>;
+          if (parsed && typeof parsed === 'object') return parsed;
+        } catch {
+          // try next candidate
+        }
+        const start = candidate.indexOf('{');
+        const end = candidate.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+          try {
+            const parsed = JSON.parse(candidate.slice(start, end + 1)) as Record<string, unknown>;
+            if (parsed && typeof parsed === 'object') return parsed;
+          } catch {
+            // give up
+          }
+        }
+      }
+      return null;
+    };
+
+    const parsed = extractRubricJson(response.output);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.passed).toBe(true);
+    expect(parsed?.stage).toBe('code_critic');
+  });
+
   it('preserves the verdict even when the final line is truncated (context-limit tail)', async () => {
     const ndjson = fs.readFileSync(fixturePath, 'utf8');
     // Cut mid-event: a context-limit kill can truncate the stream before the
@@ -262,5 +314,16 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     const response = await adapter.invoke({ prompt: 'hi' });
 
     expect(response.output).toBe(garbage);
+  });
+
+  it('skips valid-JSON non-event lines (null, numbers) without crashing', async () => {
+    const mixed = 'null\n42\n{"type":"step_start"}\n{"type":"text","part":{"text":"verdict here"}}';
+    spawnMock.mockImplementation(() => makeFakeChild(0, mixed));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'hi' });
+
+    expect(response.success).toBe(true);
+    expect(response.output).toBe('verdict here');
   });
 });

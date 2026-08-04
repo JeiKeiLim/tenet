@@ -1047,7 +1047,9 @@ export class JobManager {
     for (const s of evalSiblings) {
       const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
       const existing = latestByStage.get(stage);
-      if (!existing || s.createdAt > existing.createdAt) {
+      // >= (not >): equal createdAt (same-ms dispatch in tests) keeps the
+      // later-seen job — never let the stale one win a tie.
+      if (!existing || s.createdAt >= existing.createdAt) {
         latestByStage.set(stage, s);
       }
     }

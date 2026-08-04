@@ -10,20 +10,35 @@ import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
  * output) see plain text like the claude adapter produces — not raw event
  * bytes. Returns null when no text part parsed (e.g. an error banner or empty
  * stdout) so callers can fall back to the raw stream.
+ *
+ * Schema pin: this matches the event shape opencode emits today (each line is
+ * `{"type":"text", ..., "part":{"type":"text","text":"..."}}`). If a future
+ * opencode bump changes the part shape (e.g. a `parts[]` array), this collapse
+ * silently degrades to the raw-stream fallback — the fixture
+ * `tests/fixtures/fake-agents/opencode-ndjson-text-parts.json` and the
+ * end-to-end test in `src/adapters/adapter.test.ts` will catch it. Re-verify
+ * against live output when bumping opencode.
  */
-const extractTextPartsFromNdjson = (stdout: string): string | null => {
+export const extractTextPartsFromNdjson = (stdout: string): string | null => {
   const parts: string[] = [];
   for (const line of stdout.split('\n')) {
     if (!line.trim()) {
       continue;
     }
+    let event: unknown;
     try {
-      const event = JSON.parse(line) as { type?: string; part?: { text?: unknown } };
-      if (event.type === 'text' && typeof event.part?.text === 'string') {
-        parts.push(event.part.text);
-      }
+      event = JSON.parse(line);
     } catch {
       // Skip malformed lines — a context-limit kill can truncate the tail mid-event.
+      continue;
+    }
+    if (!event || typeof event !== 'object') {
+      // Valid JSON that isn't an event object (e.g. `null`, numbers) — skip.
+      continue;
+    }
+    const record = event as { type?: unknown; part?: { text?: unknown } };
+    if (record.type === 'text' && typeof record.part?.text === 'string') {
+      parts.push(record.part.text);
     }
   }
   return parts.length > 0 ? parts.join('\n') : null;
