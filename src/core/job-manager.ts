@@ -73,6 +73,54 @@ const sleep = async (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+/**
+ * Scan a string for JSON objects and return the rightmost one that carries a
+ * boolean `passed` key — the rubric shape every critic preamble mandates
+ * ("End with: {…passed…}"). Robust against prose containing braces (`try { }`
+ * isn't valid JSON; `{"mode": "strict"}` has no `passed` key), so a code
+ * snippet quoted before/after the verdict can't mis-target the parse.
+ */
+const findRightmostPassedObject = (text: string): Record<string, unknown> | null => {
+  const stack: number[] = [];
+  let inString = false;
+  let escaped = false;
+  let best: Record<string, unknown> | null = null;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') {
+      stack.push(i);
+      continue;
+    }
+    if (ch === '}' && stack.length > 0) {
+      const start = stack.pop() as number;
+      try {
+        const parsed = JSON.parse(text.slice(start, i + 1)) as unknown;
+        if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).passed === 'boolean') {
+          best = parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Not valid JSON — prose braces, skip.
+      }
+    }
+  }
+  return best;
+};
+
 export const extractRubricJson = (rawOutput: unknown): Record<string, unknown> | null => {
   if (rawOutput && typeof rawOutput === 'object') {
     return rawOutput as Record<string, unknown>;
@@ -95,20 +143,15 @@ export const extractRubricJson = (rawOutput: unknown): Record<string, unknown> |
     } catch {
       // Try next candidate
     }
+  }
 
-    // Fallback: locate the outermost JSON object substring
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        const sliced = candidate.slice(start, end + 1);
-        const parsed = JSON.parse(sliced);
-        if (parsed && typeof parsed === 'object') {
-          return parsed as Record<string, unknown>;
-        }
-      } catch {
-        // Give up
-      }
+  // Fallback: rightmost JSON object carrying a boolean `passed` key. Replaces
+  // the old first-{ to last-} slice, which spanned multiple objects/prose and
+  // returned null whenever any earlier text contained braces.
+  for (const candidate of candidates) {
+    const found = findRightmostPassedObject(candidate);
+    if (found) {
+      return found;
     }
   }
 

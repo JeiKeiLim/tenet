@@ -303,11 +303,11 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     expect(response.output).toBe('verdict here');
   });
 
-  it('verdict survives a later text event containing braces (extractRubricJson slice)', async () => {
+  it('verdict survives a later text event containing real braces (extractRubricJson scan)', async () => {
     const stream = [
       '{"type":"step_start","part":{"id":"a","type":"step-start"}}',
       '{"type":"text","part":{"text":"{\\"passed\\": true, \\"stage\\": \\"code_critic\\", \\"findings\\": []}"}}',
-      '{"type":"text","part":{"text":"Note: the fix touched src/foo.ts and src/bar.ts (see commit 4b8b12f)."}}',
+      '{"type":"text","part":{"text":"Note: the fix touched { src/foo.ts } and { src/bar.ts } (see commit 4b8b12f)."}}',
       '{"type":"step_finish","part":{"id":"b","reason":"stop","type":"step-finish"}}',
     ].join('\n');
     spawnMock.mockImplementation(() => makeFakeChild(0, stream));
@@ -319,5 +319,24 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     const parsed = extractRubricJson(response.output);
     expect(parsed).not.toBeNull();
     expect(parsed?.passed).toBe(true);
+  });
+
+  it('extractRubricJson ignores a trailing object without a passed key', async () => {
+    const { extractRubricJson } = await import('../core/job-manager.js');
+    const output = [
+      'I reviewed the diff. Verdict:',
+      '{"passed": true, "stage": "code_critic", "findings": []}',
+      '{"note": "this is a trailing note, not a verdict"}',
+    ].join('\n');
+    const parsed = extractRubricJson(output);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.passed).toBe(true);
+    expect(parsed?.stage).toBe('code_critic');
+  });
+
+  it('extractRubricJson returns null when no object has a passed key', async () => {
+    const { extractRubricJson } = await import('../core/job-manager.js');
+    const output = 'I began my review but ran out of context before finishing.';
+    expect(extractRubricJson(output)).toBeNull();
   });
 });
