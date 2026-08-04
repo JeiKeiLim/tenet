@@ -260,32 +260,8 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     const adapter = new OpenCodeAdapter();
     const response = await adapter.invoke({ prompt: 'review this' });
 
-    // Mirror of JobManager.extractRubricJson — the production gate path.
-    const extractRubricJson = (rawOutput: string): Record<string, unknown> | null => {
-      const stripped = rawOutput.trim();
-      const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
-      const candidates = fenced ? [fenced[1].trim(), stripped] : [stripped];
-      for (const candidate of candidates) {
-        try {
-          const parsed = JSON.parse(candidate) as Record<string, unknown>;
-          if (parsed && typeof parsed === 'object') return parsed;
-        } catch {
-          // try next candidate
-        }
-        const start = candidate.indexOf('{');
-        const end = candidate.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-          try {
-            const parsed = JSON.parse(candidate.slice(start, end + 1)) as Record<string, unknown>;
-            if (parsed && typeof parsed === 'object') return parsed;
-          } catch {
-            // give up
-          }
-        }
-      }
-      return null;
-    };
-
+    // The real production parser — not a mirror. Mirrors drift.
+    const { extractRubricJson } = await import('../core/job-manager.js');
     const parsed = extractRubricJson(response.output);
     expect(parsed).not.toBeNull();
     expect(parsed?.passed).toBe(true);
@@ -325,5 +301,23 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
 
     expect(response.success).toBe(true);
     expect(response.output).toBe('verdict here');
+  });
+
+  it('verdict survives a later text event containing braces (extractRubricJson slice)', async () => {
+    const stream = [
+      '{"type":"step_start","part":{"id":"a","type":"step-start"}}',
+      '{"type":"text","part":{"text":"{\\"passed\\": true, \\"stage\\": \\"code_critic\\", \\"findings\\": []}"}}',
+      '{"type":"text","part":{"text":"Note: the fix touched src/foo.ts and src/bar.ts (see commit 4b8b12f)."}}',
+      '{"type":"step_finish","part":{"id":"b","reason":"stop","type":"step-finish"}}',
+    ].join('\n');
+    spawnMock.mockImplementation(() => makeFakeChild(0, stream));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    const { extractRubricJson } = await import('../core/job-manager.js');
+    const parsed = extractRubricJson(response.output);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.passed).toBe(true);
   });
 });

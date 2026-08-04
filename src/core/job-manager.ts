@@ -73,7 +73,7 @@ const sleep = async (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-const extractRubricJson = (rawOutput: unknown): Record<string, unknown> | null => {
+export const extractRubricJson = (rawOutput: unknown): Record<string, unknown> | null => {
   if (rawOutput && typeof rawOutput === 'object') {
     return rawOutput as Record<string, unknown>;
   }
