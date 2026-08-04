@@ -974,10 +974,16 @@ export class JobManager {
    * project's `.tenet/critics.json` roster — so disabling a built-in or adding a
    * custom critic shrinks/grows the set). Sibling jobs from before that stamping
    * existed fall back to the 3 built-ins.
+   *
+   * When a source job was evaluated multiple times (re-fired `tenet_start_eval`
+   * after retries), the newest round's stamp is authoritative — an older round's
+   * roster could reflect a disabled critic that a later round re-enabled, or a
+   * custom critic added mid-run.
    */
   private resolveExpectedEvalStages(sourceJobId: string): Set<string> {
     const siblings = this.stateStore.getEvalsForSource(sourceJobId);
-    for (const s of siblings) {
+    const newestFirst = [...siblings].sort((a, b) => b.createdAt - a.createdAt);
+    for (const s of newestFirst) {
       const stamped = s.params.expected_eval_stages;
       if (Array.isArray(stamped) && stamped.length > 0) {
         return new Set(stamped.filter((stage): stage is string => typeof stage === 'string'));
@@ -1032,16 +1038,31 @@ export class JobManager {
       return expectedStages.has(stage);
     });
 
+    // A source job may have been evaluated multiple times (re-fired
+    // `tenet_start_eval` after retries). Older rounds' critics — including ones
+    // that failed — are history: only the newest critic per stage decides the
+    // gate, otherwise a stale failure from an earlier round blocks the parent
+    // forever even after the current round is fully green.
+    const latestByStage = new Map<string, Job>();
+    for (const s of evalSiblings) {
+      const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
+      const existing = latestByStage.get(stage);
+      if (!existing || s.createdAt > existing.createdAt) {
+        latestByStage.set(stage, s);
+      }
+    }
+    const currentRound = [...latestByStage.values()];
+
     // Wait until every expected stage has a sibling before deciding — a disabled
     // built-in shrinks this set, a custom critic grows it.
-    const presentStages = new Set(evalSiblings.map((s) => s.params.eval_stage as string));
+    const presentStages = new Set(currentRound.map((s) => s.params.eval_stage as string));
     for (const expected of expectedStages) {
       if (!presentStages.has(expected)) {
         return;
       }
     }
 
-    for (const s of evalSiblings) {
+    for (const s of currentRound) {
       if (s.status !== 'completed') {
         return;
       }

@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
 import { vi } from 'vitest';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 import { AdapterRegistry, parseAdapterExtraArgs } from './index.js';
@@ -205,5 +207,60 @@ describe('adapter extraArgs passthrough', () => {
     const argv = spawnMock.mock.calls[0][1] as string[];
     expect(argv).not.toContain('--sandbox');
     expect(argv[1]).toBe('--dangerously-bypass-approvals-and-sandbox');
+  });
+});
+
+describe('OpenCodeAdapter NDJSON output collapse', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  const fixturePath = path.resolve(
+    __dirname,
+    '..',
+    '..',
+    'tests',
+    'fixtures',
+    'fake-agents',
+    'opencode-ndjson-text-parts.json',
+  );
+
+  it('collapses the event stream into text-part contents (prose + trailing verdict)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    spawnMock.mockImplementation(() => makeFakeChild(0, ndjson));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(true);
+    expect(response.output).toContain('All 12 tests pass.');
+    expect(response.output).toContain('"passed": true');
+    // Raw NDJSON event framing must not leak through.
+    expect(response.output).not.toContain('"type":"step_start"');
+    expect(response.output).not.toContain('"type":"tool_use"');
+  });
+
+  it('preserves the verdict even when the final line is truncated (context-limit tail)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    // Cut mid-event: a context-limit kill can truncate the stream before the
+    // final step_finish. The text part (with the rubric) must still survive.
+    const truncated = ndjson.split('\n').slice(0, -1).join('\n') + '\n{"type":"step_finish","timestamp":1785417871';
+    spawnMock.mockImplementation(() => makeFakeChild(0, truncated));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(true);
+    expect(response.output).toContain('"passed": true');
+  });
+
+  it('falls back to raw stdout when no text part parses', async () => {
+    const garbage = 'opencode: something went wrong\n{"type":"error","message":"boom"';
+    spawnMock.mockImplementation(() => makeFakeChild(0, garbage));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'hi' });
+
+    expect(response.output).toBe(garbage);
   });
 });

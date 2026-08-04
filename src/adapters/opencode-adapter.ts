@@ -2,6 +2,33 @@ import spawn from 'cross-spawn';
 import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 
+/**
+ * opencode --format json emits a stream of NDJSON events (step_start, tool_use,
+ * text, step_finish...). The assistant's actual message content lives in the
+ * `text` events' `part.text`. Collapse the stream into those text parts joined
+ * by newlines so downstream consumers (rubric extraction, job_result, worker
+ * output) see plain text like the claude adapter produces — not raw event
+ * bytes. Returns null when no text part parsed (e.g. an error banner or empty
+ * stdout) so callers can fall back to the raw stream.
+ */
+const extractTextPartsFromNdjson = (stdout: string): string | null => {
+  const parts: string[] = [];
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      const event = JSON.parse(line) as { type?: string; part?: { text?: unknown } };
+      if (event.type === 'text' && typeof event.part?.text === 'string') {
+        parts.push(event.part.text);
+      }
+    } catch {
+      // Skip malformed lines — a context-limit kill can truncate the tail mid-event.
+    }
+  }
+  return parts.length > 0 ? parts.join('\n') : null;
+};
+
 export class OpenCodeAdapter implements AgentAdapter {
   public readonly name = 'opencode';
   private readonly timeoutMs: number;
@@ -54,7 +81,7 @@ export class OpenCodeAdapter implements AgentAdapter {
         if (timedOut) {
           resolve({
             success: false,
-            output: stdout,
+            output: extractTextPartsFromNdjson(stdout) ?? stdout,
             error: `opencode invocation timed out after ${effectiveTimeout}ms`,
             durationMs,
           });
@@ -63,7 +90,7 @@ export class OpenCodeAdapter implements AgentAdapter {
 
         resolve({
           success: code === 0,
-          output: stdout,
+          output: extractTextPartsFromNdjson(stdout) ?? stdout,
           error: code === 0 ? undefined : stderr || `opencode exited with code ${code ?? 'unknown'}`,
           durationMs,
         });

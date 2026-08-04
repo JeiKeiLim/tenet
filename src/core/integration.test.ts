@@ -322,6 +322,68 @@ describe('integration: blocking finding auto-resume', () => {
 
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C3: stale failed critic from an earlier eval round does not block a later all-green round', async () => {
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // Round 1: code_critic FAILS (served once), then falls through to the passing fixture.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const parsed = parseResult(r);
+    const childId = parsed.child_job_id as string;
+
+    await manager.waitForJob(childId, null, 5_000);
+
+    const dispatchRound = async (): Promise<void> => {
+      const code = manager.startJob('critic_eval', {
+        source_job_id: childId,
+        eval_stage: 'code_critic',
+        prompt: 'Code Critic review',
+      });
+      const test = manager.startJob('eval', {
+        source_job_id: childId,
+        eval_stage: 'test_critic',
+        prompt: 'Test Critic review',
+      });
+      const play = manager.startJob('interaction_e2e', {
+        source_job_id: childId,
+        eval_stage: 'interaction_e2e',
+        prompt: 'Interaction E2E eval',
+      });
+      await manager.waitForJob(code.id, null, 5_000);
+      await manager.waitForJob(test.id, null, 5_000);
+      await manager.waitForJob(play.id, null, 5_000);
+    };
+
+    // Round 1: code_critic fails → parent stays blocked.
+    await dispatchRound();
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // Round 2 (re-fired eval after the child retry): all three pass.
+    await dispatchRound();
+
+    // The round-1 failed code_critic must not poison the gate — only the newest
+    // critic per stage counts, and round 2 is fully green.
+    expect(store.getJob(parent.id)?.status).toBe('pending');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────
