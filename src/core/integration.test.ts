@@ -384,6 +384,121 @@ describe('integration: blocking finding auto-resume', () => {
     // critic per stage counts, and round 2 is fully green.
     expect(store.getJob(parent.id)?.status).toBe('pending');
   });
+
+  it('C4 (round-id): failing round 1 + all-green round 2 → parent resumes on round 2', async () => {
+    const { store, manager, startEval, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    store.setConfig('eval_parallel_safe:credit-fixes', 'true');
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const runRound = async (): Promise<void> => {
+      const result = await startEval({ job_id: childId, output: {}, feature: 'credit-fixes' });
+      const parsed = parseResult(result);
+      for (const role of ['code_critic', 'test_critic', 'interaction_e2e']) {
+        const id = jobId(parsed, role);
+        await manager.waitForJob(id, null, 5_000);
+      }
+    };
+
+    // Round 1: code_critic fails → parent stays blocked.
+    await runRound();
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // Round 2: all pass → parent resumes. The gate keys on the newest round
+    // (newest eval_round id), not the newest critic per stage. startEval stamps
+    // eval_round on every critic, so this exercises the round-based path.
+    await runRound();
+    expect(store.getJob(parent.id)?.status).toBe('pending');
+  });
+
+  it('C5 (round-id): newest round missing a stage does NOT mix with older round (no cross-round unblock)', async () => {
+    // The exact scenario the user flagged: round 1's test_critic PASS must NOT
+    // combine with round 2's code_critic PASS when round 2 is missing
+    // test_critic. Per-stage-newest unblocks (mixing across code revisions);
+    // round-based stays blocked (round 2 is incomplete).
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // code_critic: round 1 FAILS, round 2 PASSES (maxUses trick).
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const stamp = (round: string, stage: string) => {
+      const promptLabel = stage === 'code_critic' ? 'Code Critic'
+        : stage === 'test_critic' ? 'Test Critic'
+        : 'Interaction E2E';
+      return {
+        source_job_id: childId,
+        eval_stage: stage,
+        eval_round: round,
+        expected_eval_stages: ['code_critic', 'test_critic', 'interaction_e2e'],
+        prompt: `${promptLabel} review — stage: ${stage}`,
+      };
+    };
+
+    // Round 1: code_critic FAIL (failing fixture), test_critic PASS, interaction_e2e PASS.
+    const r1c = manager.startJob('critic_eval', stamp('round-1', 'code_critic'));
+    const r1t = manager.startJob('eval', stamp('round-1', 'test_critic'));
+    const r1p = manager.startJob('interaction_e2e', stamp('round-1', 'interaction_e2e'));
+    await manager.waitForJob(r1c.id, null, 5_000);
+    await manager.waitForJob(r1t.id, null, 5_000);
+    await manager.waitForJob(r1p.id, null, 5_000);
+    // Round 1: code_critic failed → parent stays blocked.
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // Round 2: code_critic PASS, interaction_e2e PASS, but NO test_critic
+    // (simulates a critic that wasn't dispatched or context-limited away).
+    const r2c = manager.startJob('critic_eval', stamp('round-2', 'code_critic'));
+    const r2p = manager.startJob('interaction_e2e', stamp('round-2', 'interaction_e2e'));
+    await manager.waitForJob(r2c.id, null, 5_000);
+    await manager.waitForJob(r2p.id, null, 5_000);
+
+    // Per-stage-newest would pick: code_critic = round 2 PASS, test_critic =
+    // round 1 PASS → UNBLOCK (mixing). Round-based: round 2 is incomplete
+    // (missing test_critic) → stays blocked. This is the exact behavior change.
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

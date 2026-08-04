@@ -1021,6 +1021,98 @@ export class JobManager {
       return;
     }
 
+    const siblings = this.stateStore.getEvalsForSource(sourceJobId);
+
+    // Round-based resume gate. `tenet_start_eval` stamps every critic in one
+    // dispatch with a shared `eval_round` id. A re-fire (after a child retry)
+    // gets a fresh id. Only the NEWEST round ever decides the gate — every
+    // critic in a round evaluated the same source state, so requiring the
+    // whole round to pass avoids mixing verdicts across code revisions (the
+    // "green gate, still wrong code" failure). If any sibling predates the
+    // stamp (existing DBs), fall back to per-stage-newest so old stuck
+    // parents still recover.
+    const allStamped = siblings.every((s) => typeof s.params.eval_round === 'string');
+    if (allStamped && siblings.length > 0) {
+      this.checkBlockingFindingResumeByRound(siblings, blockedParentId, sourceJobId);
+      return;
+    }
+
+    // Fallback: per-stage-newest (pre-round-id behavior).
+    this.checkBlockingFindingResumeByStage(siblings, sourceJobId, completedStage, rawOutput, blockedParentId);
+  }
+
+  private checkBlockingFindingResumeByRound(
+    siblings: Job[],
+    blockedParentId: string,
+    sourceJobId: string,
+  ): void {
+    // Group by round id; pick the newest round by max createdAt of its critics.
+    const byRound = new Map<string, Job[]>();
+    for (const s of siblings) {
+      const roundId = typeof s.params.eval_round === 'string' ? s.params.eval_round : '';
+      if (!roundId) continue;
+      const arr = byRound.get(roundId) ?? [];
+      arr.push(s);
+      byRound.set(roundId, arr);
+    }
+    let newestRoundId = '';
+    let newestCreatedAt = -1;
+    for (const [roundId, jobs] of byRound) {
+      const maxCreated = jobs.reduce((m, j) => (j.createdAt > m ? j.createdAt : m), -1);
+      if (maxCreated > newestCreatedAt) {
+        newestCreatedAt = maxCreated;
+        newestRoundId = roundId;
+      }
+    }
+    if (!newestRoundId) return;
+    const currentRound = byRound.get(newestRoundId) ?? [];
+
+    // Read this round's own expected_eval_stages stamp (shared by all its critics).
+    const stamp = currentRound.find((s) => Array.isArray(s.params.expected_eval_stages))?.params.expected_eval_stages;
+    const expectedStages = Array.isArray(stamp) && stamp.length > 0
+      ? new Set(stamp.filter((st): st is string => typeof st === 'string'))
+      : new Set(DEFAULT_EVAL_STAGES);
+
+    const presentStages = new Set(
+      currentRound
+        .map((s) => (typeof s.params.eval_stage === 'string' ? s.params.eval_stage : ''))
+        .filter((st) => expectedStages.has(st)),
+    );
+    for (const expected of expectedStages) {
+      if (!presentStages.has(expected)) return;
+    }
+
+    for (const s of currentRound) {
+      const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
+      if (!expectedStages.has(stage)) continue;
+      if (s.status !== 'completed') return;
+      const siblingOutput = this.stateStore.getJobOutput(s.id);
+      const rawSibling = this.extractAdapterRawOutput(siblingOutput);
+      const parsed = extractRubricJson(rawSibling);
+      if (!parsed || parsed.passed !== true) return;
+    }
+
+    // Newest round fully passed — let the report-only parent run again.
+    this.stateStore.updateJob(blockedParentId, {
+      status: 'pending',
+      startedAt: undefined,
+      completedAt: undefined,
+      lastHeartbeat: undefined,
+      error: undefined,
+    });
+    this.stateStore.appendEvent(blockedParentId, 'blocking_finding_resolved', {
+      child_job_id: sourceJobId,
+      eval_round: newestRoundId,
+    });
+  }
+
+  private checkBlockingFindingResumeByStage(
+    siblings: Job[],
+    sourceJobId: string,
+    completedStage: string,
+    rawOutput: unknown,
+    blockedParentId: string,
+  ): void {
     // Parse this critic's output to confirm it passed
     const thisCritic = extractRubricJson(rawOutput);
     if (!thisCritic || thisCritic.passed !== true) {
@@ -1032,7 +1124,6 @@ export class JobManager {
       return;
     }
 
-    const siblings = this.stateStore.getEvalsForSource(sourceJobId);
     const evalSiblings = siblings.filter((s) => {
       const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
       return expectedStages.has(stage);
@@ -1055,8 +1146,6 @@ export class JobManager {
     }
     const currentRound = [...latestByStage.values()];
 
-    // Wait until every expected stage has a sibling before deciding — a disabled
-    // built-in shrinks this set, a custom critic grows it.
     const presentStages = new Set(currentRound.map((s) => s.params.eval_stage as string));
     for (const expected of expectedStages) {
       if (!presentStages.has(expected)) {
@@ -1076,7 +1165,6 @@ export class JobManager {
       }
     }
 
-    // All expected critics passed — let the report-only parent run again with fresh context.
     this.stateStore.updateJob(blockedParentId, {
       status: 'pending',
       startedAt: undefined,

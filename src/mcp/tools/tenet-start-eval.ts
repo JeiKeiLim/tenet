@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
 import { loadCriticRoster, type ResolvedCritic } from '../../core/critic-roster.js';
@@ -424,9 +425,16 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
       // Stages the resume gate waits for = exactly the stages we dispatched.
       const expectedEvalStages = dispatchList.map((d) => d.evalStage);
 
+      // One round id per call so the resume gate can key on "newest complete
+      // round" rather than "newest critic per stage" — every critic in this
+      // dispatch evaluated the same source state, and a re-fire (after a child
+      // retry) gets a fresh id, preventing cross-round verdict mixing.
+      const evalRound = randomUUID();
+
       const buildParams = (d: CriticDispatch) => ({
         source_job_id: job_id,
         eval_stage: d.evalStage,
+        eval_round: evalRound,
         name: `${d.evalStage} for ${job_id.slice(0, 8)}`,
         prompt: d.prompt,
         output: outputObj,
