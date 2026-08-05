@@ -303,6 +303,26 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     expect(response.output).toBe('verdict here');
   });
 
+  it('skips text events whose part.text is not a string (shape-change guard)', async () => {
+    // The typeof guard is the load-bearing line against a future opencode
+    // shape change (e.g. part.text becoming an object). A truthy check would
+    // push a non-string into parts and emit "[object Object]" into the output
+    // that feeds rubric extraction — this test pins the guard.
+    const mixed = [
+      '{"type":"text","part":{"text":{"nested":true}}}',
+      '{"type":"text","part":{"text":42}}',
+      '{"type":"text","part":{"text":"real verdict here"}}',
+    ].join('\n');
+    spawnMock.mockImplementation(() => makeFakeChild(0, mixed));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'hi' });
+
+    expect(response.success).toBe(true);
+    expect(response.output).toBe('real verdict here');
+    expect(response.output).not.toContain('[object Object]');
+  });
+
   it('verdict survives a later text event containing real braces (extractRubricJson scan)', async () => {
     const stream = [
       '{"type":"step_start","part":{"id":"a","type":"step-start"}}',

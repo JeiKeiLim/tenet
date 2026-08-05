@@ -1011,10 +1011,16 @@ export class JobManager {
     sourceJobId: string,
   ): void {
     // Group by round id; pick the newest round by max createdAt of its critics.
+    // Unstamped siblings (ad-hoc re-fires via tenet_start_job, legacy pre-stamp
+    // evals) become singleton rounds keyed by job id. A singleton can never
+    // satisfy "every expected stage present", so a NEWER unstamped critic
+    // forces the gate to wait for a fresh stamped round (fail-closed) instead
+    // of being invisible — otherwise a red ad-hoc re-fire could be ignored
+    // while the parent unblocks on an older round's stale green.
     const byRound = new Map<string, Job[]>();
     for (const s of siblings) {
-      const roundId = typeof s.params.eval_round === 'string' ? s.params.eval_round : '';
-      if (!roundId) continue;
+      const stamped = typeof s.params.eval_round === 'string' && s.params.eval_round !== '';
+      const roundId = stamped ? (s.params.eval_round as string) : `__unstamped__${s.id}`;
       const arr = byRound.get(roundId) ?? [];
       arr.push(s);
       byRound.set(roundId, arr);

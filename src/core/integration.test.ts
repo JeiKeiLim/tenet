@@ -761,6 +761,74 @@ describe('integration: blocking finding auto-resume', () => {
     await manager.waitForJob(legacy.id, null, 5_000);
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C10 (round-id): a newer unstamped RED critic cannot be ignored while the parent unblocks on an older green round', async () => {
+    // The fail-open direction of the unstamped blind spot: an ad-hoc re-fire
+    // (tenet_start_job, no eval_round) that comes back RED must force the gate
+    // to wait — not be invisible while the parent unblocks on an older round's
+    // stale green. Unstamped siblings become singleton rounds, which can never
+    // satisfy "every expected stage present", so the gate stays blocked.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // Round 1 code_critic PASSES (served once), then the ad-hoc re-fire FAILS.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const stamp = (round: string, stage: string) => {
+      const promptLabel = stage === 'code_critic' ? 'Code Critic'
+        : stage === 'test_critic' ? 'Test Critic'
+        : 'Interaction E2E';
+      return {
+        source_job_id: childId,
+        eval_stage: stage,
+        eval_round: round,
+        expected_eval_stages: ['code_critic', 'test_critic', 'interaction_e2e'],
+        prompt: `${promptLabel} review — stage: ${stage}`,
+      };
+    };
+
+    // Round 1 (stamped): code_critic + test_critic PASS.
+    const r1c = manager.startJob('critic_eval', stamp('round-1', 'code_critic'));
+    const r1t = manager.startJob('eval', stamp('round-1', 'test_critic'));
+    await manager.waitForJob(r1c.id, null, 5_000);
+    await manager.waitForJob(r1t.id, null, 5_000);
+
+    // Round 1's last critic (interaction_e2e) is created, THEN an ad-hoc
+    // unstamped code_critic re-fire is created — so the ad-hoc is the NEWEST
+    // sibling. It FAILS (passed:false) and must not be invisible to the gate.
+    const r1p = manager.startJob('interaction_e2e', stamp('round-1', 'interaction_e2e'));
+    const adHoc = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      prompt: 'Code Critic review — ad-hoc re-fire',
+    });
+    await manager.waitForJob(adHoc.id, null, 5_000);
+    await manager.waitForJob(r1p.id, null, 5_000);
+
+    // The gate must NOT unblock on round 1's stale green while a newer red
+    // evaluation exists.
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

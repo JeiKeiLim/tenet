@@ -80,20 +80,63 @@ const scanTopLevel = (
 };
 
 /**
+ * Find the index of the `}` that closes the object opened at `open`, tracking
+ * nested braces, brackets, and strings. Returns -1 when no matching close
+ * exists (a stray `{` in prose).
+ */
+const findMatchingClose = (text: string, open: number): number => {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{' || ch === '[') {
+      depth++;
+    } else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) {
+        return i;
+      }
+    }
+  }
+  return -1;
+};
+
+/**
  * Best-effort recovery for unbalanced braces in prose. The strict top-level
  * scan treats a stray `{` (a code snippet, a truncated block) as an open
  * object, so a verdict that follows it is never top-level and the scan returns
  * null. The critic preamble mandates the verdict at the END of the output, so
  * the verdict is the last JSON object: walk `{` positions from the end, parse
- * each to the first `}` after it, and return the first object `accept`
- * approves. Only reached when the strict scan found nothing.
+ * each to its MATCHING `}` (not the first `}` — a verdict with nested objects
+ * in `findings` would otherwise be sliced unterminated), and apply the same
+ * accept/prefer semantics as the strict scan so a passing tool echo after a
+ * failing verdict can never win. Only reached when the strict scan found
+ * nothing AND the stack was left unbalanced.
  */
 const recoverFromUnbalancedBraces = (
   text: string,
   accept: (record: Record<string, unknown>) => boolean,
+  prefer: (record: Record<string, unknown>) => boolean,
 ): Record<string, unknown> | null => {
+  let bestPreferred: Record<string, unknown> | null = null;
+  let bestAny: Record<string, unknown> | null = null;
   for (let i = text.lastIndexOf('{'); i >= 0; i = text.lastIndexOf('{', i - 1)) {
-    const end = text.indexOf('}', i);
+    const end = findMatchingClose(text, i);
     if (end < 0) {
       break;
     }
@@ -102,14 +145,18 @@ const recoverFromUnbalancedBraces = (
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         const record = parsed as Record<string, unknown>;
         if (accept(record)) {
-          return record;
+          if (prefer(record)) {
+            bestPreferred = record;
+          } else {
+            bestAny = record;
+          }
         }
       }
     } catch {
       // Not valid JSON — prose braces, skip.
     }
   }
-  return null;
+  return bestPreferred ?? bestAny;
 };
 
 /**
@@ -118,7 +165,7 @@ const recoverFromUnbalancedBraces = (
  */
 export const findRightmostTopLevelObject = (text: string): Record<string, unknown> | null => {
   const { best, unbalanced } = scanTopLevel(text, () => true, () => false);
-  return best ?? (unbalanced ? recoverFromUnbalancedBraces(text, () => true) : null);
+  return best ?? (unbalanced ? recoverFromUnbalancedBraces(text, () => true, () => false) : null);
 };
 
 /**
@@ -135,7 +182,9 @@ export const findRightmostPassedObject = (text: string): Record<string, unknown>
     (r) => typeof r.passed === 'boolean',
     (r) => typeof r.stage === 'string',
   );
-  return best ?? (unbalanced ? recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean') : null);
+  return best ?? (unbalanced
+    ? recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean', (r) => typeof r.stage === 'string')
+    : null);
 };
 
 /**

@@ -169,6 +169,43 @@ describe('extractRubricJson', () => {
     const t2 = '{"results": [{"name": "syntax", "passed": true}]}';
     expect(extractRubricJson(t2)).toBeNull();
   });
+
+  it('recovery: a passing tool echo after a failing verdict never wins (stray-brace + echo)', () => {
+    // A stray { in prose makes the strict scan fail; the recovery must still
+    // prefer the staged failing verdict over the stage-less passing echo.
+    const t1 = [
+      'The signature is foo({ and then the verdict:',
+      '{"passed": false, "stage": "code_critic", "findings": ["x"]}',
+      'and the tool said {"results": [{"name": "syntax", "passed": true}]}',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+
+    const t2 = [
+      'prose { then verdict {"passed": false, "stage": "code_critic", "findings": []}',
+      'then tool {"passed": true, "tool": "syntax-check"}',
+    ].join('\n');
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(false);
+    expect(r2?.stage).toBe('code_critic');
+  });
+
+  it('recovery: a verdict with nested objects in findings still parses (matching-close)', () => {
+    // The recovery must slice to the verdict's MATCHING } — the first } after
+    // the { would slice an unterminated findings array and strand the parent.
+    const t1 = 'The signature is foo({ and then the verdict: {"passed": false, "stage": "code_critic", "findings": [{"category":"product_bug","detail":"x"}]}';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+
+    // A finding object carrying its own passed key must never be picked over
+    // the staged verdict.
+    const t2 = 'Note: { and then {"passed": false, "stage": "code_critic", "findings": [{"category":"product_bug","detail":"x","passed": true}]}';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(false);
+    expect(r2?.stage).toBe('code_critic');
+  });
 });
 
 describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
