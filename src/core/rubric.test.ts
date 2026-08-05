@@ -142,6 +142,33 @@ describe('extractRubricJson', () => {
     const parsed = extractRubricJson(output);
     expect(parsed?.passed).toBe(true);
   });
+
+  it('rejects an object wrapped in a top-level array (bracket-depth regression)', () => {
+    // The scanner tracks {} but must also track [] — an array of verdicts is
+    // not a verdict object, and the whole-string fast path already rejects it.
+    const t1 = '[{"passed": true, "stage": "code_critic"}]';
+    expect(extractRubricJson(t1)).toBeNull();
+
+    // A verdict followed by an array of passed objects must keep the verdict.
+    const t2 = [
+      'V: {"passed": false, "stage": "code_critic", "findings": ["x"]}',
+      '[{"passed": true, "tool": "syntax-check"}]',
+    ].join('\n');
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(false);
+    expect(r2?.stage).toBe('code_critic');
+  });
+
+  it('does not run the brace recovery on balanced output with no top-level verdict', () => {
+    // The recovery exists for unbalanced braces in prose. On balanced output
+    // whose only passed object is nested, it must NOT fire and pick up the
+    // nested object — that would false-strand (or false-green) the gate.
+    const t1 = '{"checks": {"lint": {"passed": false}}}';
+    expect(extractRubricJson(t1)).toBeNull();
+
+    const t2 = '{"results": [{"name": "syntax", "passed": true}]}';
+    expect(extractRubricJson(t2)).toBeNull();
+  });
 });
 
 describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {

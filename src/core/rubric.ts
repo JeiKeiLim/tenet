@@ -13,12 +13,18 @@
  * `accept` approves. When `prefer` approves an object, it wins over any
  * non-preferred object even if the non-preferred one appears later — used to
  * prefer verdicts that carry a `stage` key over stage-less tool-result echoes.
+ *
+ * Tracks both `{}` and `[]` depth so an object wrapped in a top-level array
+ * (`[{"passed": true}]`) is never treated as a verdict — the whole-string fast
+ * path rejects arrays, and the scan must agree. `unbalanced` reports whether
+ * the stack was left non-empty (a stray `{`/`[` in prose), which is the only
+ * condition under which the brace-recovery fallback may run.
  */
 const scanTopLevel = (
   text: string,
   accept: (record: Record<string, unknown>) => boolean,
   prefer: (record: Record<string, unknown>) => boolean,
-): Record<string, unknown> | null => {
+): { best: Record<string, unknown> | null; unbalanced: boolean } => {
   const stack: number[] = [];
   let inString = false;
   let escaped = false;
@@ -41,15 +47,16 @@ const scanTopLevel = (
       inString = true;
       continue;
     }
-    if (ch === '{') {
+    if (ch === '{' || ch === '[') {
       stack.push(i);
       continue;
     }
-    if (ch === '}' && stack.length > 0) {
+    if ((ch === '}' || ch === ']') && stack.length > 0) {
       const start = stack.pop() as number;
-      // Only top-level objects count. Nested objects (assertion arrays, tool
-      // results quoted in prose) are never verdicts.
-      if (stack.length !== 0) {
+      // Only objects at brace-depth 0 AND bracket-depth 0 count. Nested objects
+      // (assertion arrays, tool results quoted in prose) are never verdicts —
+      // and neither is an object wrapped in a top-level array.
+      if (stack.length !== 0 || ch === ']') {
         continue;
       }
       try {
@@ -69,7 +76,7 @@ const scanTopLevel = (
       }
     }
   }
-  return bestPreferred ?? bestAny;
+  return { best: bestPreferred ?? bestAny, unbalanced: stack.length > 0 };
 };
 
 /**
@@ -109,8 +116,10 @@ const recoverFromUnbalancedBraces = (
  * Rightmost TOP-LEVEL JSON object in a string, regardless of keys. Used by
  * tenet_get_status to surface layer2_status from e2e critic output.
  */
-export const findRightmostTopLevelObject = (text: string): Record<string, unknown> | null =>
-  scanTopLevel(text, () => true, () => false) ?? recoverFromUnbalancedBraces(text, () => true);
+export const findRightmostTopLevelObject = (text: string): Record<string, unknown> | null => {
+  const { best, unbalanced } = scanTopLevel(text, () => true, () => false);
+  return best ?? (unbalanced ? recoverFromUnbalancedBraces(text, () => true) : null);
+};
 
 /**
  * Rightmost TOP-LEVEL object carrying a boolean `passed` key — the rubric shape
@@ -120,12 +129,14 @@ export const findRightmostTopLevelObject = (text: string): Record<string, unknow
  * staged verdict wins over a later stage-less echo — a failing critic that
  * pastes a passing tool result after its verdict must not false-green the gate.
  */
-export const findRightmostPassedObject = (text: string): Record<string, unknown> | null =>
-  scanTopLevel(
+export const findRightmostPassedObject = (text: string): Record<string, unknown> | null => {
+  const { best, unbalanced } = scanTopLevel(
     text,
     (r) => typeof r.passed === 'boolean',
     (r) => typeof r.stage === 'string',
-  ) ?? recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean');
+  );
+  return best ?? (unbalanced ? recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean') : null);
+};
 
 /**
  * Extract the critic verdict from a worker's raw output. Accepts a bare object
