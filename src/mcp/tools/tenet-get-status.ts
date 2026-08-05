@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
+import { findRightmostTopLevelObject } from '../../core/rubric.js';
 import { StateStore } from '../../core/state-store.js';
 import { checkForUpdate } from '../../core/update-checker.js';
 import type { Job, JobStatus, ProjectStatus } from '../../types/index.js';
@@ -20,31 +21,19 @@ const extractRawOutput = (output: unknown): string | undefined => {
 const extractJsonObject = (raw: string | undefined): Record<string, unknown> | undefined => {
   if (!raw) return undefined;
   const stripped = raw.trim();
-  const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidates = fenced ? [fenced[1].trim(), stripped] : [stripped];
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object') {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      /* continue */
+  try {
+    const parsed = JSON.parse(stripped) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
     }
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        const parsed = JSON.parse(candidate.slice(start, end + 1));
-        if (parsed && typeof parsed === 'object') {
-          return parsed as Record<string, unknown>;
-        }
-      } catch {
-        /* continue */
-      }
-    }
+  } catch {
+    // Not a bare JSON object — scan below.
   }
-  return undefined;
+  // Shared parser with the resume gate (job-manager.ts) so the two consumers
+  // of the same stored critic output can never drift apart. The old first-{
+  // to last-} slice spanned multiple objects/prose and dropped layer2_status
+  // whenever prose contained braces.
+  return findRightmostTopLevelObject(stripped) ?? undefined;
 };
 
 const findLatestE2eStatus = (stateStore: StateStore): string | undefined => {

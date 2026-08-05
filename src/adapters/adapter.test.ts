@@ -261,7 +261,7 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     const response = await adapter.invoke({ prompt: 'review this' });
 
     // The real production parser — not a mirror. Mirrors drift.
-    const { extractRubricJson } = await import('../core/job-manager.js');
+    const { extractRubricJson } = await import('../core/rubric.js');
     const parsed = extractRubricJson(response.output);
     expect(parsed).not.toBeNull();
     expect(parsed?.passed).toBe(true);
@@ -315,14 +315,14 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     const adapter = new OpenCodeAdapter();
     const response = await adapter.invoke({ prompt: 'review this' });
 
-    const { extractRubricJson } = await import('../core/job-manager.js');
+    const { extractRubricJson } = await import('../core/rubric.js');
     const parsed = extractRubricJson(response.output);
     expect(parsed).not.toBeNull();
     expect(parsed?.passed).toBe(true);
   });
 
   it('extractRubricJson ignores a trailing object without a passed key', async () => {
-    const { extractRubricJson } = await import('../core/job-manager.js');
+    const { extractRubricJson } = await import('../core/rubric.js');
     const output = [
       'I reviewed the diff. Verdict:',
       '{"passed": true, "stage": "code_critic", "findings": []}',
@@ -335,13 +335,13 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
   });
 
   it('extractRubricJson returns null when no object has a passed key', async () => {
-    const { extractRubricJson } = await import('../core/job-manager.js');
+    const { extractRubricJson } = await import('../core/rubric.js');
     const output = 'I began my review but ran out of context before finishing.';
     expect(extractRubricJson(output)).toBeNull();
   });
 
   it('extractRubricJson never picks a nested passed object over the top-level verdict', async () => {
-    const { extractRubricJson } = await import('../core/job-manager.js');
+    const { extractRubricJson } = await import('../core/rubric.js');
 
     // t1: failing verdict + trailing tool result with nested passed:true —
     // must return the FAILING verdict, not false-green the gate.
@@ -367,7 +367,7 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
   });
 
   it('extractRubricJson handles the custom-critic shape (nested assertions in the top-level verdict)', async () => {
-    const { extractRubricJson } = await import('../core/job-manager.js');
+    const { extractRubricJson } = await import('../core/rubric.js');
     const output = JSON.stringify({
       passed: true,
       stage: 'credit_ledger_integrity',

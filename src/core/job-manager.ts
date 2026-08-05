@@ -12,6 +12,7 @@ import {
 import { StateStore } from './state-store.js';
 import { DEFAULT_EVAL_STAGES } from './critic-roster.js';
 import { readArtifactFile, type ArtifactPaths } from './artifact-paths.js';
+import { extractRubricJson } from './rubric.js';
 
 /**
  * Extract a typed {@link ArtifactPaths} from an untyped `job.params.artifact_paths`
@@ -72,103 +73,6 @@ const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-
-/**
- * Scan a string for JSON objects and return the rightmost TOP-LEVEL one that
- * carries a boolean `passed` key — the rubric shape every critic preamble
- * mandates ("End with: {…passed…}"). Robust against prose containing braces
- * (`try { }` isn't valid JSON; `{"mode": "strict"}` has no `passed` key), and
- * against nested `passed` objects (custom critics embed assertions like
- * `{"assertions": [{"passed": true}]}` — those must never be picked over the
- * top-level verdict, or a failing critic could false-green the gate).
- */
-const findRightmostPassedObject = (text: string): Record<string, unknown> | null => {
-  const stack: number[] = [];
-  let inString = false;
-  let escaped = false;
-  let best: Record<string, unknown> | null = null;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === '{') {
-      stack.push(i);
-      continue;
-    }
-    if (ch === '}' && stack.length > 0) {
-      const start = stack.pop() as number;
-      // Only top-level objects count. Nested objects (assertion arrays, tool
-      // results quoted in prose) are never verdicts.
-      if (stack.length !== 0) {
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(text.slice(start, i + 1)) as unknown;
-        if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).passed === 'boolean') {
-          best = parsed as Record<string, unknown>;
-        }
-      } catch {
-        // Not valid JSON — prose braces, skip.
-      }
-    }
-  }
-  return best;
-};
-
-export const extractRubricJson = (rawOutput: unknown): Record<string, unknown> | null => {
-  if (rawOutput && typeof rawOutput === 'object') {
-    return rawOutput as Record<string, unknown>;
-  }
-
-  if (typeof rawOutput !== 'string') {
-    return null;
-  }
-
-  const stripped = rawOutput.trim();
-  const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidates = fenced ? [fenced[1].trim(), stripped] : [stripped];
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        !Array.isArray(parsed) &&
-        typeof (parsed as Record<string, unknown>).passed === 'boolean'
-      ) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Try next candidate
-    }
-  }
-
-  // Fallback: rightmost JSON object carrying a boolean `passed` key. Replaces
-  // the old first-{ to last-} slice, which spanned multiple objects/prose and
-  // returned null whenever any earlier text contained braces.
-  for (const candidate of candidates) {
-    const found = findRightmostPassedObject(candidate);
-    if (found) {
-      return found;
-    }
-  }
-
-  return null;
-};
 
 export class JobManager {
   private readonly stateStore: StateStore;
@@ -1083,13 +987,16 @@ export class JobManager {
     // gets a fresh id. Only the NEWEST round ever decides the gate — every
     // critic in a round evaluated the same source state, so requiring the
     // whole round to pass avoids mixing verdicts across code revisions (the
-    // "green gate, still wrong code" failure). If any sibling predates the
-    // stamp (existing DBs), fall back to per-stage-newest so old stuck
-    // parents still recover.
-    const allStamped =
+    // "green gate, still wrong code" failure). The gate runs whenever at least
+    // one stamped round exists; unstamped siblings (ad-hoc re-fires via
+    // tenet_start_job, legacy pre-stamp evals) are ignored by the round gate
+    // and must not disable it — otherwise the per-stage fallback would mix
+    // verdicts across rounds. Only when NO sibling is stamped (all-legacy DB)
+    // do we fall back to per-stage-newest so old stuck parents still recover.
+    const hasStampedRound =
       siblings.length > 0 &&
-      siblings.every((s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '');
-    if (allStamped) {
+      siblings.some((s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '');
+    if (hasStampedRound) {
       this.checkBlockingFindingResumeByRound(siblings, blockedParentId, sourceJobId);
       return;
     }
