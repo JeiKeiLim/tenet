@@ -873,6 +873,62 @@ describe('integration: blocking finding auto-resume', () => {
     // trivially). With the DEFAULT_EVAL_STAGES fallback it stays blocked.
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C12 (round-id): a cancelled critic in the newest round keeps the parent blocked', async () => {
+    // The status check (s.status !== 'completed') is the only guard against a
+    // cancelled critic. A cancelled critic must keep the round incomplete —
+    // the parent stays blocked until a fresh round is dispatched.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const stamp = (round: string, stage: string) => {
+      const promptLabel = stage === 'code_critic' ? 'Code Critic'
+        : stage === 'test_critic' ? 'Test Critic'
+        : 'Interaction E2E';
+      return {
+        source_job_id: childId,
+        eval_stage: stage,
+        eval_round: round,
+        expected_eval_stages: ['code_critic', 'test_critic', 'interaction_e2e'],
+        prompt: `${promptLabel} review — stage: ${stage}`,
+      };
+    };
+
+    // Round 1 (stamped): cancel test_critic synchronously while it is still
+    // pending (before the dispatch loop picks it up).
+    const r1c = manager.startJob('critic_eval', stamp('round-1', 'code_critic'));
+    const r1t = manager.startJob('eval', stamp('round-1', 'test_critic'));
+    const r1p = manager.startJob('interaction_e2e', stamp('round-1', 'interaction_e2e'));
+    manager.cancelJob(r1t.id);
+    expect(store.getJob(r1t.id)?.status).toBe('cancelled');
+
+    // The other two critics complete green, but the round is incomplete
+    // (test_critic cancelled) — the parent must stay blocked.
+    await manager.waitForJob(r1c.id, null, 5_000);
+    await manager.waitForJob(r1p.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

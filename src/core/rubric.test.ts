@@ -238,6 +238,45 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(true);
     expect(r2?.stage).toBe('code_critic');
   });
+
+  it('recovery: two staged objects with a stray brace keep the RIGHTMOST verdict (rightmost-wins regression)', () => {
+    // The recovery walks { right-to-left but must keep the first accepted
+    // object per class (the rightmost), not overwrite with the leftmost.
+    const t1 = [
+      '{"passed": true, "stage": "code_critic", "findings": []}',
+      'The signature is foo({ and then the verdict:',
+      '{"passed": false, "stage": "code_critic", "findings": ["x"]}',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+
+    // Mirrored: failing verdict before the stray brace, passing verdict after.
+    const t2 = [
+      '{"passed": false, "stage": "code_critic", "findings": ["x"]}',
+      'The signature is foo({ and then the verdict:',
+      '{"passed": true, "stage": "code_critic", "findings": []}',
+    ].join('\n');
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(true);
+    expect(r2?.stage).toBe('code_critic');
+  });
+
+  it('recovery: escaped quotes and unterminated strings in the verdict still parse (string-state)', () => {
+    // findMatchingClose must treat \" inside a string as escaped, not a string
+    // terminator — a regression would close the string early and strand the
+    // verdict.
+    const t1 = 'The signature is foo({ and then the verdict: {"passed": false, "stage": "code_critic", "findings": [{"category":"product_bug","detail":"the fix broke \\"login\\""}]}';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+
+    // A trailing unterminated string after a green verdict must be skipped.
+    const t2 = 'stray { {"passed": true, "stage": "code_critic", "findings": []} then {"note": "unterminated';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(true);
+    expect(r2?.stage).toBe('code_critic');
+  });
 });
 
 describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
@@ -275,23 +314,5 @@ describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
     ].join('\n');
     const r2 = findRightmostTopLevelObject(t2);
     expect(r2?.layer2_status).toBe('completed');
-  });
-});
-
-describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
-  it('extracts layer2_status from e2e output with prose braces after the verdict', () => {
-    const output = [
-      'I explored the UI and ran the scripted checks.',
-      '{"passed": true, "stage": "interaction_e2e", "layer2_status": "completed", "scripted_results": "all green"}',
-      'Note: the fix touched { src/foo.ts } and { src/bar.ts }.',
-    ].join('\n');
-    const parsed = findRightmostTopLevelObject(output);
-    expect(parsed?.layer2_status).toBe('completed');
-  });
-
-  it('recovers layer2_status after an unbalanced { in prose', () => {
-    const output = 'Note: { src/foo.ts and then {"passed": true, "stage": "interaction_e2e", "layer2_status": "completed"}';
-    const parsed = findRightmostTopLevelObject(output);
-    expect(parsed?.layer2_status).toBe('completed');
   });
 });

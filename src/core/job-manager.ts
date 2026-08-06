@@ -989,10 +989,12 @@ export class JobManager {
     // whole round to pass avoids mixing verdicts across code revisions (the
     // "green gate, still wrong code" failure). The gate runs whenever at least
     // one stamped round exists; unstamped siblings (ad-hoc re-fires via
-    // tenet_start_job, legacy pre-stamp evals) are ignored by the round gate
-    // and must not disable it — otherwise the per-stage fallback would mix
-    // verdicts across rounds. Only when NO sibling is stamped (all-legacy DB)
-    // do we fall back to per-stage-newest so old stuck parents still recover.
+    // tenet_start_job, legacy pre-stamp evals) become singleton rounds inside
+    // the round gate, so a NEWER unstamped critic forces the gate to wait for
+    // a fresh stamped round (fail-closed) instead of being invisible — a red
+    // ad-hoc re-fire must not be ignored while the parent unblocks on an older
+    // round's stale green. Only when NO sibling is stamped (all-legacy DB) do
+    // we fall back to per-stage-newest so old stuck parents still recover.
     const hasStampedRound =
       siblings.length > 0 &&
       siblings.some((s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '');

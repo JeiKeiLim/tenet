@@ -144,9 +144,16 @@ const recoverFromUnbalancedBraces = (
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
           const record = parsed as Record<string, unknown>;
           if (accept(record)) {
+            // The walk goes right-to-left, so the FIRST accepted object per
+            // class is the RIGHTMOST — keep it (only set when null), matching
+            // the strict scan's rightmost-wins semantics. Overwriting would
+            // let a leftmost staged object (e.g. a quoted earlier verdict)
+            // beat the real verdict.
             if (prefer(record)) {
-              bestPreferred = record;
-            } else {
+              if (!bestPreferred) {
+                bestPreferred = record;
+              }
+            } else if (!bestAny) {
               bestAny = record;
             }
           }
