@@ -349,6 +349,29 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(true);
   });
 
+  it('recovery: a nested passing object inside a TRUNCATED array never wins', () => {
+    // A context-limit kill can truncate an array mid-JSON. The object inside
+    // it is still nested inside a valid brace object and must be rejected.
+    const t1 = 'Tool output: [{"checks": {"lint": {"passed": true}}}';
+    const r1 = extractRubricJson(t1);
+    expect(r1).toBeNull();
+
+    // A stray [ in prose still recovers the verdict behind it.
+    const t2 = 'The list was [1, 2, 3 and then the verdict: {"passed": true, "stage": "code_critic", "findings": []}';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(true);
+  });
+
+  it('KNOWN LIMITATION: a later verdict inside a balanced stray pair is ignored when a staged verdict was found', () => {
+    // The short-circuit (staged top-level verdict + balanced stack) skips the
+    // recovery, so a later verdict written inside a stray balanced brace pair
+    // is ignored. This protects against a quoted prior verdict overriding the
+    // real one, at the cost of this corner case.
+    const t1 = 'Verdict: {"passed": false, "stage": "code_critic", "findings": ["x"]} then prose { and the real final verdict {"passed": true, "stage": "code_critic", "findings": []} }';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+  });
+
   it('recovery: a nested passing object inside a TRUNCATED enclosing object never wins', () => {
     // A context-limit kill can truncate the enclosing object mid-JSON, leaving
     // the nested object's } as the last char. isTopLevelish must not treat the

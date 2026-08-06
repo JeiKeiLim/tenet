@@ -24,10 +24,11 @@ const extractJsonObject = (raw: string | undefined): Record<string, unknown> | u
   // carries both `passed` and `layer2_status`, so the two consumers select the
   // same object from the same stored output. (They still select different JOBS:
   // this surface keys on the most recently completed interaction_e2e, while the
-  // gate keys on the newest round — a slow old-round e2e completing late can
-  // surface a stale layer2_status.) The old first-{ to last-} slice spanned
-  // multiple objects/prose and dropped layer2_status whenever prose contained
-  // braces.
+  // gate keys on the newest round when a stamped round exists, or the newest
+  // critic per stage in the all-legacy fallback — a slow old-round e2e
+  // completing late can surface a stale layer2_status.) The old first-{ to
+  // last-} slice spanned multiple objects/prose and dropped layer2_status
+  // whenever prose contained braces.
   return extractRubricJson(raw) ?? undefined;
 };
 

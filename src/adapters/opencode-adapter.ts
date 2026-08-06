@@ -11,6 +11,13 @@ import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
  * bytes. Returns null when no text part parsed (e.g. an error banner or empty
  * stdout) so callers can fall back to the raw stream.
  *
+ * NOTE: the collapse is applied on ALL resolve paths (success, timeout,
+ * non-zero exit, spawn error), unlike the claude/codex adapters which return
+ * raw stdout on failure. This is deliberate (a partial NDJSON stream is more
+ * useful collapsed), but it means a failed opencode job's stored output drops
+ * the raw event stream (including any error-type event) — observability only,
+ * since rubric extraction runs only on success.
+ *
  * Schema pin: this matches the event shape opencode emits today (each line is
  * `{"type":"text", ..., "part":{"type":"text","text":"..."}}`). If a future
  * opencode bump changes the part shape (e.g. a `parts[]` array), this collapse

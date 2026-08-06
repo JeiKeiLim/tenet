@@ -125,19 +125,20 @@ const isTopLevelish = (text: string, open: number): boolean => {
     return false;
   }
   if (bracketStack.length > 0) {
-    // Inside an array. Accept only if the INNERMOST enclosing bracket is a
-    // stray (its slice is not valid JSON) — i.e. the object is the verdict
-    // behind a stray `[` in prose, not genuinely array-wrapped.
+    // Inside an array. Reject if the INNERMOST enclosing bracket forms a
+    // valid array (genuinely array-wrapped). If the bracket is truncated or
+    // its slice is prose (a stray `[`), fall through to the brace check — the
+    // object may still be nested inside a VALID brace object within the
+    // truncated array, which must be rejected too.
     const enclosingOpen = bracketStack[bracketStack.length - 1];
     const enclosingClose = findMatchingClose(text, enclosingOpen);
-    if (enclosingClose < 0) {
-      return true;
-    }
-    try {
-      JSON.parse(text.slice(enclosingOpen, enclosingClose + 1));
-      return false;
-    } catch {
-      return true;
+    if (enclosingClose >= 0) {
+      try {
+        JSON.parse(text.slice(enclosingOpen, enclosingClose + 1));
+        return false;
+      } catch {
+        // Prose brackets — fall through to the brace check.
+      }
     }
   }
   if (braceStack.length === 0) {
@@ -311,6 +312,11 @@ export const findRightmostPassedObject = (text: string): Record<string, unknown>
   );
   if (best && !unbalanced && typeof best.stage === 'string') {
     // A staged top-level verdict with a balanced stack — no recovery needed.
+    // KNOWN LIMITATION: a later verdict written INSIDE a stray balanced brace
+    // pair (e.g. a code snippet) is ignored when an earlier staged verdict
+    // exists — the short-circuit protects against a quoted prior verdict
+    // wrapped in prose braces overriding the real one, at the cost of this
+    // corner case.
     return best;
   }
   // Otherwise run the recovery: the stack may be unbalanced (a stray brace
