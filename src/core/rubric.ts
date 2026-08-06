@@ -17,8 +17,9 @@
  * Tracks both `{}` and `[]` depth so an object wrapped in a top-level array
  * (`[{"passed": true}]`) is never treated as a verdict — the whole-string fast
  * path rejects arrays, and the scan must agree. `unbalanced` reports whether
- * the stack was left non-empty (a stray `{`/`[` in prose), which is the only
- * condition under which the brace-recovery fallback may run.
+ * the stack was left non-empty (a stray `{`/`[` in prose); the brace-recovery
+ * fallback runs whenever the caller decides the strict scan's result is not
+ * authoritative (see findRightmostPassedObject).
  */
 const scanTopLevel = (
   text: string,
@@ -129,7 +130,9 @@ const isTopLevelish = (text: string, open: number): boolean => {
     // valid array (genuinely array-wrapped). If the bracket is truncated or
     // its slice is prose (a stray `[`), fall through to the brace check — the
     // object may still be nested inside a VALID brace object within the
-    // truncated array, which must be rejected too.
+    // truncated array, which must be rejected too. An object DIRECTLY inside
+    // a truncated array (the slice starts with `{`) is still array-wrapped
+    // and must be rejected.
     const enclosingOpen = bracketStack[bracketStack.length - 1];
     const enclosingClose = findMatchingClose(text, enclosingOpen);
     if (enclosingClose >= 0) {
@@ -139,6 +142,9 @@ const isTopLevelish = (text: string, open: number): boolean => {
       } catch {
         // Prose brackets — fall through to the brace check.
       }
+    }
+    if (/^\[\s*\{/.test(text.slice(enclosingOpen))) {
+      return false;
     }
   }
   if (braceStack.length === 0) {
@@ -180,7 +186,7 @@ const isTopLevelish = (text: string, open: number): boolean => {
  * (`foo({ and then ...`), so a nested object inside a truncated enclosing
  * object is never mistaken for the verdict.
  */
-const looksLikeJsonObject = (s: string): boolean => /^\{\s*"[^"]*"\s*:/.test(s);
+const looksLikeJsonObject = (s: string): boolean => /^\{\s*"(?:[^"\\]|\\.)*"\s*:/.test(s);
 
 /**
  * Find the index of the `}` that closes the object opened at `open`, tracking
@@ -228,8 +234,9 @@ const findMatchingClose = (text: string, open: number): number => {
  * each to its MATCHING `}` (not the first `}` — a verdict with nested objects
  * in `findings` would otherwise be sliced unterminated), and apply the same
  * accept/prefer semantics as the strict scan so a passing tool echo after a
- * failing verdict can never win. Only reached when the strict scan found
- * nothing AND the stack was left unbalanced.
+ * failing verdict can never win. Reached whenever the caller runs it — the
+ * strict scan found nothing, the stack is unbalanced, or best is a stage-less
+ * echo that must not short-circuit a staged verdict.
  */
 const recoverFromUnbalancedBraces = (
   text: string,

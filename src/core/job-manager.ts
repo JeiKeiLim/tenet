@@ -1061,7 +1061,8 @@ export class JobManager {
     blockedParentId: string,
     sourceJobId: string,
   ): void {
-    // Group by round id; pick the newest round by max createdAt of its critics.
+    // Group by round id; pick the newest round by its START (min createdAt of
+    // its critics) — see the selection loop below.
     // Unstamped siblings (ad-hoc re-fires via tenet_start_job, legacy pre-stamp
     // evals) become singleton rounds keyed by job id. A singleton can never
     // satisfy "every expected stage present", so a NEWER unstamped critic
