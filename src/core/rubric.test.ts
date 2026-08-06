@@ -335,6 +335,33 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(true);
     expect(r2?.stage).toBe('code_critic');
   });
+
+  it('recovery: a stray [ in prose does not strand the verdict (bracket-stray)', () => {
+    // isTopLevelish must distinguish a stray [ in prose from a genuine array.
+    const t1 = 'The list was [1, 2, 3 and then the verdict: {"passed": true, "stage": "code_critic", "findings": []}';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(true);
+    expect(r1?.stage).toBe('code_critic');
+
+    // A balanced array before the verdict is fine too.
+    const t2 = '[1, 2, 3] and then the verdict: {"passed": true, "stage": "code_critic", "findings": []}';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(true);
+  });
+
+  it('KNOWN LIMITATION: a staged echo (quoted prior verdict) after a failing verdict wins', () => {
+    // The parser cannot distinguish a real verdict from a quoted earlier
+    // verdict by shape — both carry passed + stage. The preamble mandates the
+    // verdict at the END, so a critic that quotes a same-stage verdict after
+    // its own violates the preamble and the rightmost staged object wins.
+    // This is a documented limitation, not a regression to fix silently.
+    const t1 = [
+      'Final: {"passed": false, "stage": "code_critic", "findings": ["x"]}',
+      '(quoted from round 1: {"passed": true, "stage": "code_critic"})',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(true);
+  });
 });
 
 describe('tenet_get_status surface (extractRubricJson — the production parser)', () => {

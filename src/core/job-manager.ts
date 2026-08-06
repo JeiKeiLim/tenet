@@ -69,6 +69,16 @@ type JobManagerConfig = {
 
 const TERMINAL_STATUSES = new Set<Job['status']>(['completed', 'failed', 'cancelled']);
 
+/**
+ * Window for grouping legacy (unstamped) eval critics into "cohorts" in the
+ * per-stage fallback gate. A full re-evaluation dispatches all critics
+ * synchronously (ms apart); a single ad-hoc re-fire via tenet_start_job is a
+ * separate dispatch created later. The newest critic per stage must be created
+ * within this window of the completing critic, or the round is a partial
+ * re-evaluation and the gate stays closed.
+ */
+const COHORT_WINDOW_MS = 5_000;
+
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -1004,7 +1014,7 @@ export class JobManager {
     }
 
     // Fallback: per-stage-newest (pre-round-id behavior).
-    this.checkBlockingFindingResumeByStage(siblings, sourceJobId, completedStage, rawOutput, blockedParentId);
+    this.checkBlockingFindingResumeByStage(completedJob, siblings, sourceJobId, completedStage, rawOutput, blockedParentId);
   }
 
   private checkBlockingFindingResumeByRound(
@@ -1094,6 +1104,7 @@ export class JobManager {
   }
 
   private checkBlockingFindingResumeByStage(
+    completedJob: Job,
     siblings: Job[],
     sourceJobId: string,
     completedStage: string,
@@ -1138,6 +1149,25 @@ export class JobManager {
       if (!presentStages.has(expected)) {
         return;
       }
+    }
+
+    // A single ad-hoc re-fire (tenet_start_job) created long after the other
+    // stages' critics is a partial re-evaluation, not a full round — it must
+    // not mask an older red critic for its stage. A full re-evaluation
+    // dispatches all critics synchronously, so require the newest critic per
+    // stage to be created within a window of the completing critic.
+    const completingCreatedAt = completedJob.createdAt;
+    for (const s of currentRound) {
+      if (Math.abs(s.createdAt - completingCreatedAt) > COHORT_WINDOW_MS) {
+        return;
+      }
+    }
+
+    // A single-stage "round" (a self-serving expected_eval_stages stamp on an
+    // ad-hoc re-fire) must not satisfy the gate on one critic's verdict — the
+    // built-in roster has 3 stages, so a partial re-evaluation is incomplete.
+    if (presentStages.size < 2) {
+      return;
     }
 
     for (const s of currentRound) {

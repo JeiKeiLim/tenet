@@ -89,8 +89,8 @@ const scanTopLevel = (
  * tool echo over the real verdict.
  */
 const isTopLevelish = (text: string, open: number): boolean => {
-  const stack: number[] = [];
-  let bracketDepth = 0;
+  const braceStack: number[] = [];
+  const bracketStack: number[] = [];
   let inString = false;
   let escaped = false;
   for (let i = 0; i < open; i++) {
@@ -110,19 +110,32 @@ const isTopLevelish = (text: string, open: number): boolean => {
       continue;
     }
     if (ch === '{') {
-      stack.push(i);
+      braceStack.push(i);
     } else if (ch === '}') {
-      stack.pop();
+      braceStack.pop();
     } else if (ch === '[') {
-      bracketDepth++;
+      bracketStack.push(i);
     } else if (ch === ']') {
-      bracketDepth--;
+      bracketStack.pop();
     }
   }
-  if (bracketDepth > 0) {
-    return false;
+  if (bracketStack.length > 0) {
+    // Inside an array. Accept only if the INNERMOST enclosing bracket is a
+    // stray (its slice is not valid JSON) — i.e. the object is the verdict
+    // behind a stray `[` in prose, not genuinely array-wrapped.
+    const enclosingOpen = bracketStack[bracketStack.length - 1];
+    const enclosingClose = findMatchingClose(text, enclosingOpen);
+    if (enclosingClose < 0) {
+      return true;
+    }
+    try {
+      JSON.parse(text.slice(enclosingOpen, enclosingClose + 1));
+      return false;
+    } catch {
+      return true;
+    }
   }
-  if (stack.length === 0) {
+  if (braceStack.length === 0) {
     return true;
   }
   // Nested under one or more {. Accept only if the INNERMOST enclosing brace
@@ -130,7 +143,7 @@ const isTopLevelish = (text: string, open: number): boolean => {
   // behind prose braces. If the innermost enclosing brace forms a valid
   // object, the object is nested inside it (a finding, a tool echo) and is
   // never the verdict.
-  const enclosingOpen = stack[stack.length - 1];
+  const enclosingOpen = braceStack[braceStack.length - 1];
   const enclosingClose = findMatchingClose(text, enclosingOpen);
   if (enclosingClose < 0) {
     // Enclosing brace never closes — a stray prose brace; the object is the

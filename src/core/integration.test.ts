@@ -993,6 +993,107 @@ describe('integration: blocking finding auto-resume', () => {
     await manager.waitForJob(adHoc.id, null, 5_000);
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C14 (per-stage): a green ad-hoc re-fire created long after the round cannot mask a red original', async () => {
+    // The 5.5s delay to cross COHORT_WINDOW_MS exceeds the default 5s timeout.
+    // All-legacy DB (no eval_round anywhere) → the per-stage fallback runs.
+    // A single ad-hoc re-fire created > COHORT_WINDOW_MS after the original
+    // round is a partial re-evaluation and must not mask the red original.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // Original code_critic FAILS (served once), then the ad-hoc re-fire PASSES.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    // Original round (no eval_round): code_critic FAILS, test + interaction PASS.
+    const c = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      prompt: 'Code Critic review',
+    });
+    const t = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      prompt: 'Test Critic review',
+    });
+    const p = manager.startJob('interaction_e2e', {
+      source_job_id: childId,
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
+    });
+    await manager.waitForJob(c.id, null, 5_000);
+    await manager.waitForJob(t.id, null, 5_000);
+    await manager.waitForJob(p.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // Ad-hoc code_critic re-fire created > COHORT_WINDOW_MS later. It PASSES.
+    // The per-stage gate must NOT pick it as the newest code_critic and unblock
+    // on a partial re-evaluation.
+    await new Promise((resolve) => setTimeout(resolve, 5_500));
+    const adHoc = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      prompt: 'Code Critic review — ad-hoc re-fire',
+    });
+    await manager.waitForJob(adHoc.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  }, 15_000);
+
+  it('C15 (per-stage): a self-serving single-stage stamp cannot satisfy the fallback gate', async () => {
+    // All-legacy DB → per-stage fallback. A single code_critic carrying
+    // expected_eval_stages: ['code_critic'] is a partial re-evaluation — the
+    // gate must not unblock on one critic's verdict.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const single = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      expected_eval_stages: ['code_critic'],
+      prompt: 'Code Critic review — self-stamped',
+    });
+    await manager.waitForJob(single.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────
