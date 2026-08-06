@@ -349,6 +349,16 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(true);
   });
 
+  it('recovery: a nested passing object inside a TRUNCATED enclosing object never wins', () => {
+    // A context-limit kill can truncate the enclosing object mid-JSON, leaving
+    // the nested object's } as the last char. isTopLevelish must not treat the
+    // truncated enclosing brace as a stray prose brace.
+    const t1 = 'Verdict: {"passed": false, "stage": "code_critic", "findings": ["x"]} then tool: {"checks": {"lint": {"passed": true, "stage": "code_critic"}';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+  });
+
   it('recovery: a stage-less echo before a stray brace cannot mask a stage-less verdict (merge order)', () => {
     // When neither object is staged, the recovery's rightmost result must win
     // over the strict scan's echo (the "verdict at the END" preamble).

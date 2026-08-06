@@ -1090,22 +1090,20 @@ export class JobManager {
     const currentRound = byRound.get(newestRoundId) ?? [];
 
     // Read this round's own expected_eval_stages stamp (shared by all its
-    // critics). Only trust the stamp for a STAMPED MULTI-critic round — a
-    // legitimate dispatch stamps every critic identically. An unstamped round
-    // (ad-hoc re-fire) and a STAMPED SINGLETON round (a legitimate 1-critic
-    // roster, or a forged re-fire carrying eval_round + a self-serving stamp)
-    // both use the consensus stamp across all siblings (the roster at
-    // dispatch), so a single-critic re-fire can never shrink the roster and a
-    // 1-critic roster is not stranded against the full DEFAULT_EVAL_STAGES.
-    // KNOWN LIMITATION: a FORGED multi-critic round (2+ ad-hoc re-fires
-    // sharing a made-up eval_round + a self-serving partial stamp) is trusted
-    // outright — defense-in-depth, since a determined caller could instead
-    // create a full passing round and unblock legitimately.
+    // critics). A STAMPED round — multi-critic or singleton — trusts its own
+    // stamp: a legitimate dispatch stamps every critic with the CURRENT
+    // roster, so a roster shrink between rounds (a built-in disabled) is
+    // honored and a 1-critic roster is not stranded against an older round's
+    // larger roster or the full DEFAULT_EVAL_STAGES. An UNSTAMPED round
+    // (ad-hoc re-fire) always requires the full DEFAULT_EVAL_STAGES.
+    // KNOWN LIMITATION: a FORGED stamped round (ad-hoc re-fires via
+    // tenet_start_job carrying a made-up eval_round + a self-serving partial
+    // stamp) is trusted outright — defense-in-depth, since a determined caller
+    // could instead create a full passing round and unblock legitimately.
     const isStampedRound = currentRound.some(
       (s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '',
     );
-    const isSingleton = currentRound.length === 1;
-    const stamp = isStampedRound && !isSingleton
+    const stamp = isStampedRound
       ? currentRound.find((s) => Array.isArray(s.params.expected_eval_stages))?.params.expected_eval_stages
       : undefined;
     const filteredStages = Array.isArray(stamp) && stamp.length > 0
@@ -1116,9 +1114,7 @@ export class JobManager {
     // the completion loop would pass trivially and the gate would fail open.
     const expectedStages = filteredStages && filteredStages.size > 0
       ? filteredStages
-      : isStampedRound && isSingleton
-        ? this.resolveExpectedEvalStages(sourceJobId)
-        : new Set(DEFAULT_EVAL_STAGES);
+      : new Set(DEFAULT_EVAL_STAGES);
 
     const presentStages = new Set(
       currentRound
@@ -1206,6 +1202,10 @@ export class JobManager {
     // not mask an older red critic for its stage. A full re-evaluation
     // dispatches all critics synchronously, so require the newest critic per
     // stage to be created within a window of the completing critic.
+    // KNOWN LIMITATION: a re-fire created >1s after the round dispatch but
+    // BEFORE the round completes strands the green round (every subsequent
+    // completion fails the window) — fail-closed, recoverable by a fresh full
+    // round, but requires manual intervention.
     const completingCreatedAt = completedJob.createdAt;
     for (const s of currentRound) {
       if (Math.abs(s.createdAt - completingCreatedAt) > COHORT_WINDOW_MS) {

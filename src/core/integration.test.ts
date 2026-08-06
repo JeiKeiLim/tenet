@@ -1416,6 +1416,127 @@ describe('integration: blocking finding auto-resume', () => {
     await manager.waitForJob(adHoc.id, null, 5_000);
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C21 (round-id): a stamped 1-critic round after a larger round (roster shrink) unblocks', async () => {
+    // A roster shrink between rounds (a built-in disabled) must be honored:
+    // the newest stamped singleton's own roster stamp decides, not the older
+    // round's larger consensus.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // R1 code_critic FAILS (served once), R2 code_critic PASSES.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const stamp = (round: string, stage: string) => {
+      const promptLabel = stage === 'code_critic' ? 'Code Critic'
+        : stage === 'test_critic' ? 'Test Critic'
+        : 'Interaction E2E';
+      return {
+        source_job_id: childId,
+        eval_stage: stage,
+        eval_round: round,
+        expected_eval_stages: ['code_critic', 'test_critic', 'interaction_e2e'],
+        prompt: `${promptLabel} review — stage: ${stage}`,
+      };
+    };
+
+    // R1 (stamped, 3-critic roster): code_critic FAILS → blocked.
+    const r1c = manager.startJob('critic_eval', stamp('round-1', 'code_critic'));
+    const r1t = manager.startJob('eval', stamp('round-1', 'test_critic'));
+    const r1p = manager.startJob('interaction_e2e', stamp('round-1', 'interaction_e2e'));
+    await manager.waitForJob(r1c.id, null, 5_000);
+    await manager.waitForJob(r1t.id, null, 5_000);
+    await manager.waitForJob(r1p.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // R2 (stamped, 1-critic roster after a shrink): code_critic PASSES. The
+    // newest singleton's own roster stamp must decide, not the older 3-stage
+    // consensus.
+    const r2c = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      eval_round: 'round-2',
+      expected_eval_stages: ['code_critic'],
+      prompt: 'Code Critic review — 1-critic roster',
+    });
+    await manager.waitForJob(r2c.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('pending');
+  });
+
+  it('C22 (per-stage): a job-level failed critic with stored passing output cannot unblock', async () => {
+    // The per-stage fallback's status guard (s.status !== 'completed') is the
+    // only defense against a failed critic that carried stored passing output
+    // (setJobOutput runs before the success check).
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // code_critic FAILS at the JOB level but serves passing output.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json', success: false },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    // All-legacy round (no eval_round): code_critic FAILS at the job level
+    // (stored passing output), test + interaction PASS.
+    const c = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      prompt: 'Code Critic review',
+    });
+    const t = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      prompt: 'Test Critic review',
+    });
+    const p = manager.startJob('interaction_e2e', {
+      source_job_id: childId,
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
+    });
+    await manager.waitForJob(c.id, null, 5_000);
+    await manager.waitForJob(t.id, null, 5_000);
+    await manager.waitForJob(p.id, null, 5_000);
+
+    // The failed code_critic's stored passing output must not count — the
+    // status guard keeps the parent blocked.
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

@@ -151,8 +151,14 @@ const isTopLevelish = (text: string, open: number): boolean => {
   const enclosingOpen = braceStack[braceStack.length - 1];
   const enclosingClose = findMatchingClose(text, enclosingOpen);
   if (enclosingClose < 0) {
-    // Enclosing brace never closes — a stray prose brace; the object is the
-    // verdict behind it.
+    // Enclosing brace never closes — either a stray prose brace (the object
+    // is the verdict behind it) or a TRUNCATED JSON object (the object is
+    // nested inside it, e.g. a context-limit kill cut the enclosing object
+    // mid-JSON). Distinguish by whether the enclosing slice looks like a
+    // JSON object (a quoted key followed by a colon).
+    if (looksLikeJsonObject(text.slice(enclosingOpen))) {
+      return false;
+    }
     return true;
   }
   try {
@@ -165,6 +171,15 @@ const isTopLevelish = (text: string, open: number): boolean => {
     return true;
   }
 };
+
+/**
+ * True when a string starts like a JSON object — `{` followed by a quoted key
+ * and a colon. Used to distinguish a TRUNCATED JSON object (a valid object cut
+ * off mid-JSON, whose enclosing brace never closes) from a stray prose brace
+ * (`foo({ and then ...`), so a nested object inside a truncated enclosing
+ * object is never mistaken for the verdict.
+ */
+const looksLikeJsonObject = (s: string): boolean => /^\{\s*"[^"]*"\s*:/.test(s);
 
 /**
  * Find the index of the `}` that closes the object opened at `open`, tracking
