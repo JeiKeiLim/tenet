@@ -948,9 +948,11 @@ export class JobManager {
    * existed fall back to the 3 built-ins.
    *
    * When a source job was evaluated multiple times (re-fired `tenet_start_eval`
-   * after retries), the newest round's stamp is authoritative — an older round's
-   * roster could reflect a disabled critic that a later round re-enabled, or a
-   * custom critic added mid-run.
+   * after retries), the stamp shared by the MOST siblings is authoritative — the
+   * roster at dispatch. A legitimate dispatch stamps every critic identically,
+   * so a self-serving partial stamp on a single ad-hoc re-fire cannot shrink
+   * the roster (a disabled built-in or a custom critic shrinks/grows the set
+   * consistently across all critics of a dispatch).
    */
   private resolveExpectedEvalStages(sourceJobId: string): Set<string> {
     const siblings = this.stateStore.getEvalsForSource(sourceJobId);
@@ -1086,10 +1088,16 @@ export class JobManager {
     // singleton (ad-hoc re-fire) could carry a self-serving single-stage stamp
     // and satisfy the gate on one critic's verdict, defeating the whole-round
     // invariant. Unstamped rounds always require the full DEFAULT_EVAL_STAGES.
+    // A STAMPED SINGLETON round (a forged re-fire via tenet_start_job carrying
+    // eval_round + a self-serving stamp) is likewise not trusted: it uses the
+    // consensus stamp across all siblings (the roster at dispatch), so a
+    // single-critic re-fire can never shrink the roster. Multi-critic rounds
+    // trust their own stamp (a legitimate dispatch stamps every critic
+    // identically).
     const isStampedRound = currentRound.some(
       (s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '',
     );
-    const stamp = isStampedRound
+    const stamp = isStampedRound && currentRound.length > 1
       ? currentRound.find((s) => Array.isArray(s.params.expected_eval_stages))?.params.expected_eval_stages
       : undefined;
     const filteredStages = Array.isArray(stamp) && stamp.length > 0
@@ -1098,7 +1106,9 @@ export class JobManager {
     // A stamp that filters to an empty set (malformed non-string entries) must
     // NOT produce an empty expectedStages — both the stage-presence loop and
     // the completion loop would pass trivially and the gate would fail open.
-    const expectedStages = filteredStages.size > 0 ? filteredStages : new Set(DEFAULT_EVAL_STAGES);
+    const expectedStages = filteredStages.size > 0
+      ? filteredStages
+      : this.resolveExpectedEvalStages(sourceJobId);
 
     const presentStages = new Set(
       currentRound
@@ -1191,13 +1201,6 @@ export class JobManager {
       if (Math.abs(s.createdAt - completingCreatedAt) > COHORT_WINDOW_MS) {
         return;
       }
-    }
-
-    // A single-stage "round" (a self-serving expected_eval_stages stamp on an
-    // ad-hoc re-fire) must not satisfy the gate on one critic's verdict — the
-    // built-in roster has 3 stages, so a partial re-evaluation is incomplete.
-    if (presentStages.size < 2) {
-      return;
     }
 
     for (const s of currentRound) {

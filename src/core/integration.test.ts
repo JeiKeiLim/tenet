@@ -1059,10 +1059,13 @@ describe('integration: blocking finding auto-resume', () => {
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   }, 15_000);
 
-  it('C15 (per-stage): a self-serving single-stage stamp cannot satisfy the fallback gate', async () => {
+  it('C15 (per-stage): a single-critic roster unblocks (consistent with the round gate)', async () => {
     // All-legacy DB → per-stage fallback. A single code_critic carrying
-    // expected_eval_stages: ['code_critic'] is a partial re-evaluation — the
-    // gate must not unblock on one critic's verdict.
+    // expected_eval_stages: ['code_critic'] is a legitimate 1-critic roster
+    // (or a self-serving stamp — the two are indistinguishable by shape, and
+    // the round gate has no minimum either). The gate unblocks on the one
+    // critic's verdict, matching the round gate's behavior for a stamped
+    // 1-critic round.
     const { store, manager, reportBlockingFinding } = createHarness([
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
@@ -1092,7 +1095,7 @@ describe('integration: blocking finding auto-resume', () => {
       prompt: 'Code Critic review — self-stamped',
     });
     await manager.waitForJob(single.id, null, 5_000);
-    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+    expect(store.getJob(parent.id)?.status).toBe('pending');
   });
 
   it('C16 (per-stage): a self-serving 2-stage stamp cannot exclude a red stage from the gate', async () => {
@@ -1234,6 +1237,78 @@ describe('integration: blocking finding auto-resume', () => {
     await manager.waitForJob(r2c.id, null, 5_000);
     await manager.waitForJob(r2t.id, null, 5_000);
     await manager.waitForJob(r2p.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('pending');
+  });
+
+  it('C18 (round-id): on a same-ms createdAt tie, the NEWER round wins (>= tie-break)', async () => {
+    // The >= tie-break keeps the later-seen round when two rounds share a max
+    // createdAt — with > the older round would win and unblock on stale green.
+    // Force a tie by rewriting created_at in the DB.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // R1 code_critic FAILS (served once), R2 code_critic PASSES.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const stamp = (round: string, stage: string) => {
+      const promptLabel = stage === 'code_critic' ? 'Code Critic'
+        : stage === 'test_critic' ? 'Test Critic'
+        : 'Interaction E2E';
+      return {
+        source_job_id: childId,
+        eval_stage: stage,
+        eval_round: round,
+        expected_eval_stages: ['code_critic', 'test_critic', 'interaction_e2e'],
+        prompt: `${promptLabel} review — stage: ${stage}`,
+      };
+    };
+
+    // R1 (stamped): code_critic FAILS, test + interaction PASS → blocked.
+    const r1c = manager.startJob('critic_eval', stamp('round-1', 'code_critic'));
+    const r1t = manager.startJob('eval', stamp('round-1', 'test_critic'));
+    const r1p = manager.startJob('interaction_e2e', stamp('round-1', 'interaction_e2e'));
+    await manager.waitForJob(r1c.id, null, 5_000);
+    await manager.waitForJob(r1t.id, null, 5_000);
+    await manager.waitForJob(r1p.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // R2 (stamped): all green. Force a same-ms tie on created_at BEFORE the
+    // dispatch loop runs R2's critics, so both rounds share a max createdAt.
+    const r2c = manager.startJob('critic_eval', stamp('round-2', 'code_critic'));
+    const r2t = manager.startJob('eval', stamp('round-2', 'test_critic'));
+    const r2p = manager.startJob('interaction_e2e', stamp('round-2', 'interaction_e2e'));
+    const db = (store as unknown as { db: { prepare: (sql: string) => { run: (...a: unknown[]) => void } } }).db;
+    const tieAt = store.getJob(r1c.id)?.createdAt ?? Date.now();
+    for (const id of [r1c.id, r1t.id, r1p.id, r2c.id, r2t.id, r2p.id]) {
+      db.prepare('UPDATE jobs SET created_at = ? WHERE id = ?').run(tieAt, id);
+    }
+
+    await manager.waitForJob(r2c.id, null, 5_000);
+    await manager.waitForJob(r2t.id, null, 5_000);
+    await manager.waitForJob(r2p.id, null, 5_000);
+
+    // With >= the later-seen round (R2, green) wins the tie → unblock. With >
+    // the older round (R1, red) would win → stay blocked.
     expect(store.getJob(parent.id)?.status).toBe('pending');
   });
 });

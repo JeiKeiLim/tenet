@@ -119,6 +119,11 @@ const isTopLevelish = (text: string, open: number): boolean => {
       bracketStack.pop();
     }
   }
+  if (inString) {
+    // The object's `{` sits inside an unclosed string — a quoted tool result
+    // or prior verdict, not a real verdict.
+    return false;
+  }
   if (bracketStack.length > 0) {
     // Inside an array. Accept only if the INNERMOST enclosing bracket is a
     // stray (its slice is not valid JSON) — i.e. the object is the verdict
