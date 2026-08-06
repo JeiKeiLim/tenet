@@ -75,9 +75,12 @@ const TERMINAL_STATUSES = new Set<Job['status']>(['completed', 'failed', 'cancel
  * synchronously (ms apart); a single ad-hoc re-fire via tenet_start_job is a
  * separate dispatch created later. The newest critic per stage must be created
  * within this window of the completing critic, or the round is a partial
- * re-evaluation and the gate stays closed.
+ * re-evaluation and the gate stays closed. Kept small (1s) to narrow the
+ * blind spot for re-fires created shortly after the round — a heuristic, since
+ * the per-stage path has no round ids to distinguish a full re-evaluation from
+ * a partial re-fire.
  */
-const COHORT_WINDOW_MS = 5_000;
+const COHORT_WINDOW_MS = 1_000;
 
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -951,12 +954,39 @@ export class JobManager {
    */
   private resolveExpectedEvalStages(sourceJobId: string): Set<string> {
     const siblings = this.stateStore.getEvalsForSource(sourceJobId);
-    const newestFirst = [...siblings].sort((a, b) => b.createdAt - a.createdAt);
-    for (const s of newestFirst) {
+    // Use the expected_eval_stages stamp shared by the MOST siblings — the
+    // roster at dispatch. A legitimate dispatch stamps every critic with the
+    // same roster (so a disabled built-in or a custom critic shrinks/grows the
+    // set consistently); a self-serving partial stamp on a single ad-hoc
+    // re-fire must not override it, or the gate would exclude a red stage and
+    // unblock on a partial re-evaluation. Falls back to DEFAULT_EVAL_STAGES
+    // when no stamp is shared.
+    const counts = new Map<string, { stages: string[]; count: number }>();
+    for (const s of siblings) {
       const stamped = s.params.expected_eval_stages;
-      if (Array.isArray(stamped) && stamped.length > 0) {
-        return new Set(stamped.filter((stage): stage is string => typeof stage === 'string'));
+      if (!Array.isArray(stamped) || stamped.length === 0) {
+        continue;
       }
+      const stages = stamped.filter((st): st is string => typeof st === 'string');
+      if (stages.length === 0) {
+        continue;
+      }
+      const key = stages.join(',');
+      const entry = counts.get(key);
+      if (entry) {
+        entry.count++;
+      } else {
+        counts.set(key, { stages, count: 1 });
+      }
+    }
+    let best: { stages: string[]; count: number } | undefined;
+    for (const entry of counts.values()) {
+      if (!best || entry.count > best.count) {
+        best = entry;
+      }
+    }
+    if (best) {
+      return new Set(best.stages);
     }
     return new Set(DEFAULT_EVAL_STAGES);
   }

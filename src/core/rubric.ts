@@ -288,13 +288,14 @@ export const findRightmostPassedObject = (text: string): Record<string, unknown>
     (r) => typeof r.passed === 'boolean',
     (r) => typeof r.stage === 'string',
   );
-  if (best && !unbalanced) {
+  if (best && !unbalanced && typeof best.stage === 'string') {
+    // A staged top-level verdict with a balanced stack — no recovery needed.
     return best;
   }
-  // Either the stack is unbalanced (a stray brace may hide a better verdict)
-  // or the strict scan found nothing (e.g. a stray { balanced by a stray }
-  // strands the verdict). Run the recovery — isTopLevelish keeps it from
-  // picking nested objects.
+  // Otherwise run the recovery: the stack may be unbalanced (a stray brace
+  // hides a better verdict), the strict scan may have found nothing (a stray
+  // { balanced by a stray } strands the verdict), or best may be a stage-less
+  // echo that must not short-circuit the recovery's staged verdict.
   return mergeStrictAndRecovered(
     best,
     recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean', (r) => typeof r.stage === 'string'),

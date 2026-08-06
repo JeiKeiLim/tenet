@@ -349,6 +349,19 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(true);
   });
 
+  it('recovery: a stage-less echo + balanced stray pair cannot mask a failing verdict', () => {
+    // The strict scan accepts the echo (bestAny) and the stray pair balances
+    // (unbalanced=false), so the recovery must still run — a stage-less best
+    // must not short-circuit the recovery's staged verdict.
+    const t1 = [
+      'Tool output: {"passed": true, "tool": "pytest", "count": 12}',
+      'and prose { and the verdict: {"passed": false, "stage": "code_critic", "findings": ["x"]} }',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+  });
+
   it('KNOWN LIMITATION: a staged echo (quoted prior verdict) after a failing verdict wins', () => {
     // The parser cannot distinguish a real verdict from a quoted earlier
     // verdict by shape — both carry passed + stage. The preamble mandates the
