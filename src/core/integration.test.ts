@@ -1537,6 +1537,61 @@ describe('integration: blocking finding auto-resume', () => {
     // status guard keeps the parent blocked.
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C23 (per-stage): a cancelled critic in the fallback gate keeps the parent blocked', async () => {
+    // The per-stage fallback's status guard (s.status !== 'completed') is the
+    // only defense against a cancelled critic too — the missing cell in the
+    // status-guard matrix (C12 covers the round gate, C22 the failed case).
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    // All-legacy round (no eval_round): cancel test_critic synchronously
+    // while it is still pending.
+    const c = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      prompt: 'Code Critic review',
+    });
+    const t = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      prompt: 'Test Critic review',
+    });
+    const p = manager.startJob('interaction_e2e', {
+      source_job_id: childId,
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
+    });
+    manager.cancelJob(t.id);
+    expect(store.getJob(t.id)?.status).toBe('cancelled');
+
+    // code + interaction pass, but the cancelled test_critic keeps the round
+    // incomplete — the parent must stay blocked.
+    await manager.waitForJob(c.id, null, 5_000);
+    await manager.waitForJob(p.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

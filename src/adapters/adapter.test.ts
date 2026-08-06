@@ -402,4 +402,63 @@ describe('OpenCodeAdapter NDJSON output collapse', () => {
     expect(parsed?.passed).toBe(true);
     expect(parsed?.stage).toBe('credit_ledger_integrity');
   });
+
+  it('collapses NDJSON on a non-zero exit (failure path)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    spawnMock.mockImplementation(() => makeFakeChild(1, ndjson));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(false);
+    // The collapse applies on failure paths too (documented divergence from
+    // claude/codex, which return raw stdout).
+    expect(response.output).toContain('"passed": true');
+    expect(response.output).not.toContain('"type":"step_start"');
+  });
+
+  it('collapses NDJSON on a spawn error (failure path)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    const child = new EventEmitter() as FakeChild;
+    child.stdin = { write: () => undefined, end: () => undefined };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => undefined;
+    setImmediate(() => {
+      child.stdout.emit('data', Buffer.from(ndjson));
+      child.emit('error', new Error('spawn ENOENT'));
+    });
+    spawnMock.mockImplementation(() => child);
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(false);
+    expect(response.output).toContain('"passed": true');
+  });
+
+  it('collapses NDJSON on a timeout (failure path)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    const child = new EventEmitter() as FakeChild;
+    child.stdin = { write: () => undefined, end: () => undefined };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    // The adapter's timeout handler kills the child; a real child then emits
+    // 'close'. Emit it so the promise resolves through the timedOut branch.
+    child.kill = () => {
+      setImmediate(() => child.emit('close', 1));
+    };
+    setImmediate(() => {
+      child.stdout.emit('data', Buffer.from(ndjson));
+      // Never emit 'close' on our own — the adapter's timeout must fire.
+    });
+    spawnMock.mockImplementation(() => child);
+
+    const adapter = new OpenCodeAdapter(50);
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('timed out');
+    expect(response.output).toContain('"passed": true');
+  });
 });
