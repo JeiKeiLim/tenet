@@ -964,13 +964,16 @@ export class JobManager {
     // unblock on a partial re-evaluation. Falls back to DEFAULT_EVAL_STAGES
     // when no stamp is shared.
     const counts = new Map<string, { stages: string[]; count: number }>();
+    let unstampedCount = 0;
     for (const s of siblings) {
       const stamped = s.params.expected_eval_stages;
       if (!Array.isArray(stamped) || stamped.length === 0) {
+        unstampedCount++;
         continue;
       }
       const stages = stamped.filter((st): st is string => typeof st === 'string');
       if (stages.length === 0) {
+        unstampedCount++;
         continue;
       }
       const key = stages.join(',');
@@ -987,7 +990,10 @@ export class JobManager {
         best = entry;
       }
     }
-    if (best) {
+    // A stamp shared by only ONE sibling while others are unstamped (a
+    // self-serving partial stamp on a single ad-hoc re-fire against unstamped
+    // legacy originals) must not become the roster — fall back to DEFAULT.
+    if (best && (best.count > 1 || unstampedCount === 0)) {
       return new Set(best.stages);
     }
     return new Set(DEFAULT_EVAL_STAGES);
@@ -1084,31 +1090,35 @@ export class JobManager {
     const currentRound = byRound.get(newestRoundId) ?? [];
 
     // Read this round's own expected_eval_stages stamp (shared by all its
-    // critics). Only trust the stamp for a STAMPED round — an unstamped
-    // singleton (ad-hoc re-fire) could carry a self-serving single-stage stamp
-    // and satisfy the gate on one critic's verdict, defeating the whole-round
-    // invariant. Unstamped rounds always require the full DEFAULT_EVAL_STAGES.
-    // A STAMPED SINGLETON round (a forged re-fire via tenet_start_job carrying
-    // eval_round + a self-serving stamp) is likewise not trusted: it uses the
-    // consensus stamp across all siblings (the roster at dispatch), so a
-    // single-critic re-fire can never shrink the roster. Multi-critic rounds
-    // trust their own stamp (a legitimate dispatch stamps every critic
-    // identically).
+    // critics). Only trust the stamp for a STAMPED MULTI-critic round — a
+    // legitimate dispatch stamps every critic identically. An unstamped round
+    // (ad-hoc re-fire) and a STAMPED SINGLETON round (a legitimate 1-critic
+    // roster, or a forged re-fire carrying eval_round + a self-serving stamp)
+    // both use the consensus stamp across all siblings (the roster at
+    // dispatch), so a single-critic re-fire can never shrink the roster and a
+    // 1-critic roster is not stranded against the full DEFAULT_EVAL_STAGES.
+    // KNOWN LIMITATION: a FORGED multi-critic round (2+ ad-hoc re-fires
+    // sharing a made-up eval_round + a self-serving partial stamp) is trusted
+    // outright — defense-in-depth, since a determined caller could instead
+    // create a full passing round and unblock legitimately.
     const isStampedRound = currentRound.some(
       (s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '',
     );
-    const stamp = isStampedRound && currentRound.length > 1
+    const isSingleton = currentRound.length === 1;
+    const stamp = isStampedRound && !isSingleton
       ? currentRound.find((s) => Array.isArray(s.params.expected_eval_stages))?.params.expected_eval_stages
       : undefined;
     const filteredStages = Array.isArray(stamp) && stamp.length > 0
       ? new Set(stamp.filter((st): st is string => typeof st === 'string'))
-      : new Set(DEFAULT_EVAL_STAGES);
+      : undefined;
     // A stamp that filters to an empty set (malformed non-string entries) must
     // NOT produce an empty expectedStages — both the stage-presence loop and
     // the completion loop would pass trivially and the gate would fail open.
-    const expectedStages = filteredStages.size > 0
+    const expectedStages = filteredStages && filteredStages.size > 0
       ? filteredStages
-      : this.resolveExpectedEvalStages(sourceJobId);
+      : isStampedRound && isSingleton
+        ? this.resolveExpectedEvalStages(sourceJobId)
+        : new Set(DEFAULT_EVAL_STAGES);
 
     const presentStages = new Set(
       currentRound

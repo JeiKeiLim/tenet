@@ -21,10 +21,13 @@ const extractRawOutput = (output: unknown): string | undefined => {
 const extractJsonObject = (raw: string | undefined): Record<string, unknown> | undefined => {
   if (!raw) return undefined;
   // The SAME parser the resume gate uses (extractRubricJson) — the e2e verdict
-  // carries both `passed` and `layer2_status`, so the two consumers of the same
-  // stored critic output select the same object and cannot drift apart. The old
-  // first-{ to last-} slice spanned multiple objects/prose and dropped
-  // layer2_status whenever prose contained braces.
+  // carries both `passed` and `layer2_status`, so the two consumers select the
+  // same object from the same stored output. (They still select different JOBS:
+  // this surface keys on the most recently completed interaction_e2e, while the
+  // gate keys on the newest round — a slow old-round e2e completing late can
+  // surface a stale layer2_status.) The old first-{ to last-} slice spanned
+  // multiple objects/prose and dropped layer2_status whenever prose contained
+  // braces.
   return extractRubricJson(raw) ?? undefined;
 };
 

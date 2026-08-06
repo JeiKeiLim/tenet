@@ -266,9 +266,10 @@ const recoverFromUnbalancedBraces = (
  * Merge the strict scan's result with the recovery's when the stack was
  * unbalanced. A staged verdict from either wins — the recovery sees objects
  * the strict scan missed behind a stray brace, so a stage-less echo the strict
- * scan accepted must not short-circuit the recovery's staged verdict. Otherwise
- * prefer the strict scan's top-level result over the recovery's (which may be
- * a nested object).
+ * scan accepted must not short-circuit the recovery's staged verdict. When
+ * neither is staged, the recovery's result wins: it walks `{` from the end and
+ * finds the RIGHTMOST object (the "verdict at the END" preamble), while the
+ * strict scan's stage-less best may be an echo before a stray brace.
  */
 const mergeStrictAndRecovered = (
   strictBest: Record<string, unknown> | null,
@@ -276,7 +277,7 @@ const mergeStrictAndRecovered = (
 ): Record<string, unknown> | null => {
   const recoveredStaged = recovered && typeof recovered.stage === 'string' ? recovered : null;
   const strictStaged = strictBest && typeof strictBest.stage === 'string' ? strictBest : null;
-  return recoveredStaged ?? strictStaged ?? strictBest ?? recovered;
+  return recoveredStaged ?? strictStaged ?? recovered ?? strictBest;
 };
 
 /**

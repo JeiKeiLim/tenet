@@ -1311,6 +1311,111 @@ describe('integration: blocking finding auto-resume', () => {
     // the older round (R1, red) would win → stay blocked.
     expect(store.getJob(parent.id)?.status).toBe('pending');
   });
+
+  it('C19 (round-id): a stamped 1-critic round (legitimate roster) unblocks', async () => {
+    // A project with a 1-critic roster dispatches a stamped singleton via
+    // tenet_start_eval. The round gate must use the consensus roster stamp
+    // (['code_critic']), not the full DEFAULT_EVAL_STAGES, or the parent
+    // strands forever.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    // A stamped singleton round: eval_round + a single-stage roster stamp.
+    const single = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      eval_round: 'round-1',
+      expected_eval_stages: ['code_critic'],
+      prompt: 'Code Critic review — 1-critic roster',
+    });
+    await manager.waitForJob(single.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('pending');
+  });
+
+  it('C20 (per-stage): a partial-stamp ad-hoc re-fire cannot shrink the roster when originals are unstamped', async () => {
+    // All-legacy DB where the originals predate the expected_eval_stages stamp.
+    // A single ad-hoc re-fire carrying a partial stamp must NOT become the
+    // consensus roster and exclude a red stage.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // Original code_critic FAILS (served once), then the ad-hoc re-fire PASSES.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      // test_critic FAILS (a red stage the partial stamp would exclude).
+      { match: matchers.evalStage('test_critic'), fixture: 'critic-failing-with-findings.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    // Original round (no eval_round, NO expected_eval_stages — legacy shape):
+    // code FAILS, test FAILS, interaction PASSES.
+    const c = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      prompt: 'Code Critic review',
+    });
+    const t = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      prompt: 'Test Critic review',
+    });
+    const p = manager.startJob('interaction_e2e', {
+      source_job_id: childId,
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
+    });
+    await manager.waitForJob(c.id, null, 5_000);
+    await manager.waitForJob(t.id, null, 5_000);
+    await manager.waitForJob(p.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // Ad-hoc code_critic re-fire with a partial stamp. It PASSES. The gate
+    // must still require test_critic (red) — the partial stamp must not
+    // become the consensus when the originals are unstamped.
+    const adHoc = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      expected_eval_stages: ['code_critic', 'interaction_e2e'],
+      prompt: 'Code Critic review — partial-stamp re-fire',
+    });
+    await manager.waitForJob(adHoc.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

@@ -349,6 +349,18 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(true);
   });
 
+  it('recovery: a stage-less echo before a stray brace cannot mask a stage-less verdict (merge order)', () => {
+    // When neither object is staged, the recovery's rightmost result must win
+    // over the strict scan's echo (the "verdict at the END" preamble).
+    const t1 = 'Tool output: {"passed": true, "tool": "syntax-check"} and then a stray { and then the verdict: {"passed": false}';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+
+    const t2 = 'Tool output: {"passed": false, "tool": "syntax-check"} and then a stray { and then the verdict: {"passed": true}';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(true);
+  });
+
   it('recovery: a stage-less echo + balanced stray pair cannot mask a failing verdict', () => {
     // The strict scan accepts the echo (bestAny) and the stray pair balances
     // (unbalanced=false), so the recovery must still run — a stage-less best
