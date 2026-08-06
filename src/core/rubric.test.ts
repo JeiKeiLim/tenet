@@ -206,6 +206,76 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(false);
     expect(r2?.stage).toBe('code_critic');
   });
+
+  it('recovery: a passing echo BEFORE a stray { cannot mask a failing verdict (merge regression)', () => {
+    // The strict scan accepts the stage-less echo as bestAny; the stray {
+    // hides the staged failing verdict. The recovery must still run and its
+    // staged verdict must win over the echo.
+    const t1 = [
+      'Tool output: {"passed": true, "tool": "pytest", "count": 12}',
+      'The signature is foo({ and then the verdict: {"passed": false, "stage": "code_critic", "findings": ["x"]}',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+
+    const t2 = '{"passed": true} some prose {unterminated {"passed": false, "stage": "code_critic"}';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(false);
+    expect(r2?.stage).toBe('code_critic');
+  });
+
+  it('recovery: a trailing stray { after the verdict does not strand it (continue regression)', () => {
+    // The recovery walks { from the end; a trailing { with no matching close
+    // must be skipped, not break the walk before reaching the verdict.
+    const t1 = 'The signature is foo({ and then the verdict: {"passed": true, "stage": "code_critic", "findings": []} and then more prose {';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(true);
+    expect(r1?.stage).toBe('code_critic');
+
+    const t2 = 'stray { {"passed": true, "stage": "code_critic", "findings": []} more { no close';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(true);
+    expect(r2?.stage).toBe('code_critic');
+  });
+});
+
+describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
+  it('extracts layer2_status from e2e output with prose braces after the verdict', () => {
+    const output = [
+      'I explored the UI and ran the scripted checks.',
+      '{"passed": true, "stage": "interaction_e2e", "layer2_status": "completed", "scripted_results": "all green"}',
+      'Note: the fix touched { src/foo.ts } and { src/bar.ts }.',
+    ].join('\n');
+    const parsed = findRightmostTopLevelObject(output);
+    expect(parsed?.layer2_status).toBe('completed');
+  });
+
+  it('recovers layer2_status after an unbalanced { in prose', () => {
+    const output = 'Note: { src/foo.ts and then {"passed": true, "stage": "interaction_e2e", "layer2_status": "completed"}';
+    const parsed = findRightmostTopLevelObject(output);
+    expect(parsed?.layer2_status).toBe('completed');
+  });
+
+  it('a valid-JSON tool echo after the verdict does not override layer2_status (stage-preference)', () => {
+    // The old accept-any scan returned the echo object, falsifying or dropping
+    // layer2_status. The e2e verdict carries stage; the echo does not.
+    const t1 = [
+      '{"passed": true, "stage": "interaction_e2e", "layer2_status": "completed"}',
+      'Tool: {"layer2_status": "failed", "tool": "syntax-check"}',
+    ].join('\n');
+    const r1 = findRightmostTopLevelObject(t1);
+    expect(r1?.layer2_status).toBe('completed');
+
+    const t2 = [
+      '```json',
+      '{"passed": true, "stage": "interaction_e2e", "layer2_status": "completed"}',
+      '```',
+      'Then I checked: {"note": "all good"}',
+    ].join('\n');
+    const r2 = findRightmostTopLevelObject(t2);
+    expect(r2?.layer2_status).toBe('completed');
+  });
 });
 
 describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {

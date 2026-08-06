@@ -135,37 +135,71 @@ const recoverFromUnbalancedBraces = (
 ): Record<string, unknown> | null => {
   let bestPreferred: Record<string, unknown> | null = null;
   let bestAny: Record<string, unknown> | null = null;
-  for (let i = text.lastIndexOf('{'); i >= 0; i = text.lastIndexOf('{', i - 1)) {
+  let i = text.lastIndexOf('{');
+  while (i >= 0) {
     const end = findMatchingClose(text, i);
-    if (end < 0) {
-      break;
-    }
-    try {
-      const parsed = JSON.parse(text.slice(i, end + 1)) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const record = parsed as Record<string, unknown>;
-        if (accept(record)) {
-          if (prefer(record)) {
-            bestPreferred = record;
-          } else {
-            bestAny = record;
+    if (end >= 0) {
+      try {
+        const parsed = JSON.parse(text.slice(i, end + 1)) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const record = parsed as Record<string, unknown>;
+          if (accept(record)) {
+            if (prefer(record)) {
+              bestPreferred = record;
+            } else {
+              bestAny = record;
+            }
           }
         }
+      } catch {
+        // Not valid JSON — prose braces, skip.
       }
-    } catch {
-      // Not valid JSON — prose braces, skip.
     }
+    // A `{` with no matching close is a stray that cannot be the verdict —
+    // skip it and keep walking, or a trailing stray `{` (e.g. a truncated
+    // tail) would strand an earlier valid verdict. NOTE: lastIndexOf('{', -1)
+    // clamps to 0 and would re-find a `{` at position 0 forever, so break
+    // explicitly at i === 0.
+    if (i === 0) {
+      break;
+    }
+    i = text.lastIndexOf('{', i - 1);
   }
   return bestPreferred ?? bestAny;
 };
 
 /**
- * Rightmost TOP-LEVEL JSON object in a string, regardless of keys. Used by
- * tenet_get_status to surface layer2_status from e2e critic output.
+ * Merge the strict scan's result with the recovery's when the stack was
+ * unbalanced. A staged verdict from either wins — the recovery sees objects
+ * the strict scan missed behind a stray brace, so a stage-less echo the strict
+ * scan accepted must not short-circuit the recovery's staged verdict. Otherwise
+ * prefer the strict scan's top-level result over the recovery's (which may be
+ * a nested object).
+ */
+const mergeStrictAndRecovered = (
+  strictBest: Record<string, unknown> | null,
+  recovered: Record<string, unknown> | null,
+): Record<string, unknown> | null => {
+  const recoveredStaged = recovered && typeof recovered.stage === 'string' ? recovered : null;
+  const strictStaged = strictBest && typeof strictBest.stage === 'string' ? strictBest : null;
+  return recoveredStaged ?? strictStaged ?? strictBest ?? recovered;
+};
+
+/**
+ * Rightmost TOP-LEVEL JSON object in a string, preferring one that carries a
+ * `stage` key (the e2e verdict shape). Used by tenet_get_status to surface
+ * layer2_status from e2e critic output — a valid-JSON tool echo after the
+ * verdict must not override it.
  */
 export const findRightmostTopLevelObject = (text: string): Record<string, unknown> | null => {
-  const { best, unbalanced } = scanTopLevel(text, () => true, () => false);
-  return best ?? (unbalanced ? recoverFromUnbalancedBraces(text, () => true, () => false) : null);
+  const { best, unbalanced } = scanTopLevel(text, () => true, (r) => typeof r.stage === 'string');
+  if (!unbalanced) {
+    return best;
+  }
+  return mergeStrictAndRecovered(
+    best,
+    recoverFromUnbalancedBraces(text, () => true, (r) => typeof r.stage === 'string'),
+  );
 };
 
 /**
@@ -182,9 +216,13 @@ export const findRightmostPassedObject = (text: string): Record<string, unknown>
     (r) => typeof r.passed === 'boolean',
     (r) => typeof r.stage === 'string',
   );
-  return best ?? (unbalanced
-    ? recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean', (r) => typeof r.stage === 'string')
-    : null);
+  if (!unbalanced) {
+    return best;
+  }
+  return mergeStrictAndRecovered(
+    best,
+    recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean', (r) => typeof r.stage === 'string'),
+  );
 };
 
 /**

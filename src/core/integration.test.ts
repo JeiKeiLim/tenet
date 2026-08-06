@@ -829,6 +829,50 @@ describe('integration: blocking finding auto-resume', () => {
     // evaluation exists.
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C11 (round-id): a malformed expected_eval_stages stamp cannot fail the gate open', async () => {
+    // A stamp that filters to an empty set ([123]) must fall back to
+    // DEFAULT_EVAL_STAGES — otherwise the stage-presence and completion loops
+    // pass trivially and the parent unblocks with no critic evaluated.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    // A single-critic round with a malformed stamp: only code_critic exists,
+    // so even with the DEFAULT_EVAL_STAGES fallback the round is incomplete.
+    const malformed = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      eval_round: 'round-1',
+      expected_eval_stages: [123],
+      prompt: 'Code Critic review — malformed stamp',
+    });
+    await manager.waitForJob(malformed.id, null, 5_000);
+
+    // With an empty expectedStages the gate would unblock (both loops pass
+    // trivially). With the DEFAULT_EVAL_STAGES fallback it stays blocked.
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

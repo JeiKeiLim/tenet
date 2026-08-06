@@ -1041,9 +1041,13 @@ export class JobManager {
 
     // Read this round's own expected_eval_stages stamp (shared by all its critics).
     const stamp = currentRound.find((s) => Array.isArray(s.params.expected_eval_stages))?.params.expected_eval_stages;
-    const expectedStages = Array.isArray(stamp) && stamp.length > 0
+    const filteredStages = Array.isArray(stamp) && stamp.length > 0
       ? new Set(stamp.filter((st): st is string => typeof st === 'string'))
       : new Set(DEFAULT_EVAL_STAGES);
+    // A stamp that filters to an empty set (malformed non-string entries) must
+    // NOT produce an empty expectedStages — both the stage-presence loop and
+    // the completion loop would pass trivially and the gate would fail open.
+    const expectedStages = filteredStages.size > 0 ? filteredStages : new Set(DEFAULT_EVAL_STAGES);
 
     const presentStages = new Set(
       currentRound
