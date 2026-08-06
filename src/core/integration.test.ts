@@ -991,6 +991,19 @@ describe('integration: latest_e2e_status surfacing', () => {
     const parsed = parseResult(r);
     expect(parsed.latest_e2e_status).toBe('completed');
   });
+
+  it('D5: unbalanced { in prose before the verdict still surfaces layer2_status (recovery path)', async () => {
+    // D4 uses balanced prose braces, so the recovery branch never runs through
+    // the tool. This fixture has a stray { (truncated code snippet) before the
+    // verdict — the recovery path must surface layer2_status end-to-end.
+    const h = createHarness([
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed-unbalanced-brace.md' },
+    ]);
+    await driveOneE2e(h, []);
+    const r = await h.getStatus({});
+    const parsed = parseResult(r);
+    expect(parsed.latest_e2e_status).toBe('completed');
+  });
 });
 
 // ─── E. Parser stress tests ─────────────────────────────────────────────────

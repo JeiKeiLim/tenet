@@ -80,6 +80,76 @@ const scanTopLevel = (
 };
 
 /**
+ * True when the object opened at `open` is "top-level-ish": not inside an
+ * array, and not nested inside another VALID JSON object. An object nested
+ * under a stray prose brace (whose enclosing slice is not valid JSON) IS
+ * top-level-ish — that is the verdict the recovery exists to find. This
+ * mirrors the strict scan's top-level invariant (scanTopLevel rejects nested
+ * and array-wrapped objects) so the recovery cannot pick a nested finding or
+ * tool echo over the real verdict.
+ */
+const isTopLevelish = (text: string, open: number): boolean => {
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let enclosingOpen = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < open; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') {
+      if (braceDepth === 0) {
+        enclosingOpen = i;
+      }
+      braceDepth++;
+    } else if (ch === '}') {
+      braceDepth--;
+    } else if (ch === '[') {
+      bracketDepth++;
+    } else if (ch === ']') {
+      bracketDepth--;
+    }
+  }
+  if (bracketDepth > 0) {
+    return false;
+  }
+  if (braceDepth === 0) {
+    return true;
+  }
+  if (braceDepth === 1 && enclosingOpen >= 0) {
+    const enclosingClose = findMatchingClose(text, enclosingOpen);
+    if (enclosingClose < 0) {
+      // Enclosing brace never closes — a stray prose brace; the object is the
+      // verdict behind it.
+      return true;
+    }
+    try {
+      JSON.parse(text.slice(enclosingOpen, enclosingClose + 1));
+      // Enclosing brace forms a valid object — the object is nested inside it.
+      return false;
+    } catch {
+      // Enclosing slice is prose braces (e.g. a stray { balanced by a stray })
+      // — the object is the verdict behind them.
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
  * Find the index of the `}` that closes the object opened at `open`, tracking
  * nested braces, brackets, and strings. Returns -1 when no matching close
  * exists (a stray `{` in prose).
@@ -138,7 +208,7 @@ const recoverFromUnbalancedBraces = (
   let i = text.lastIndexOf('{');
   while (i >= 0) {
     const end = findMatchingClose(text, i);
-    if (end >= 0) {
+    if (end >= 0 && isTopLevelish(text, i)) {
       try {
         const parsed = JSON.parse(text.slice(i, end + 1)) as unknown;
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -200,9 +270,13 @@ const mergeStrictAndRecovered = (
  */
 export const findRightmostTopLevelObject = (text: string): Record<string, unknown> | null => {
   const { best, unbalanced } = scanTopLevel(text, () => true, (r) => typeof r.stage === 'string');
-  if (!unbalanced) {
+  if (best && !unbalanced) {
     return best;
   }
+  // Either the stack is unbalanced (a stray brace may hide a better verdict)
+  // or the strict scan found nothing (e.g. a stray { balanced by a stray }
+  // strands the verdict). Run the recovery — isTopLevelish keeps it from
+  // picking nested objects.
   return mergeStrictAndRecovered(
     best,
     recoverFromUnbalancedBraces(text, () => true, (r) => typeof r.stage === 'string'),
@@ -223,9 +297,13 @@ export const findRightmostPassedObject = (text: string): Record<string, unknown>
     (r) => typeof r.passed === 'boolean',
     (r) => typeof r.stage === 'string',
   );
-  if (!unbalanced) {
+  if (best && !unbalanced) {
     return best;
   }
+  // Either the stack is unbalanced (a stray brace may hide a better verdict)
+  // or the strict scan found nothing (e.g. a stray { balanced by a stray }
+  // strands the verdict). Run the recovery — isTopLevelish keeps it from
+  // picking nested objects.
   return mergeStrictAndRecovered(
     best,
     recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean', (r) => typeof r.stage === 'string'),

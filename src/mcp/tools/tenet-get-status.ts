@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
-import { findRightmostTopLevelObject } from '../../core/rubric.js';
+import { extractRubricJson } from '../../core/rubric.js';
 import { StateStore } from '../../core/state-store.js';
 import { checkForUpdate } from '../../core/update-checker.js';
 import type { Job, JobStatus, ProjectStatus } from '../../types/index.js';
@@ -20,20 +20,12 @@ const extractRawOutput = (output: unknown): string | undefined => {
 
 const extractJsonObject = (raw: string | undefined): Record<string, unknown> | undefined => {
   if (!raw) return undefined;
-  const stripped = raw.trim();
-  try {
-    const parsed = JSON.parse(stripped) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // Not a bare JSON object — scan below.
-  }
-  // Shared parser with the resume gate (job-manager.ts) so the two consumers
-  // of the same stored critic output can never drift apart. The old first-{
-  // to last-} slice spanned multiple objects/prose and dropped layer2_status
-  // whenever prose contained braces.
-  return findRightmostTopLevelObject(stripped) ?? undefined;
+  // The SAME parser the resume gate uses (extractRubricJson) — the e2e verdict
+  // carries both `passed` and `layer2_status`, so the two consumers of the same
+  // stored critic output select the same object and cannot drift apart. The old
+  // first-{ to last-} slice spanned multiple objects/prose and dropped
+  // layer2_status whenever prose contained braces.
+  return extractRubricJson(raw) ?? undefined;
 };
 
 const findLatestE2eStatus = (stateStore: StateStore): string | undefined => {

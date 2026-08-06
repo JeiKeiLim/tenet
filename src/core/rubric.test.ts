@@ -277,6 +277,45 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(true);
     expect(r2?.stage).toBe('code_critic');
   });
+
+  it('recovery: a nested passed+stage object inside the verdict never wins (top-level guard)', () => {
+    // The recovery must reject objects nested inside a valid JSON object, even
+    // when they echo the verdict shape (passed + stage).
+    const t1 = 'stray { {"passed": false, "detail": {"passed": true, "stage": "code_critic"}}';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+
+    const t2 = 'stray { {"passed": false, "stage": "code_critic", "findings": [{"category":"x","detail":"y","passed": true, "stage": "code_critic"}]}';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(false);
+    expect(r2?.stage).toBe('code_critic');
+  });
+
+  it('recovery: an array-wrapped staged echo never wins (bracket-depth guard)', () => {
+    const t1 = 'stray { {"passed": false, "stage": "code_critic", "findings": ["x"]} [{"passed": true, "stage": "code_critic"}]';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+  });
+
+  it('recovery: a stage-less verdict followed by a nested passed:true echo keeps the verdict', () => {
+    const t1 = [
+      'I checked the signature foo({ and the verdict:',
+      '{"passed": false}',
+      'Tool output: {"checks": {"lint": {"passed": true}}}',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+  });
+
+  it('recovery: a stray { balanced by a stray } after the verdict does not strand it', () => {
+    // The stack ends balanced (unbalanced=false) but the verdict is hidden
+    // behind the stray pair — the recovery must still run and find it.
+    const t1 = 'The signature is foo({ and the verdict: {"passed": true, "stage": "code_critic", "findings": []} and the closing brace }';
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(true);
+    expect(r1?.stage).toBe('code_critic');
+  });
 });
 
 describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
