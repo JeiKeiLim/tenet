@@ -82,16 +82,15 @@ const scanTopLevel = (
 /**
  * True when the object opened at `open` is "top-level-ish": not inside an
  * array, and not nested inside another VALID JSON object. An object nested
- * under a stray prose brace (whose enclosing slice is not valid JSON) IS
+ * under stray prose braces (whose enclosing slice is not valid JSON) IS
  * top-level-ish — that is the verdict the recovery exists to find. This
  * mirrors the strict scan's top-level invariant (scanTopLevel rejects nested
  * and array-wrapped objects) so the recovery cannot pick a nested finding or
  * tool echo over the real verdict.
  */
 const isTopLevelish = (text: string, open: number): boolean => {
-  let braceDepth = 0;
+  const stack: number[] = [];
   let bracketDepth = 0;
-  let enclosingOpen = -1;
   let inString = false;
   let escaped = false;
   for (let i = 0; i < open; i++) {
@@ -111,12 +110,9 @@ const isTopLevelish = (text: string, open: number): boolean => {
       continue;
     }
     if (ch === '{') {
-      if (braceDepth === 0) {
-        enclosingOpen = i;
-      }
-      braceDepth++;
+      stack.push(i);
     } else if (ch === '}') {
-      braceDepth--;
+      stack.pop();
     } else if (ch === '[') {
       bracketDepth++;
     } else if (ch === ']') {
@@ -126,27 +122,30 @@ const isTopLevelish = (text: string, open: number): boolean => {
   if (bracketDepth > 0) {
     return false;
   }
-  if (braceDepth === 0) {
+  if (stack.length === 0) {
     return true;
   }
-  if (braceDepth === 1 && enclosingOpen >= 0) {
-    const enclosingClose = findMatchingClose(text, enclosingOpen);
-    if (enclosingClose < 0) {
-      // Enclosing brace never closes — a stray prose brace; the object is the
-      // verdict behind it.
-      return true;
-    }
-    try {
-      JSON.parse(text.slice(enclosingOpen, enclosingClose + 1));
-      // Enclosing brace forms a valid object — the object is nested inside it.
-      return false;
-    } catch {
-      // Enclosing slice is prose braces (e.g. a stray { balanced by a stray })
-      // — the object is the verdict behind them.
-      return true;
-    }
+  // Nested under one or more {. Accept only if the INNERMOST enclosing brace
+  // is a stray (its slice is not valid JSON) — i.e. the object is the verdict
+  // behind prose braces. If the innermost enclosing brace forms a valid
+  // object, the object is nested inside it (a finding, a tool echo) and is
+  // never the verdict.
+  const enclosingOpen = stack[stack.length - 1];
+  const enclosingClose = findMatchingClose(text, enclosingOpen);
+  if (enclosingClose < 0) {
+    // Enclosing brace never closes — a stray prose brace; the object is the
+    // verdict behind it.
+    return true;
   }
-  return false;
+  try {
+    JSON.parse(text.slice(enclosingOpen, enclosingClose + 1));
+    // Enclosing brace forms a valid object — the object is nested inside it.
+    return false;
+  } catch {
+    // Enclosing slice is prose braces (e.g. a stray { balanced by a stray })
+    // — the object is the verdict behind them.
+    return true;
+  }
 };
 
 /**
@@ -260,27 +259,6 @@ const mergeStrictAndRecovered = (
   const recoveredStaged = recovered && typeof recovered.stage === 'string' ? recovered : null;
   const strictStaged = strictBest && typeof strictBest.stage === 'string' ? strictBest : null;
   return recoveredStaged ?? strictStaged ?? strictBest ?? recovered;
-};
-
-/**
- * Rightmost TOP-LEVEL JSON object in a string, preferring one that carries a
- * `stage` key (the e2e verdict shape). Used by tenet_get_status to surface
- * layer2_status from e2e critic output — a valid-JSON tool echo after the
- * verdict must not override it.
- */
-export const findRightmostTopLevelObject = (text: string): Record<string, unknown> | null => {
-  const { best, unbalanced } = scanTopLevel(text, () => true, (r) => typeof r.stage === 'string');
-  if (best && !unbalanced) {
-    return best;
-  }
-  // Either the stack is unbalanced (a stray brace may hide a better verdict)
-  // or the strict scan found nothing (e.g. a stray { balanced by a stray }
-  // strands the verdict). Run the recovery — isTopLevelish keeps it from
-  // picking nested objects.
-  return mergeStrictAndRecovered(
-    best,
-    recoverFromUnbalancedBraces(text, () => true, (r) => typeof r.stage === 'string'),
-  );
 };
 
 /**

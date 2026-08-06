@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractRubricJson, findRightmostTopLevelObject } from './rubric.js';
+import { extractRubricJson } from './rubric.js';
 
 describe('extractRubricJson', () => {
   it('returns a bare verdict object as-is', () => {
@@ -316,22 +316,41 @@ describe('extractRubricJson', () => {
     expect(r1?.passed).toBe(true);
     expect(r1?.stage).toBe('code_critic');
   });
+
+  it('recovery: a verdict behind TWO+ stray braces still wins over a passing echo', () => {
+    // isTopLevelish must accept the verdict behind any number of stray prose
+    // braces (e.g. a truncated `if (x) { if (y) {` snippet), not just one.
+    const t1 = [
+      'Tool output: {"passed": true, "tool": "pytest", "count": 12}',
+      'The code: if (x) { if (y) { and then the verdict:',
+      '{"passed": false, "stage": "code_critic", "findings": ["x"]}',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+
+    // No echo: the verdict behind two stray braces must still be found.
+    const t2 = 'The code: if (x) { if (y) { and then the verdict: {"passed": true, "stage": "code_critic", "findings": []}';
+    const r2 = extractRubricJson(t2);
+    expect(r2?.passed).toBe(true);
+    expect(r2?.stage).toBe('code_critic');
+  });
 });
 
-describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
+describe('tenet_get_status surface (extractRubricJson — the production parser)', () => {
   it('extracts layer2_status from e2e output with prose braces after the verdict', () => {
     const output = [
       'I explored the UI and ran the scripted checks.',
       '{"passed": true, "stage": "interaction_e2e", "layer2_status": "completed", "scripted_results": "all green"}',
       'Note: the fix touched { src/foo.ts } and { src/bar.ts }.',
     ].join('\n');
-    const parsed = findRightmostTopLevelObject(output);
+    const parsed = extractRubricJson(output);
     expect(parsed?.layer2_status).toBe('completed');
   });
 
   it('recovers layer2_status after an unbalanced { in prose', () => {
     const output = 'Note: { src/foo.ts and then {"passed": true, "stage": "interaction_e2e", "layer2_status": "completed"}';
-    const parsed = findRightmostTopLevelObject(output);
+    const parsed = extractRubricJson(output);
     expect(parsed?.layer2_status).toBe('completed');
   });
 
@@ -342,7 +361,7 @@ describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
       '{"passed": true, "stage": "interaction_e2e", "layer2_status": "completed"}',
       'Tool: {"layer2_status": "failed", "tool": "syntax-check"}',
     ].join('\n');
-    const r1 = findRightmostTopLevelObject(t1);
+    const r1 = extractRubricJson(t1);
     expect(r1?.layer2_status).toBe('completed');
 
     const t2 = [
@@ -351,7 +370,15 @@ describe('findRightmostTopLevelObject (tenet_get_status surface)', () => {
       '```',
       'Then I checked: {"note": "all good"}',
     ].join('\n');
-    const r2 = findRightmostTopLevelObject(t2);
+    const r2 = extractRubricJson(t2);
     expect(r2?.layer2_status).toBe('completed');
+  });
+
+  it('a verdict without a passed key drops layer2_status (fail-closed, matches the gate)', () => {
+    // tenet_get_status uses extractRubricJson, which requires `passed` — the
+    // same requirement as the resume gate. A malformed verdict without passed
+    // drops layer2_status rather than surfacing a value the gate would reject.
+    const output = '{"layer2_status": "completed", "stage": "interaction_e2e"}';
+    expect(extractRubricJson(output)).toBeNull();
   });
 });

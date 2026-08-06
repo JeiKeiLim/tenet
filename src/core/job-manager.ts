@@ -1041,8 +1041,17 @@ export class JobManager {
     if (!newestRoundId) return;
     const currentRound = byRound.get(newestRoundId) ?? [];
 
-    // Read this round's own expected_eval_stages stamp (shared by all its critics).
-    const stamp = currentRound.find((s) => Array.isArray(s.params.expected_eval_stages))?.params.expected_eval_stages;
+    // Read this round's own expected_eval_stages stamp (shared by all its
+    // critics). Only trust the stamp for a STAMPED round — an unstamped
+    // singleton (ad-hoc re-fire) could carry a self-serving single-stage stamp
+    // and satisfy the gate on one critic's verdict, defeating the whole-round
+    // invariant. Unstamped rounds always require the full DEFAULT_EVAL_STAGES.
+    const isStampedRound = currentRound.some(
+      (s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '',
+    );
+    const stamp = isStampedRound
+      ? currentRound.find((s) => Array.isArray(s.params.expected_eval_stages))?.params.expected_eval_stages
+      : undefined;
     const filteredStages = Array.isArray(stamp) && stamp.length > 0
       ? new Set(stamp.filter((st): st is string => typeof st === 'string'))
       : new Set(DEFAULT_EVAL_STAGES);
