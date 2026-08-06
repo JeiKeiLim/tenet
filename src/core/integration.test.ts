@@ -1592,6 +1592,153 @@ describe('integration: blocking finding auto-resume', () => {
     await manager.waitForJob(p.id, null, 5_000);
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C24 (per-stage): a partial stamp shared by 2+ ad-hoc re-fires cannot shrink the roster', async () => {
+    // All-legacy DB with unstamped originals. Two ad-hoc re-fires sharing a
+    // partial stamp must NOT become the consensus roster (a minority of the
+    // total siblings) and exclude a red stage.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // Original code_critic FAILS (served once), then the ad-hoc re-fires PASS.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      // test_critic FAILS (a red stage the partial stamp would exclude).
+      { match: matchers.evalStage('test_critic'), fixture: 'critic-failing-with-findings.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    // Original round (no eval_round, NO expected_eval_stages — legacy shape):
+    // code FAILS, test FAILS, interaction PASSES.
+    const c = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      prompt: 'Code Critic review',
+    });
+    const t = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      prompt: 'Test Critic review',
+    });
+    const p = manager.startJob('interaction_e2e', {
+      source_job_id: childId,
+      eval_stage: 'interaction_e2e',
+      prompt: 'Interaction E2E eval',
+    });
+    await manager.waitForJob(c.id, null, 5_000);
+    await manager.waitForJob(t.id, null, 5_000);
+    await manager.waitForJob(p.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+
+    // Two ad-hoc re-fires (code + interaction) sharing a partial stamp that
+    // excludes the red test_critic. Both PASS. The partial stamp is a minority
+    // of the 5 siblings — it must NOT become the consensus roster.
+    const partial = ['code_critic', 'interaction_e2e'];
+    const adHocC = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      expected_eval_stages: partial,
+      prompt: 'Code Critic review — partial-stamp re-fire',
+    });
+    const adHocP = manager.startJob('interaction_e2e', {
+      source_job_id: childId,
+      eval_stage: 'interaction_e2e',
+      expected_eval_stages: partial,
+      prompt: 'Interaction E2E review — partial-stamp re-fire',
+    });
+    await manager.waitForJob(adHocC.id, null, 5_000);
+    await manager.waitForJob(adHocP.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
+
+  it('C25 (round-id): an unstamped red critic created BETWEEN a round\'s critics forces the gate to wait', async () => {
+    // The round gate keys on the round's START (min createdAt). An unstamped
+    // ad-hoc created between a stamped round's critics (after the round
+    // started, before its last critic) is a newer evaluation and must not be
+    // invisible — otherwise the parent unblocks on the round's stale green.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      // Round-1 code_critic PASSES (served once), then the ad-hoc re-fire FAILS.
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json', maxUses: 1 },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    const stamp = (round: string, stage: string) => {
+      const promptLabel = stage === 'code_critic' ? 'Code Critic'
+        : stage === 'test_critic' ? 'Test Critic'
+        : 'Interaction E2E';
+      return {
+        source_job_id: childId,
+        eval_stage: stage,
+        eval_round: round,
+        expected_eval_stages: ['code_critic', 'test_critic', 'interaction_e2e'],
+        prompt: `${promptLabel} review — stage: ${stage}`,
+      };
+    };
+
+    // Round-1 (stamped): all green. Ad-hoc unstamped code_critic re-fire
+    // (RED) created after the round started. Force distinct created_at so the
+    // ad-hoc lands BETWEEN the round's critics (round start t, ad-hoc t+1,
+    // round's last critic t+2).
+    const r1c = manager.startJob('critic_eval', stamp('round-1', 'code_critic'));
+    const r1t = manager.startJob('eval', stamp('round-1', 'test_critic'));
+    const r1p = manager.startJob('interaction_e2e', stamp('round-1', 'interaction_e2e'));
+    const adHoc = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      prompt: 'Code Critic review — ad-hoc re-fire',
+    });
+    const db = (store as unknown as { db: { prepare: (sql: string) => { run: (...a: unknown[]) => void } } }).db;
+    const t0 = store.getJob(r1c.id)?.createdAt ?? Date.now();
+    db.prepare('UPDATE jobs SET created_at = ? WHERE id = ?').run(t0, r1c.id);
+    db.prepare('UPDATE jobs SET created_at = ? WHERE id = ?').run(t0, r1t.id);
+    db.prepare('UPDATE jobs SET created_at = ? WHERE id = ?').run(t0 + 1, adHoc.id);
+    db.prepare('UPDATE jobs SET created_at = ? WHERE id = ?').run(t0 + 2, r1p.id);
+
+    await manager.waitForJob(r1c.id, null, 5_000);
+    await manager.waitForJob(r1t.id, null, 5_000);
+    await manager.waitForJob(r1p.id, null, 5_000);
+    await manager.waitForJob(adHoc.id, null, 5_000);
+
+    // The ad-hoc (t+1) is newer than the round's start (t) — the gate must
+    // wait, not unblock on the round's stale green.
+    expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

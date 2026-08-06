@@ -990,10 +990,11 @@ export class JobManager {
         best = entry;
       }
     }
-    // A stamp shared by only ONE sibling while others are unstamped (a
-    // self-serving partial stamp on a single ad-hoc re-fire against unstamped
-    // legacy originals) must not become the roster — fall back to DEFAULT.
-    if (best && (best.count > 1 || unstampedCount === 0)) {
+    // Adopt the stamp only when it is shared by a MAJORITY of the total
+    // siblings (or all siblings are stamped). A partial stamp shared by a
+    // minority of ad-hoc re-fires against unstamped legacy originals must not
+    // become the roster — fall back to DEFAULT.
+    if (best && (best.count > siblings.length / 2 || unstampedCount === 0)) {
       return new Set(best.stages);
     }
     return new Set(DEFAULT_EVAL_STAGES);
@@ -1078,11 +1079,17 @@ export class JobManager {
     let newestRoundId = '';
     let newestCreatedAt = -1;
     for (const [roundId, jobs] of byRound) {
-      const maxCreated = jobs.reduce((m, j) => (j.createdAt > m ? j.createdAt : m), -1);
+      // Key on the round's START (min createdAt), not its max: a round's
+      // source state is its dispatch time, and an unstamped ad-hoc critic
+      // created BETWEEN a round's critics (after the round started but before
+      // its last critic) is a newer evaluation that must force the gate to
+      // wait — with max-based selection it would be invisible (the round's
+      // max beats it).
+      const minCreated = jobs.reduce((m, j) => (j.createdAt < m ? j.createdAt : m), Infinity);
       // >= (not >): on a same-ms tie, keep the later-seen round (iteration
       // order is createdAt ASC), never the stale one.
-      if (maxCreated >= newestCreatedAt) {
-        newestCreatedAt = maxCreated;
+      if (minCreated >= newestCreatedAt) {
+        newestCreatedAt = minCreated;
         newestRoundId = roundId;
       }
     }
