@@ -1,0 +1,74 @@
+[
+  {
+    "id": "case-01",
+    "type": "critic_eval",
+    "output": "I reviewed the changes and found no in-scope blockers. The implementation matches the spec.\n\n## Verdict\n\n{\"passed\": true, \"stage\": \"code_critic\", \"findings\": []}",
+    "expected": { "passed": true, "stage": "code_critic" }
+  },
+  {
+    "id": "case-02",
+    "type": "eval",
+    "output": "No findings. The strengthened regression test covers the previously-missed edge case.\n\n## Test Critic Verdict: PASS\n\n{\"passed\": true, \"stage\": \"test_critic\", \"findings\": [], \"missing_tests\": []}",
+    "expected": { "passed": true, "stage": "test_critic" }
+  },
+  {
+    "id": "case-03",
+    "type": "critic_eval",
+    "output": "{\"passed\": false, \"stage\": \"code_critic\", \"findings\": [{\"category\": \"product_bug\", \"detail\": \"the retry path does not handle the timeout case\"}]}",
+    "expected": { "passed": false, "stage": "code_critic" }
+  },
+  {
+    "id": "case-04",
+    "type": "critic_eval",
+    "output": "Findings:\n- `product_bug`: the config loader ignores unknown keys instead of failing\n- `product_bug`: the redaction hook runs after the audit log is written\n\n{\"passed\": false, \"stage\": \"code_critic\", \"findings\": [{\"category\": \"product_bug\", \"detail\": \"config loader ignores unknown keys\"}]}",
+    "expected": { "passed": false, "stage": "code_critic" }
+  },
+  {
+    "id": "case-05",
+    "type": "eval",
+    "output": "Verdict: FAIL. The regression tests called out in the retry are still missing coverage for the empty-input path.\n\n{\"passed\": false, \"stage\": \"test_critic\", \"findings\": [{\"category\": \"test_bug\", \"detail\": \"empty-input path untested\"}], \"missing_tests\": [\"test_empty_input\"]}",
+    "expected": { "passed": false, "stage": "test_critic" }
+  },
+  {
+    "id": "case-06",
+    "type": "interaction_e2e",
+    "output": "Surface: `cli` / runtime tests. Harness policy explicitly maps the CLI surface to scripted checks.\n\n{\"passed\": true, \"stage\": \"playwright_eval\", \"surface\": \"cli\", \"layer2_status\": \"completed\", \"scripted_results\": \"all green\", \"exploratory_findings\": [], \"screenshots\": []}",
+    "expected": { "passed": true, "stage": "playwright_eval" }
+  },
+  {
+    "id": "case-07",
+    "type": "critic_eval",
+    "output": "I have everything I need. Let me record my independent verification before delivering the verdict.\n\n## Code Critic — Purpose Alignment Verdict\n\nI hand-traced all the requirements against the committed config. The install step guard checks `'uv tool install \"the-package' is not present in the run command — the substring check is the regression guard.\n\n### Second-pass (alternate angles, zero-findings rule)\n\n{\"passed\": true, \"stage\": \"code_critic\", \"findings\": []}",
+    "expected": { "passed": true, "stage": "code_critic" }
+  },
+  {
+    "id": "case-08",
+    "type": "eval",
+    "output": "{\"passed\": true, \"stage\": \"test_critic\", \"findings\": [], \"missing_tests\": []}",
+    "expected": { "passed": true, "stage": "test_critic" }
+  },
+  {
+    "id": "case-09",
+    "type": "interaction_e2e",
+    "output": "Surface: CLI/scripted with the pilot tests for the TUI. The scripted checks all pass.\n\n{\"passed\": true, \"stage\": \"playwright_eval\", \"surface\": \"cli\", \"layer2_status\": \"completed\", \"scripted_results\": \"all green\", \"exploratory_findings\": [], \"screenshots\": []}",
+    "expected": { "passed": true, "stage": "playwright_eval" }
+  },
+  {
+    "id": "case-10",
+    "type": "interaction_e2e",
+    "output": "**Eval Result**\nSurface: `cli`. Harness policy: the CLI surface is scripted. The scripted checks fail on the error path.\n\n{\"passed\": false, \"stage\": \"playwright_eval\", \"surface\": \"cli\", \"layer2_status\": \"failed\", \"scripted_results\": \"2 failed\", \"exploratory_findings\": [\"error path not handled\"], \"screenshots\": []}",
+    "expected": { "passed": false, "stage": "playwright_eval" }
+  },
+  {
+    "id": "case-11",
+    "type": "eval",
+    "output": "The targeted regression test is sufficient for this job scope. The fix is covered.\n\n{\"passed\": true, \"stage\": \"test_critic\", \"findings\": [], \"missing_tests\": []}",
+    "expected": { "passed": true, "stage": "test_critic" }
+  },
+  {
+    "id": "case-12",
+    "type": "eval",
+    "output": "{\"type\":\"step_start\",\"timestamp\":1783582108303,\"sessionID\":\"ses_000000000000000000000000000000000000\",\"part\":{\"id\":\"prt_a\",\"messageID\":\"msg_a\",\"type\":\"step-start\"}}\n{\"type\":\"text\",\"timestamp\":1783582108400,\"sessionID\":\"ses_000000000000000000000000000000000000\",\"part\":{\"id\":\"prt_b\",\"messageID\":\"msg_b\",\"type\":\"text\",\"text\":\"I reviewed the code.\"}}\n{\"type\":\"step_finish\",\"timestamp\":1783582108500,\"sessionID\":\"ses_000000000000000000000000000000000000\",\"part\":{\"id\":\"prt_c\",\"reason\":\"stop\",\"messageID\":\"msg_b\",\"type\":\"step-finish\"}}",
+    "expected": null
+  }
+]
