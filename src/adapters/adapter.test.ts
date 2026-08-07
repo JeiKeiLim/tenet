@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
 import { vi } from 'vitest';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 import { AdapterRegistry, parseAdapterExtraArgs } from './index.js';
@@ -205,5 +207,258 @@ describe('adapter extraArgs passthrough', () => {
     const argv = spawnMock.mock.calls[0][1] as string[];
     expect(argv).not.toContain('--sandbox');
     expect(argv[1]).toBe('--dangerously-bypass-approvals-and-sandbox');
+  });
+});
+
+describe('OpenCodeAdapter NDJSON output collapse', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  const fixturePath = path.resolve(
+    __dirname,
+    '..',
+    '..',
+    'tests',
+    'fixtures',
+    'fake-agents',
+    'opencode-ndjson-text-parts.json',
+  );
+
+  it('collapses the event stream into text-part contents (prose + trailing verdict)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    spawnMock.mockImplementation(() => makeFakeChild(0, ndjson));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(true);
+    expect(response.output).toContain('All 12 tests pass.');
+    expect(response.output).toContain('"passed": true');
+    // Raw NDJSON event framing must not leak through.
+    expect(response.output).not.toContain('"type":"step_start"');
+    expect(response.output).not.toContain('"type":"tool_use"');
+  });
+
+  it('joins multiple text events in stream order (real streams emit many)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    spawnMock.mockImplementation(() => makeFakeChild(0, ndjson));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    const zeroFindings = response.output.indexOf('zero-findings recheck');
+    const verdict = response.output.indexOf('All 12 tests pass');
+    expect(zeroFindings).toBeGreaterThanOrEqual(0);
+    expect(verdict).toBeGreaterThan(zeroFindings);
+  });
+
+  it('end-to-end: collapsed output yields a passed rubric through extractRubricJson', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    spawnMock.mockImplementation(() => makeFakeChild(0, ndjson));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    // The real production parser — not a mirror. Mirrors drift.
+    const { extractRubricJson } = await import('../core/rubric.js');
+    const parsed = extractRubricJson(response.output);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.passed).toBe(true);
+    expect(parsed?.stage).toBe('code_critic');
+  });
+
+  it('preserves the verdict even when the final line is truncated (context-limit tail)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    // Cut mid-event: a context-limit kill can truncate the stream before the
+    // final step_finish. The text part (with the rubric) must still survive.
+    const truncated = ndjson.split('\n').slice(0, -1).join('\n') + '\n{"type":"step_finish","timestamp":1785417871';
+    spawnMock.mockImplementation(() => makeFakeChild(0, truncated));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(true);
+    expect(response.output).toContain('"passed": true');
+  });
+
+  it('falls back to raw stdout when no text part parses', async () => {
+    const garbage = 'opencode: something went wrong\n{"type":"error","message":"boom"';
+    spawnMock.mockImplementation(() => makeFakeChild(0, garbage));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'hi' });
+
+    expect(response.output).toBe(garbage);
+  });
+
+  it('skips valid-JSON non-event lines (null, numbers) without crashing', async () => {
+    const mixed = 'null\n42\n{"type":"step_start"}\n{"type":"text","part":{"text":"verdict here"}}';
+    spawnMock.mockImplementation(() => makeFakeChild(0, mixed));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'hi' });
+
+    expect(response.success).toBe(true);
+    expect(response.output).toBe('verdict here');
+  });
+
+  it('skips text events whose part.text is not a string (shape-change guard)', async () => {
+    // The typeof guard is the load-bearing line against a future opencode
+    // shape change (e.g. part.text becoming an object). A truthy check would
+    // push a non-string into parts and emit "[object Object]" into the output
+    // that feeds rubric extraction — this test pins the guard.
+    const mixed = [
+      '{"type":"text","part":{"text":{"nested":true}}}',
+      '{"type":"text","part":{"text":42}}',
+      '{"type":"text","part":{"text":"real verdict here"}}',
+    ].join('\n');
+    spawnMock.mockImplementation(() => makeFakeChild(0, mixed));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'hi' });
+
+    expect(response.success).toBe(true);
+    expect(response.output).toBe('real verdict here');
+    expect(response.output).not.toContain('[object Object]');
+  });
+
+  it('verdict survives a later text event containing real braces (extractRubricJson scan)', async () => {
+    const stream = [
+      '{"type":"step_start","part":{"id":"a","type":"step-start"}}',
+      '{"type":"text","part":{"text":"{\\"passed\\": true, \\"stage\\": \\"code_critic\\", \\"findings\\": []}"}}',
+      '{"type":"text","part":{"text":"Note: the fix touched { src/foo.ts } and { src/bar.ts } (see commit 4b8b12f)."}}',
+      '{"type":"step_finish","part":{"id":"b","reason":"stop","type":"step-finish"}}',
+    ].join('\n');
+    spawnMock.mockImplementation(() => makeFakeChild(0, stream));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    const { extractRubricJson } = await import('../core/rubric.js');
+    const parsed = extractRubricJson(response.output);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.passed).toBe(true);
+  });
+
+  it('extractRubricJson ignores a trailing object without a passed key', async () => {
+    const { extractRubricJson } = await import('../core/rubric.js');
+    const output = [
+      'I reviewed the diff. Verdict:',
+      '{"passed": true, "stage": "code_critic", "findings": []}',
+      '{"note": "this is a trailing note, not a verdict"}',
+    ].join('\n');
+    const parsed = extractRubricJson(output);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.passed).toBe(true);
+    expect(parsed?.stage).toBe('code_critic');
+  });
+
+  it('extractRubricJson returns null when no object has a passed key', async () => {
+    const { extractRubricJson } = await import('../core/rubric.js');
+    const output = 'I began my review but ran out of context before finishing.';
+    expect(extractRubricJson(output)).toBeNull();
+  });
+
+  it('extractRubricJson never picks a nested passed object over the top-level verdict', async () => {
+    const { extractRubricJson } = await import('../core/rubric.js');
+
+    // t1: failing verdict + trailing tool result with nested passed:true —
+    // must return the FAILING verdict, not false-green the gate.
+    const t1 = [
+      'V: {"passed": false, "stage": "code_critic", "findings": [{"category":"product_bug","detail":"x"}]}',
+      'Tool output: {"results": [{"name": "syntax", "passed": true}]}',
+    ].join('\n');
+    const r1 = extractRubricJson(t1);
+    expect(r1).not.toBeNull();
+    expect(r1?.passed).toBe(false);
+    expect(r1?.stage).toBe('code_critic');
+
+    // t2: passing verdict + trailing object with nested passed:false —
+    // must return the PASSING verdict, not false-strand the parent.
+    const t2 = [
+      'V: {"passed": true, "stage": "code_critic", "findings": []}',
+      '{"checks": {"lint": {"passed": false}}}',
+    ].join('\n');
+    const r2 = extractRubricJson(t2);
+    expect(r2).not.toBeNull();
+    expect(r2?.passed).toBe(true);
+    expect(r2?.stage).toBe('code_critic');
+  });
+
+  it('extractRubricJson handles the custom-critic shape (nested assertions in the top-level verdict)', async () => {
+    const { extractRubricJson } = await import('../core/rubric.js');
+    const output = JSON.stringify({
+      passed: true,
+      stage: 'credit_ledger_integrity',
+      assertions: [
+        { name: 'append_only', passed: true, evidence: 'ledger is append-only' },
+        { name: 'audit_fields', passed: true, evidence: 'created_at set' },
+      ],
+      findings: [],
+    });
+    const parsed = extractRubricJson(output);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.passed).toBe(true);
+    expect(parsed?.stage).toBe('credit_ledger_integrity');
+  });
+
+  it('collapses NDJSON on a non-zero exit (failure path)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    spawnMock.mockImplementation(() => makeFakeChild(1, ndjson));
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(false);
+    // The collapse applies on failure paths too (documented divergence from
+    // claude/codex, which return raw stdout).
+    expect(response.output).toContain('"passed": true');
+    expect(response.output).not.toContain('"type":"step_start"');
+  });
+
+  it('collapses NDJSON on a spawn error (failure path)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    const child = new EventEmitter() as FakeChild;
+    child.stdin = { write: () => undefined, end: () => undefined };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => undefined;
+    setImmediate(() => {
+      child.stdout.emit('data', Buffer.from(ndjson));
+      child.emit('error', new Error('spawn ENOENT'));
+    });
+    spawnMock.mockImplementation(() => child);
+
+    const adapter = new OpenCodeAdapter();
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(false);
+    expect(response.output).toContain('"passed": true');
+  });
+
+  it('collapses NDJSON on a timeout (failure path)', async () => {
+    const ndjson = fs.readFileSync(fixturePath, 'utf8');
+    const child = new EventEmitter() as FakeChild;
+    child.stdin = { write: () => undefined, end: () => undefined };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    // The adapter's timeout handler kills the child; a real child then emits
+    // 'close'. Emit it so the promise resolves through the timedOut branch.
+    child.kill = () => {
+      setImmediate(() => child.emit('close', 1));
+    };
+    setImmediate(() => {
+      child.stdout.emit('data', Buffer.from(ndjson));
+      // Never emit 'close' on our own — the adapter's timeout must fire.
+    });
+    spawnMock.mockImplementation(() => child);
+
+    const adapter = new OpenCodeAdapter(50);
+    const response = await adapter.invoke({ prompt: 'review this' });
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('timed out');
+    expect(response.output).toContain('"passed": true');
   });
 });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { JobManager } from '../../core/job-manager.js';
+import { extractRubricJson } from '../../core/rubric.js';
 import { StateStore } from '../../core/state-store.js';
 import { checkForUpdate } from '../../core/update-checker.js';
 import type { Job, JobStatus, ProjectStatus } from '../../types/index.js';
@@ -19,32 +20,16 @@ const extractRawOutput = (output: unknown): string | undefined => {
 
 const extractJsonObject = (raw: string | undefined): Record<string, unknown> | undefined => {
   if (!raw) return undefined;
-  const stripped = raw.trim();
-  const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidates = fenced ? [fenced[1].trim(), stripped] : [stripped];
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object') {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      /* continue */
-    }
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        const parsed = JSON.parse(candidate.slice(start, end + 1));
-        if (parsed && typeof parsed === 'object') {
-          return parsed as Record<string, unknown>;
-        }
-      } catch {
-        /* continue */
-      }
-    }
-  }
-  return undefined;
+  // The SAME parser the resume gate uses (extractRubricJson) — the e2e verdict
+  // carries both `passed` and `layer2_status`, so the two consumers select the
+  // same object from the same stored output. (They still select different JOBS:
+  // this surface keys on the most recently completed interaction_e2e, while the
+  // gate keys on the newest round when a stamped round exists, or the newest
+  // critic per stage in the all-legacy fallback — a slow old-round e2e
+  // completing late can surface a stale layer2_status.) The old first-{ to
+  // last-} slice spanned multiple objects/prose and dropped layer2_status
+  // whenever prose contained braces.
+  return extractRubricJson(raw) ?? undefined;
 };
 
 const findLatestE2eStatus = (stateStore: StateStore): string | undefined => {

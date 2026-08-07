@@ -2,6 +2,55 @@ import spawn from 'cross-spawn';
 import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 
+/**
+ * opencode --format json emits a stream of NDJSON events (step_start, tool_use,
+ * text, step_finish...). The assistant's actual message content lives in the
+ * `text` events' `part.text`. Collapse the stream into those text parts joined
+ * by newlines so downstream consumers (rubric extraction, job_result, worker
+ * output) see plain text like the claude adapter produces — not raw event
+ * bytes. Returns null when no text part parsed (e.g. an error banner or empty
+ * stdout) so callers can fall back to the raw stream.
+ *
+ * NOTE: the collapse is applied on ALL resolve paths (success, timeout,
+ * non-zero exit, spawn error), unlike the claude/codex adapters which return
+ * raw stdout on failure. This is deliberate (a partial NDJSON stream is more
+ * useful collapsed), but it means a failed opencode job's stored output drops
+ * the raw event stream (including any error-type event) — observability only,
+ * since rubric extraction runs only on success.
+ *
+ * Schema pin: this matches the event shape opencode emits today (each line is
+ * `{"type":"text", ..., "part":{"type":"text","text":"..."}}`). If a future
+ * opencode bump changes the part shape (e.g. a `parts[]` array), this collapse
+ * silently degrades to the raw-stream fallback — the fixture
+ * `tests/fixtures/fake-agents/opencode-ndjson-text-parts.json` and the
+ * end-to-end test in `src/adapters/adapter.test.ts` will catch it. Re-verify
+ * against live output when bumping opencode.
+ */
+export const extractTextPartsFromNdjson = (stdout: string): string | null => {
+  const parts: string[] = [];
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) {
+      continue;
+    }
+    let event: unknown;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      // Skip malformed lines — a context-limit kill can truncate the tail mid-event.
+      continue;
+    }
+    if (!event || typeof event !== 'object') {
+      // Valid JSON that isn't an event object (e.g. `null`, numbers) — skip.
+      continue;
+    }
+    const record = event as { type?: unknown; part?: { text?: unknown } };
+    if (record.type === 'text' && typeof record.part?.text === 'string') {
+      parts.push(record.part.text);
+    }
+  }
+  return parts.length > 0 ? parts.join('\n') : null;
+};
+
 export class OpenCodeAdapter implements AgentAdapter {
   public readonly name = 'opencode';
   private readonly timeoutMs: number;
@@ -54,7 +103,7 @@ export class OpenCodeAdapter implements AgentAdapter {
         if (timedOut) {
           resolve({
             success: false,
-            output: stdout,
+            output: extractTextPartsFromNdjson(stdout) ?? stdout,
             error: `opencode invocation timed out after ${effectiveTimeout}ms`,
             durationMs,
           });
@@ -63,7 +112,7 @@ export class OpenCodeAdapter implements AgentAdapter {
 
         resolve({
           success: code === 0,
-          output: stdout,
+          output: extractTextPartsFromNdjson(stdout) ?? stdout,
           error: code === 0 ? undefined : stderr || `opencode exited with code ${code ?? 'unknown'}`,
           durationMs,
         });
@@ -73,7 +122,7 @@ export class OpenCodeAdapter implements AgentAdapter {
         clearTimeout(timeout);
         resolve({
           success: false,
-          output: stdout,
+          output: extractTextPartsFromNdjson(stdout) ?? stdout,
           error: error.message,
           durationMs: Date.now() - startedAt,
         });

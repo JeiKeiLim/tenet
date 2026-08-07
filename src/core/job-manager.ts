@@ -12,6 +12,7 @@ import {
 import { StateStore } from './state-store.js';
 import { DEFAULT_EVAL_STAGES } from './critic-roster.js';
 import { readArtifactFile, type ArtifactPaths } from './artifact-paths.js';
+import { extractRubricJson } from './rubric.js';
 
 /**
  * Extract a typed {@link ArtifactPaths} from an untyped `job.params.artifact_paths`
@@ -68,52 +69,23 @@ type JobManagerConfig = {
 
 const TERMINAL_STATUSES = new Set<Job['status']>(['completed', 'failed', 'cancelled']);
 
+/**
+ * Window for grouping legacy (unstamped) eval critics into "cohorts" in the
+ * per-stage fallback gate. A full re-evaluation dispatches all critics
+ * synchronously (ms apart); a single ad-hoc re-fire via tenet_start_job is a
+ * separate dispatch created later. The newest critic per stage must be created
+ * within this window of the completing critic, or the round is a partial
+ * re-evaluation and the gate stays closed. Kept small (1s) to narrow the
+ * blind spot for re-fires created shortly after the round — a heuristic, since
+ * the per-stage path has no round ids to distinguish a full re-evaluation from
+ * a partial re-fire.
+ */
+const COHORT_WINDOW_MS = 1_000;
+
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-
-const extractRubricJson = (rawOutput: unknown): Record<string, unknown> | null => {
-  if (rawOutput && typeof rawOutput === 'object') {
-    return rawOutput as Record<string, unknown>;
-  }
-
-  if (typeof rawOutput !== 'string') {
-    return null;
-  }
-
-  const stripped = rawOutput.trim();
-  const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidates = fenced ? [fenced[1].trim(), stripped] : [stripped];
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object') {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Try next candidate
-    }
-
-    // Fallback: locate the outermost JSON object substring
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        const sliced = candidate.slice(start, end + 1);
-        const parsed = JSON.parse(sliced);
-        if (parsed && typeof parsed === 'object') {
-          return parsed as Record<string, unknown>;
-        }
-      } catch {
-        // Give up
-      }
-    }
-  }
-
-  return null;
-};
 
 export class JobManager {
   private readonly stateStore: StateStore;
@@ -974,14 +946,56 @@ export class JobManager {
    * project's `.tenet/critics.json` roster — so disabling a built-in or adding a
    * custom critic shrinks/grows the set). Sibling jobs from before that stamping
    * existed fall back to the 3 built-ins.
+   *
+   * When a source job was evaluated multiple times (re-fired `tenet_start_eval`
+   * after retries), the stamp shared by the MOST siblings is authoritative — the
+   * roster at dispatch. A legitimate dispatch stamps every critic identically,
+   * so a self-serving partial stamp on a single ad-hoc re-fire cannot shrink
+   * the roster (a disabled built-in or a custom critic shrinks/grows the set
+   * consistently across all critics of a dispatch).
    */
   private resolveExpectedEvalStages(sourceJobId: string): Set<string> {
     const siblings = this.stateStore.getEvalsForSource(sourceJobId);
+    // Use the expected_eval_stages stamp shared by the MOST siblings — the
+    // roster at dispatch. A legitimate dispatch stamps every critic with the
+    // same roster (so a disabled built-in or a custom critic shrinks/grows the
+    // set consistently); a self-serving partial stamp on a single ad-hoc
+    // re-fire must not override it, or the gate would exclude a red stage and
+    // unblock on a partial re-evaluation. Falls back to DEFAULT_EVAL_STAGES
+    // when no stamp is shared.
+    const counts = new Map<string, { stages: string[]; count: number }>();
+    let unstampedCount = 0;
     for (const s of siblings) {
       const stamped = s.params.expected_eval_stages;
-      if (Array.isArray(stamped) && stamped.length > 0) {
-        return new Set(stamped.filter((stage): stage is string => typeof stage === 'string'));
+      if (!Array.isArray(stamped) || stamped.length === 0) {
+        unstampedCount++;
+        continue;
       }
+      const stages = stamped.filter((st): st is string => typeof st === 'string');
+      if (stages.length === 0) {
+        unstampedCount++;
+        continue;
+      }
+      const key = stages.join(',');
+      const entry = counts.get(key);
+      if (entry) {
+        entry.count++;
+      } else {
+        counts.set(key, { stages, count: 1 });
+      }
+    }
+    let best: { stages: string[]; count: number } | undefined;
+    for (const entry of counts.values()) {
+      if (!best || entry.count > best.count) {
+        best = entry;
+      }
+    }
+    // Adopt the stamp only when it is shared by a MAJORITY of the total
+    // siblings (or all siblings are stamped). A partial stamp shared by a
+    // minority of ad-hoc re-fires against unstamped legacy originals must not
+    // become the roster — fall back to DEFAULT.
+    if (best && (best.count > siblings.length / 2 || unstampedCount === 0)) {
+      return new Set(best.stages);
     }
     return new Set(DEFAULT_EVAL_STAGES);
   }
@@ -1015,6 +1029,142 @@ export class JobManager {
       return;
     }
 
+    const siblings = this.stateStore.getEvalsForSource(sourceJobId);
+
+    // Round-based resume gate. `tenet_start_eval` stamps every critic in one
+    // dispatch with a shared `eval_round` id. A re-fire (after a child retry)
+    // gets a fresh id. Only the NEWEST round ever decides the gate — every
+    // critic in a round evaluated the same source state, so requiring the
+    // whole round to pass avoids mixing verdicts across code revisions (the
+    // "green gate, still wrong code" failure). The gate runs whenever at least
+    // one stamped round exists; unstamped siblings (ad-hoc re-fires via
+    // tenet_start_job, legacy pre-stamp evals) become singleton rounds inside
+    // the round gate, so a NEWER unstamped critic forces the gate to wait for
+    // a fresh stamped round (fail-closed) instead of being invisible — a red
+    // ad-hoc re-fire must not be ignored while the parent unblocks on an older
+    // round's stale green. Only when NO sibling is stamped (all-legacy DB) do
+    // we fall back to per-stage-newest so old stuck parents still recover.
+    const hasStampedRound =
+      siblings.length > 0 &&
+      siblings.some((s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '');
+    if (hasStampedRound) {
+      this.checkBlockingFindingResumeByRound(siblings, blockedParentId, sourceJobId);
+      return;
+    }
+
+    // Fallback: per-stage-newest (pre-round-id behavior).
+    this.checkBlockingFindingResumeByStage(completedJob, siblings, sourceJobId, completedStage, rawOutput, blockedParentId);
+  }
+
+  private checkBlockingFindingResumeByRound(
+    siblings: Job[],
+    blockedParentId: string,
+    sourceJobId: string,
+  ): void {
+    // Group by round id; pick the newest round by its START (min createdAt of
+    // its critics) — see the selection loop below.
+    // Unstamped siblings (ad-hoc re-fires via tenet_start_job, legacy pre-stamp
+    // evals) become singleton rounds keyed by job id. A singleton can never
+    // satisfy "every expected stage present", so a NEWER unstamped critic
+    // forces the gate to wait for a fresh stamped round (fail-closed) instead
+    // of being invisible — otherwise a red ad-hoc re-fire could be ignored
+    // while the parent unblocks on an older round's stale green.
+    const byRound = new Map<string, Job[]>();
+    for (const s of siblings) {
+      const stamped = typeof s.params.eval_round === 'string' && s.params.eval_round !== '';
+      const roundId = stamped ? (s.params.eval_round as string) : `__unstamped__${s.id}`;
+      const arr = byRound.get(roundId) ?? [];
+      arr.push(s);
+      byRound.set(roundId, arr);
+    }
+    let newestRoundId = '';
+    let newestCreatedAt = -1;
+    for (const [roundId, jobs] of byRound) {
+      // Key on the round's START (min createdAt), not its max: a round's
+      // source state is its dispatch time, and an unstamped ad-hoc critic
+      // created BETWEEN a round's critics (after the round started but before
+      // its last critic) is a newer evaluation that must force the gate to
+      // wait — with max-based selection it would be invisible (the round's
+      // max beats it).
+      const minCreated = jobs.reduce((m, j) => (j.createdAt < m ? j.createdAt : m), Infinity);
+      // >= (not >): on a same-ms tie, keep the later-seen round (iteration
+      // order is createdAt ASC), never the stale one.
+      if (minCreated >= newestCreatedAt) {
+        newestCreatedAt = minCreated;
+        newestRoundId = roundId;
+      }
+    }
+    if (!newestRoundId) return;
+    const currentRound = byRound.get(newestRoundId) ?? [];
+
+    // Read this round's own expected_eval_stages stamp (shared by all its
+    // critics). A STAMPED round — multi-critic or singleton — trusts its own
+    // stamp: a legitimate dispatch stamps every critic with the CURRENT
+    // roster, so a roster shrink between rounds (a built-in disabled) is
+    // honored and a 1-critic roster is not stranded against an older round's
+    // larger roster or the full DEFAULT_EVAL_STAGES. An UNSTAMPED round
+    // (ad-hoc re-fire) always requires the full DEFAULT_EVAL_STAGES.
+    // KNOWN LIMITATION: a FORGED stamped round (ad-hoc re-fires via
+    // tenet_start_job carrying a made-up eval_round + a self-serving partial
+    // stamp) is trusted outright — defense-in-depth, since a determined caller
+    // could instead create a full passing round and unblock legitimately.
+    const isStampedRound = currentRound.some(
+      (s) => typeof s.params.eval_round === 'string' && s.params.eval_round !== '',
+    );
+    const stamp = isStampedRound
+      ? currentRound.find((s) => Array.isArray(s.params.expected_eval_stages))?.params.expected_eval_stages
+      : undefined;
+    const filteredStages = Array.isArray(stamp) && stamp.length > 0
+      ? new Set(stamp.filter((st): st is string => typeof st === 'string'))
+      : undefined;
+    // A stamp that filters to an empty set (malformed non-string entries) must
+    // NOT produce an empty expectedStages — both the stage-presence loop and
+    // the completion loop would pass trivially and the gate would fail open.
+    const expectedStages = filteredStages && filteredStages.size > 0
+      ? filteredStages
+      : new Set(DEFAULT_EVAL_STAGES);
+
+    const presentStages = new Set(
+      currentRound
+        .map((s) => (typeof s.params.eval_stage === 'string' ? s.params.eval_stage : ''))
+        .filter((st) => expectedStages.has(st)),
+    );
+    for (const expected of expectedStages) {
+      if (!presentStages.has(expected)) return;
+    }
+
+    for (const s of currentRound) {
+      const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
+      if (!expectedStages.has(stage)) continue;
+      if (s.status !== 'completed') return;
+      const siblingOutput = this.stateStore.getJobOutput(s.id);
+      const rawSibling = this.extractAdapterRawOutput(siblingOutput);
+      const parsed = extractRubricJson(rawSibling);
+      if (!parsed || parsed.passed !== true) return;
+    }
+
+    // Newest round fully passed — let the report-only parent run again.
+    this.stateStore.updateJob(blockedParentId, {
+      status: 'pending',
+      startedAt: undefined,
+      completedAt: undefined,
+      lastHeartbeat: undefined,
+      error: undefined,
+    });
+    this.stateStore.appendEvent(blockedParentId, 'blocking_finding_resolved', {
+      child_job_id: sourceJobId,
+      eval_round: newestRoundId,
+    });
+  }
+
+  private checkBlockingFindingResumeByStage(
+    completedJob: Job,
+    siblings: Job[],
+    sourceJobId: string,
+    completedStage: string,
+    rawOutput: unknown,
+    blockedParentId: string,
+  ): void {
     // Parse this critic's output to confirm it passed
     const thisCritic = extractRubricJson(rawOutput);
     if (!thisCritic || thisCritic.passed !== true) {
@@ -1026,22 +1176,52 @@ export class JobManager {
       return;
     }
 
-    const siblings = this.stateStore.getEvalsForSource(sourceJobId);
     const evalSiblings = siblings.filter((s) => {
       const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
       return expectedStages.has(stage);
     });
 
-    // Wait until every expected stage has a sibling before deciding — a disabled
-    // built-in shrinks this set, a custom critic grows it.
-    const presentStages = new Set(evalSiblings.map((s) => s.params.eval_stage as string));
+    // A source job may have been evaluated multiple times (re-fired
+    // `tenet_start_eval` after retries). Older rounds' critics — including ones
+    // that failed — are history: only the newest critic per stage decides the
+    // gate, otherwise a stale failure from an earlier round blocks the parent
+    // forever even after the current round is fully green.
+    const latestByStage = new Map<string, Job>();
+    for (const s of evalSiblings) {
+      const stage = typeof s.params.eval_stage === 'string' ? s.params.eval_stage : '';
+      const existing = latestByStage.get(stage);
+      // >= (not >): equal createdAt (same-ms dispatch in tests) keeps the
+      // later-seen job — never let the stale one win a tie.
+      if (!existing || s.createdAt >= existing.createdAt) {
+        latestByStage.set(stage, s);
+      }
+    }
+    const currentRound = [...latestByStage.values()];
+
+    const presentStages = new Set(currentRound.map((s) => s.params.eval_stage as string));
     for (const expected of expectedStages) {
       if (!presentStages.has(expected)) {
         return;
       }
     }
 
-    for (const s of evalSiblings) {
+    // A single ad-hoc re-fire (tenet_start_job) created long after the other
+    // stages' critics is a partial re-evaluation, not a full round — it must
+    // not mask an older red critic for its stage. A full re-evaluation
+    // dispatches all critics synchronously, so require the newest critic per
+    // stage to be created within a window of the completing critic.
+    // KNOWN LIMITATION: a re-fire created >1s after the round dispatch but
+    // BEFORE the round completes strands the green round (every subsequent
+    // completion fails the window) — fail-closed, recoverable by a fresh full
+    // round, but requires manual intervention.
+    const completingCreatedAt = completedJob.createdAt;
+    for (const s of currentRound) {
+      if (Math.abs(s.createdAt - completingCreatedAt) > COHORT_WINDOW_MS) {
+        return;
+      }
+    }
+
+    for (const s of currentRound) {
       if (s.status !== 'completed') {
         return;
       }
@@ -1053,7 +1233,6 @@ export class JobManager {
       }
     }
 
-    // All expected critics passed — let the report-only parent run again with fresh context.
     this.stateStore.updateJob(blockedParentId, {
       status: 'pending',
       startedAt: undefined,
