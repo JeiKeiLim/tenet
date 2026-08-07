@@ -6,187 +6,14 @@
  * single parser for that shape, shared by the resume gate (job-manager.ts) and
  * the status surface (tenet-get-status.ts) so the two consumers of the same
  * stored critic output can never drift apart.
- */
-
-/**
- * Scan a string for top-level JSON objects, returning the rightmost one that
- * `accept` approves. When `prefer` approves an object, it wins over any
- * non-preferred object even if the non-preferred one appears later — used to
- * prefer verdicts that carry a `stage` key over stage-less tool-result echoes.
  *
- * Tracks both `{}` and `[]` depth so an object wrapped in a top-level array
- * (`[{"passed": true}]`) is never treated as a verdict — the whole-string fast
- * path rejects arrays, and the scan must agree. `unbalanced` reports whether
- * the stack was left non-empty (a stray `{`/`[` in prose); the brace-recovery
- * fallback runs whenever the caller decides the strict scan's result is not
- * authoritative (see findRightmostPassedObject).
+ * The verdict is the LAST top-level object with a boolean `passed` key. The
+ * parser walks `{` positions from the end (the preamble mandates the verdict
+ * at the END), parses each to its matching `}`, and keeps the first accepted
+ * object per class — preferring one with a `stage` key over a stage-less tool
+ * echo. An object nested inside a VALID JSON object or array is never the
+ * verdict.
  */
-const scanTopLevel = (
-  text: string,
-  accept: (record: Record<string, unknown>) => boolean,
-  prefer: (record: Record<string, unknown>) => boolean,
-): { best: Record<string, unknown> | null; unbalanced: boolean } => {
-  const stack: number[] = [];
-  let inString = false;
-  let escaped = false;
-  let bestPreferred: Record<string, unknown> | null = null;
-  let bestAny: Record<string, unknown> | null = null;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === '{' || ch === '[') {
-      stack.push(i);
-      continue;
-    }
-    if ((ch === '}' || ch === ']') && stack.length > 0) {
-      const start = stack.pop() as number;
-      // Only objects at brace-depth 0 AND bracket-depth 0 count. Nested objects
-      // (assertion arrays, tool results quoted in prose) are never verdicts —
-      // and neither is an object wrapped in a top-level array.
-      if (stack.length !== 0 || ch === ']') {
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(text.slice(start, i + 1)) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          const record = parsed as Record<string, unknown>;
-          if (accept(record)) {
-            if (prefer(record)) {
-              bestPreferred = record;
-            } else {
-              bestAny = record;
-            }
-          }
-        }
-      } catch {
-        // Not valid JSON — prose braces, skip.
-      }
-    }
-  }
-  return { best: bestPreferred ?? bestAny, unbalanced: stack.length > 0 };
-};
-
-/**
- * True when the object opened at `open` is "top-level-ish": not inside an
- * array, and not nested inside another VALID JSON object. An object nested
- * under stray prose braces (whose enclosing slice is not valid JSON) IS
- * top-level-ish — that is the verdict the recovery exists to find. This
- * mirrors the strict scan's top-level invariant (scanTopLevel rejects nested
- * and array-wrapped objects) so the recovery cannot pick a nested finding or
- * tool echo over the real verdict.
- */
-const isTopLevelish = (text: string, open: number): boolean => {
-  const braceStack: number[] = [];
-  const bracketStack: number[] = [];
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < open; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === '\\') {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === '{') {
-      braceStack.push(i);
-    } else if (ch === '}') {
-      braceStack.pop();
-    } else if (ch === '[') {
-      bracketStack.push(i);
-    } else if (ch === ']') {
-      bracketStack.pop();
-    }
-  }
-  if (inString) {
-    // The object's `{` sits inside an unclosed string — a quoted tool result
-    // or prior verdict, not a real verdict.
-    return false;
-  }
-  if (bracketStack.length > 0) {
-    // Inside an array. Reject if the INNERMOST enclosing bracket forms a
-    // valid array (genuinely array-wrapped). If the bracket is truncated or
-    // its slice is prose (a stray `[`), fall through to the brace check — the
-    // object may still be nested inside a VALID brace object within the
-    // truncated array, which must be rejected too. An object DIRECTLY inside
-    // a truncated array (the slice starts with `{`) is still array-wrapped
-    // and must be rejected.
-    const enclosingOpen = bracketStack[bracketStack.length - 1];
-    const enclosingClose = findMatchingClose(text, enclosingOpen);
-    if (enclosingClose >= 0) {
-      try {
-        JSON.parse(text.slice(enclosingOpen, enclosingClose + 1));
-        return false;
-      } catch {
-        // Prose brackets — fall through to the brace check.
-      }
-    }
-    if (/^\[\s*\{/.test(text.slice(enclosingOpen))) {
-      return false;
-    }
-  }
-  if (braceStack.length === 0) {
-    return true;
-  }
-  // Nested under one or more {. Accept only if the INNERMOST enclosing brace
-  // is a stray (its slice is not valid JSON) — i.e. the object is the verdict
-  // behind prose braces. If the innermost enclosing brace forms a valid
-  // object, the object is nested inside it (a finding, a tool echo) and is
-  // never the verdict.
-  const enclosingOpen = braceStack[braceStack.length - 1];
-  const enclosingClose = findMatchingClose(text, enclosingOpen);
-  if (enclosingClose < 0) {
-    // Enclosing brace never closes — either a stray prose brace (the object
-    // is the verdict behind it) or a TRUNCATED JSON object (the object is
-    // nested inside it, e.g. a context-limit kill cut the enclosing object
-    // mid-JSON). Distinguish by whether the enclosing slice looks like a
-    // JSON object (a quoted key followed by a colon).
-    if (looksLikeJsonObject(text.slice(enclosingOpen))) {
-      return false;
-    }
-    return true;
-  }
-  try {
-    JSON.parse(text.slice(enclosingOpen, enclosingClose + 1));
-    // Enclosing brace forms a valid object — the object is nested inside it.
-    return false;
-  } catch {
-    // Enclosing slice is prose braces (e.g. a stray { balanced by a stray })
-    // — the object is the verdict behind them.
-    return true;
-  }
-};
-
-/**
- * True when a string starts like a JSON object — `{` followed by a quoted key
- * and a colon. Used to distinguish a TRUNCATED JSON object (a valid object cut
- * off mid-JSON, whose enclosing brace never closes) from a stray prose brace
- * (`foo({ and then ...`), so a nested object inside a truncated enclosing
- * object is never mistaken for the verdict.
- */
-const looksLikeJsonObject = (s: string): boolean => /^\{\s*"(?:[^"\\]|\\.)*"\s*:/.test(s);
 
 /**
  * Find the index of the `}` that closes the object opened at `open`, tracking
@@ -226,81 +53,64 @@ const findMatchingClose = (text: string, open: number): number => {
 };
 
 /**
- * Best-effort recovery for unbalanced braces in prose. The strict top-level
- * scan treats a stray `{` (a code snippet, a truncated block) as an open
- * object, so a verdict that follows it is never top-level and the scan returns
- * null. The critic preamble mandates the verdict at the END of the output, so
- * the verdict is the last JSON object: walk `{` positions from the end, parse
- * each to its MATCHING `}` (not the first `}` — a verdict with nested objects
- * in `findings` would otherwise be sliced unterminated), and apply the same
- * accept/prefer semantics as the strict scan so a passing tool echo after a
- * failing verdict can never win. Reached whenever the caller runs it — the
- * strict scan found nothing, the stack is unbalanced, or best is a stage-less
- * echo that must not short-circuit a staged verdict.
+ * True when the object opened at `open` is top-level: not nested inside a
+ * VALID JSON object or array. Prose braces/brackets around it (a stray `{`
+ * before the verdict, a truncated container) are fine — that is the recovery
+ * case the walk exists to handle. Deliberately does NOT track strings while
+ * scanning the prefix: an unmatched quote in prose (e.g. a substring check
+ * like `'uv tool install "mkdocs-material'`) must not false-reject a real
+ * verdict that follows.
+ *
+ * KNOWN LIMITATION: an object nested inside a truncated JSON container (a
+ * context-limit kill cut it mid-JSON) is accepted as top-level — and a JSON
+ * object quoted inside a string is too. Neither shape has been observed in
+ * production output (the golden test covers the observed shapes).
  */
-const recoverFromUnbalancedBraces = (
-  text: string,
-  accept: (record: Record<string, unknown>) => boolean,
-  prefer: (record: Record<string, unknown>) => boolean,
-): Record<string, unknown> | null => {
-  let bestPreferred: Record<string, unknown> | null = null;
-  let bestAny: Record<string, unknown> | null = null;
-  let i = text.lastIndexOf('{');
-  while (i >= 0) {
-    const end = findMatchingClose(text, i);
-    if (end >= 0 && isTopLevelish(text, i)) {
+const isTopLevelish = (text: string, open: number): boolean => {
+  const braceStack: number[] = [];
+  const bracketStack: number[] = [];
+  for (let i = 0; i < open; i++) {
+    const ch = text[i];
+    if (ch === '{') {
+      braceStack.push(i);
+    } else if (ch === '}') {
+      braceStack.pop();
+    } else if (ch === '[') {
+      bracketStack.push(i);
+    } else if (ch === ']') {
+      bracketStack.pop();
+    }
+  }
+  if (bracketStack.length > 0) {
+    // Inside an array. Reject if the INNERMOST enclosing bracket forms a
+    // valid array (genuinely array-wrapped).
+    const enclosing = bracketStack[bracketStack.length - 1];
+    const close = findMatchingClose(text, enclosing);
+    if (close >= 0) {
       try {
-        const parsed = JSON.parse(text.slice(i, end + 1)) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          const record = parsed as Record<string, unknown>;
-          if (accept(record)) {
-            // The walk goes right-to-left, so the FIRST accepted object per
-            // class is the RIGHTMOST — keep it (only set when null), matching
-            // the strict scan's rightmost-wins semantics. Overwriting would
-            // let a leftmost staged object (e.g. a quoted earlier verdict)
-            // beat the real verdict.
-            if (prefer(record)) {
-              if (!bestPreferred) {
-                bestPreferred = record;
-              }
-            } else if (!bestAny) {
-              bestAny = record;
-            }
-          }
-        }
+        JSON.parse(text.slice(enclosing, close + 1));
+        return false;
       } catch {
-        // Not valid JSON — prose braces, skip.
+        // Stray/truncated bracket — accept.
       }
     }
-    // A `{` with no matching close is a stray that cannot be the verdict —
-    // skip it and keep walking, or a trailing stray `{` (e.g. a truncated
-    // tail) would strand an earlier valid verdict. NOTE: lastIndexOf('{', -1)
-    // clamps to 0 and would re-find a `{` at position 0 forever, so break
-    // explicitly at i === 0.
-    if (i === 0) {
-      break;
-    }
-    i = text.lastIndexOf('{', i - 1);
   }
-  return bestPreferred ?? bestAny;
-};
-
-/**
- * Merge the strict scan's result with the recovery's when the stack was
- * unbalanced. A staged verdict from either wins — the recovery sees objects
- * the strict scan missed behind a stray brace, so a stage-less echo the strict
- * scan accepted must not short-circuit the recovery's staged verdict. When
- * neither is staged, the recovery's result wins: it walks `{` from the end and
- * finds the RIGHTMOST object (the "verdict at the END" preamble), while the
- * strict scan's stage-less best may be an echo before a stray brace.
- */
-const mergeStrictAndRecovered = (
-  strictBest: Record<string, unknown> | null,
-  recovered: Record<string, unknown> | null,
-): Record<string, unknown> | null => {
-  const recoveredStaged = recovered && typeof recovered.stage === 'string' ? recovered : null;
-  const strictStaged = strictBest && typeof strictBest.stage === 'string' ? strictBest : null;
-  return recoveredStaged ?? strictStaged ?? recovered ?? strictBest;
+  if (braceStack.length > 0) {
+    // Nested under one or more {. Reject if the INNERMOST enclosing brace
+    // forms a valid object (a finding, a tool echo); accept if it is a stray
+    // prose brace (the verdict behind it).
+    const enclosing = braceStack[braceStack.length - 1];
+    const close = findMatchingClose(text, enclosing);
+    if (close >= 0) {
+      try {
+        JSON.parse(text.slice(enclosing, close + 1));
+        return false;
+      } catch {
+        // Stray/truncated brace — accept.
+      }
+    }
+  }
+  return true;
 };
 
 /**
@@ -312,28 +122,40 @@ const mergeStrictAndRecovered = (
  * pastes a passing tool result after its verdict must not false-green the gate.
  */
 export const findRightmostPassedObject = (text: string): Record<string, unknown> | null => {
-  const { best, unbalanced } = scanTopLevel(
-    text,
-    (r) => typeof r.passed === 'boolean',
-    (r) => typeof r.stage === 'string',
-  );
-  if (best && !unbalanced && typeof best.stage === 'string') {
-    // A staged top-level verdict with a balanced stack — no recovery needed.
-    // KNOWN LIMITATION: a later verdict written INSIDE a stray balanced brace
-    // pair (e.g. a code snippet) is ignored when an earlier staged verdict
-    // exists — the short-circuit protects against a quoted prior verdict
-    // wrapped in prose braces overriding the real one, at the cost of this
-    // corner case.
-    return best;
+  let bestStaged: Record<string, unknown> | null = null;
+  let bestAny: Record<string, unknown> | null = null;
+  let i = text.lastIndexOf('{');
+  while (i >= 0) {
+    const end = findMatchingClose(text, i);
+    if (end >= 0 && isTopLevelish(text, i)) {
+      try {
+        const parsed = JSON.parse(text.slice(i, end + 1)) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const record = parsed as Record<string, unknown>;
+          if (typeof record.passed === 'boolean') {
+            // The walk goes right-to-left, so the FIRST accepted object per
+            // class is the RIGHTMOST — keep it (only set when null).
+            if (typeof record.stage === 'string') {
+              if (!bestStaged) {
+                bestStaged = record;
+              }
+            } else if (!bestAny) {
+              bestAny = record;
+            }
+          }
+        }
+      } catch {
+        // Not valid JSON — prose braces, skip.
+      }
+    }
+    // NOTE: lastIndexOf('{', -1) clamps to 0 and would re-find a `{` at
+    // position 0 forever, so break explicitly at i === 0.
+    if (i === 0) {
+      break;
+    }
+    i = text.lastIndexOf('{', i - 1);
   }
-  // Otherwise run the recovery: the stack may be unbalanced (a stray brace
-  // hides a better verdict), the strict scan may have found nothing (a stray
-  // { balanced by a stray } strands the verdict), or best may be a stage-less
-  // echo that must not short-circuit the recovery's staged verdict.
-  return mergeStrictAndRecovered(
-    best,
-    recoverFromUnbalancedBraces(text, (r) => typeof r.passed === 'boolean', (r) => typeof r.stage === 'string'),
-  );
+  return bestStaged ?? bestAny;
 };
 
 /**
@@ -352,9 +174,7 @@ export const extractRubricJson = (rawOutput: unknown): Record<string, unknown> |
 
   const stripped = rawOutput.trim();
 
-  // Whole-output fast path: the output is exactly a verdict object. No
-  // fenced-first shortcut — a fenced block earlier in the output is never the
-  // verdict over a later one, so the scan below is the single source of truth.
+  // Whole-output fast path: the output is exactly a verdict object.
   try {
     const parsed = JSON.parse(stripped) as unknown;
     if (

@@ -349,67 +349,32 @@ describe('extractRubricJson', () => {
     expect(r2?.passed).toBe(true);
   });
 
-  it('recovery: an object DIRECTLY inside a truncated top-level array never wins', () => {
-    // A context-limit kill can truncate a top-level array. An object directly
-    // inside it (the slice starts with {) is still array-wrapped.
-    const t1 = '{"passed": false, "stage": "code_critic", "findings": ["x"]} Tool output: [{"passed": true, "stage": "code_critic", "findings": []}';
-    const r1 = extractRubricJson(t1);
-    expect(r1?.passed).toBe(false);
-    expect(r1?.stage).toBe('code_critic');
-
-    // A stray [ in prose still recovers the verdict behind it.
-    const t2 = 'The list was [1, 2, 3 and then the verdict: {"passed": true, "stage": "code_critic", "findings": []}';
-    const r2 = extractRubricJson(t2);
-    expect(r2?.passed).toBe(true);
-  });
-
-  it('recovery: a truncated enclosing object with an escaped-quote key never wins', () => {
-    // looksLikeJsonObject must handle escaped quotes in the first key.
-    const t1 = '{"passed": false, "stage": "code_critic", "findings": ["x"]} then {"a\\"b": 1, "nested": {"passed": true, "stage": "code_critic"}';
-    const r1 = extractRubricJson(t1);
-    expect(r1?.passed).toBe(false);
-    expect(r1?.stage).toBe('code_critic');
-  });
-
-  it('recovery: a quoted verdict inside an unclosed string is never accepted (inString guard)', () => {
-    // The inString guard is the sole defense against a well-formed quoted
-    // verdict being accepted as the real verdict.
-    const t1 = 'The tool said "the result was {"passed": true, "stage": "code_critic"}';
-    const r1 = extractRubricJson(t1);
-    expect(r1).toBeNull();
-  });
-
-  it('recovery: a nested passing object inside a TRUNCATED array never wins', () => {
-    // A context-limit kill can truncate an array mid-JSON. The object inside
-    // it is still nested inside a valid brace object and must be rejected.
-    const t1 = 'Tool output: [{"checks": {"lint": {"passed": true}}}';
-    const r1 = extractRubricJson(t1);
-    expect(r1).toBeNull();
-
-    // A stray [ in prose still recovers the verdict behind it.
-    const t2 = 'The list was [1, 2, 3 and then the verdict: {"passed": true, "stage": "code_critic", "findings": []}';
-    const r2 = extractRubricJson(t2);
-    expect(r2?.passed).toBe(true);
-  });
-
-  it('KNOWN LIMITATION: a later verdict inside a balanced stray pair is ignored when a staged verdict was found', () => {
-    // The short-circuit (staged top-level verdict + balanced stack) skips the
-    // recovery, so a later verdict written inside a stray balanced brace pair
-    // is ignored. This protects against a quoted prior verdict overriding the
-    // real one, at the cost of this corner case.
+  it('a later verdict inside a balanced stray pair IS found (rightmost-wins)', () => {
+    // The single rightmost-walk has no short-circuit, so a real later verdict
+    // written inside a stray balanced brace pair is found — the balanced-pair
+    // false-negative the old two-pass design accepted is gone.
     const t1 = 'Verdict: {"passed": false, "stage": "code_critic", "findings": ["x"]} then prose { and the real final verdict {"passed": true, "stage": "code_critic", "findings": []} }';
     const r1 = extractRubricJson(t1);
-    expect(r1?.passed).toBe(false);
+    expect(r1?.passed).toBe(true);
+    expect(r1?.stage).toBe('code_critic');
   });
 
-  it('recovery: a nested passing object inside a TRUNCATED enclosing object never wins', () => {
-    // A context-limit kill can truncate the enclosing object mid-JSON, leaving
-    // the nested object's } as the last char. isTopLevelish must not treat the
-    // truncated enclosing brace as a stray prose brace.
-    const t1 = 'Verdict: {"passed": false, "stage": "code_critic", "findings": ["x"]} then tool: {"checks": {"lint": {"passed": true, "stage": "code_critic"}';
-    const r1 = extractRubricJson(t1);
-    expect(r1?.passed).toBe(false);
-    expect(r1?.stage).toBe('code_critic');
+  it('KNOWN LIMITATION: truncated containers and quoted verdicts are accepted', () => {
+    // The simplified parser deliberately does NOT reject objects nested inside
+    // a truncated JSON container (a context-limit kill cut it mid-JSON) or a
+    // JSON object quoted inside a string. Neither shape has been observed in
+    // production output (the golden test covers the observed shapes), and the
+    // old inString/truncated guards caused a real regression (an unmatched
+    // quote in prose false-rejected a valid verdict). Documented as accepted
+    // trade-offs rather than defended.
+    const t1 = '{"passed": false, "stage": "code_critic", "findings": ["x"]} Tool output: [{"passed": true, "stage": "code_critic", "findings": []}';
+    expect(extractRubricJson(t1)?.passed).toBe(true);
+
+    const t2 = '{"passed": false, "stage": "code_critic", "findings": ["x"]} then tool: {"checks": {"lint": {"passed": true, "stage": "code_critic"}';
+    expect(extractRubricJson(t2)?.passed).toBe(true);
+
+    const t3 = 'The tool said "the result was {"passed": true, "stage": "code_critic"}';
+    expect(extractRubricJson(t3)?.passed).toBe(true);
   });
 
   it('recovery: a stage-less echo before a stray brace cannot mask a stage-less verdict (merge order)', () => {
