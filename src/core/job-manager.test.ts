@@ -344,7 +344,9 @@ describe('JobManager', () => {
 
     const retried = manager.retryJob(job.id, 'try again with new evidence');
 
-    expect(retried.status).toBe('pending');
+    // Retry = run-now: the job is re-dispatched immediately, never left pending
+    // for a poller that doesn't exist (see retryJob's dispatchJob call).
+    expect(retried.status).toBe('running');
     expect(retried.retryCount).toBe(100);
     expect(retried.maxRetries).toBe(UNLIMITED_RETRIES);
   });

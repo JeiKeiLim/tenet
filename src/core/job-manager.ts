@@ -331,12 +331,13 @@ export class JobManager {
       has_enhanced_prompt: !!enhancedPrompt,
     });
 
-    const updated = this.stateStore.getJob(jobId);
-    if (!updated) {
-      throw new Error(`failed to load retried job: ${jobId}`);
-    }
-
-    return updated;
+    // Retry is an explicit "run it again now" action: dispatch immediately rather
+    // than leaving the job pending for a poller that doesn't exist. Without this, a
+    // retried job (and everything chained behind it) wedges at pending/retry_reset
+    // forever — there is no background dispatch loop, and the chain event that first
+    // started the job already fired. dispatchJob requires pending status, which is
+    // guaranteed here (we just reset the job).
+    return this.dispatchJob(jobId);
   }
 
   continue(): ContinuationState {

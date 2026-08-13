@@ -9,6 +9,7 @@ import { StateStore } from './state-store.js';
 import { registerTenetStartEvalTool } from '../mcp/tools/tenet-start-eval.js';
 import { registerTenetGetStatusTool } from '../mcp/tools/tenet-get-status.js';
 import { registerTenetReportBlockingFindingTool } from '../mcp/tools/tenet-report-blocking-finding.js';
+import { registerTenetRetryJobTool } from '../mcp/tools/tenet-retry-job.js';
 
 // ─── Harness ────────────────────────────────────────────────────────────────
 // A full-stack test harness: real StateStore, real JobManager, real AdapterRegistry
@@ -35,6 +36,8 @@ type ReportBlockingFindingHandler = (args: {
   suspected_files?: string[];
 }) => Promise<CallToolResult>;
 
+type RetryJobHandler = (args: { job_id: string; enhanced_prompt?: string }) => Promise<CallToolResult>;
+
 type Harness = {
   projectPath: string;
   store: StateStore;
@@ -42,6 +45,7 @@ type Harness = {
   startEval: StartEvalHandler;
   getStatus: GetStatusHandler;
   reportBlockingFinding: ReportBlockingFindingHandler;
+  retryJob: RetryJobHandler;
 };
 
 const createHarness = (rules: FakeFixtureRule[]): Harness => {
@@ -88,8 +92,12 @@ const createHarness = (rules: FakeFixtureRule[]): Harness => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     registerTenetReportBlockingFindingTool(rt as any, manager, store),
   );
+  const retryJob = captureHandler<RetryJobHandler>((rt) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    registerTenetRetryJobTool(rt as any, manager),
+  );
 
-  return { projectPath: tempDir, store, manager, startEval, getStatus, reportBlockingFinding };
+  return { projectPath: tempDir, store, manager, startEval, getStatus, reportBlockingFinding, retryJob };
 };
 
 const parseResult = (r: CallToolResult): Record<string, unknown> => {
@@ -229,6 +237,53 @@ describe('integration: sequential critic chain', () => {
     await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'interaction_e2e'), null, 5_000);
+  });
+
+  it('B3: failed critic retried via tenet_retry_job re-dispatches immediately and completes (no retry_reset wedge)', async () => {
+    const { store, manager, startEval, retryJob } = createHarness([
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+      // First interaction_e2e invocation fails at the environment level (like the
+      // observed api_error 400 "model does not support image input"); the retry passes.
+      {
+        match: matchers.evalStage('interaction_e2e'),
+        fixture: 'playwright-layer2-completed.json',
+        success: false,
+        error: 'api_error 400: this model does not support image input',
+        maxUses: 1,
+      },
+      { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
+    ]);
+
+    store.setConfig('eval_parallel_safe:billing', 'false');
+
+    const source = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'build-billing', dag_id: 'job-1', feature: 'billing' },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const result = await startEval({ job_id: source.id, output: { summary: 'ok' } });
+    const parsed = parseResult(result);
+    expect(parsed.execution_mode).toBe('sequential');
+
+    // code + test critics pass; interaction_e2e dispatches and fails.
+    await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
+    await manager.waitForJob(jobId(parsed, 'interaction_e2e'), null, 5_000);
+    expect(store.getJob(jobId(parsed, 'interaction_e2e'))?.status).toBe('failed');
+
+    // Documented remediation: retry the failed critic. It must dispatch immediately
+    // (running), not sit pending/retry_reset with elapsed_ms=0 forever.
+    const retriedResult = await retryJob({ job_id: jobId(parsed, 'interaction_e2e') });
+    const retried = parseResult(retriedResult);
+    expect(retried.status).toBe('running');
+
+    // Retried job reaches terminal within the bounded wait — the chain is unblocked.
+    await manager.waitForJob(jobId(parsed, 'interaction_e2e'), null, 5_000);
+    expect(store.getJob(jobId(parsed, 'interaction_e2e'))?.status).toBe('completed');
   });
 });
 
