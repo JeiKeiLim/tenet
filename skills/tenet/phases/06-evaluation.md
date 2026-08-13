@@ -17,6 +17,8 @@ Every critic finding (code critic, test critic) MUST include a `category` so the
 
 The critic emits findings as objects: `{"category": "...", "detail": "..."}`. Orchestrators MUST read the category to pick the right response — plain retry loops waste cycles on bugs that aren't product bugs.
 
+> **Retries are run-now:** `tenet_retry_job` dispatches the retried job immediately (status `running`). After any retry, wait with `tenet_job_wait` and re-run `tenet_start_eval` on the retried job — it will not come back as `next_job` from `tenet_continue()`, and `tenet_start_job` on it throws.
+
 ## E2E Surface And Verification Honesty
 
 The interaction-e2e critic does agent-driven verification through whatever public surface the job exposes — browser UI, CLI, API, library, or none. It returns a `surface` field (what it classified) and a `layer2_status` field (whether browser/visual exploration applied), so downstream readers can tell what was actually exercised:
@@ -156,7 +158,7 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 - **Stage 3 Fail (Code Critic)**: Run reflection to find the root cause, then retry via `tenet_retry_job` with the critic findings.
 - **Stage 4 Fail (Test Critic)**: Retry via `tenet_retry_job` with explicit test-strengthening requirements from the critic.
 - **Integration test Fail**: If the job is `report_only`, call `tenet_report_blocking_finding` with the observed finding, why it blocks the report, recommended follow-up, and likely target files. Otherwise retry the integration job with an enhanced prompt.
-- **Retry policy**: Use `tenet_retry_job` while there is a concrete unresolved finding and the next attempt will use new evidence or a changed approach. Tenet defaults to unlimited retries; projects may configure a finite retry budget. If MCP reports a finite budget is exhausted, mark the job blocked. If failures stagnate, stop and report even when retries remain.
+- **Retry policy**: Use `tenet_retry_job` while there is a concrete unresolved finding and the next attempt will use new evidence or a changed approach. Tenet defaults to unlimited retries; projects may configure a finite retry budget. If MCP reports a finite budget is exhausted, mark the job blocked. If failures stagnate, stop and report even when retries remain. Retries are run-now: `tenet_retry_job` dispatches the job immediately (status `running`), so apply backoff BEFORE calling it, then wait with `tenet_job_wait` and re-run `tenet_start_eval` on the retried job — it will not reappear as `next_job` from `tenet_continue()`.
 
 ### Stage 5: Interaction E2E (Independent Job)
 

@@ -35,7 +35,7 @@ Execute this sequence for every job cycle:
     - If `is_terminal` is true: proceed to step 7.
 7.  **Get Result**: `tenet_job_result(job_id="...")`
     Retrieve the final output and execution metadata. If the project is a git repository, read the worker's final output for the commit SHA. If the worker produced dirty changes but did not commit, make a best-effort fallback commit for the same job before evaluation. If git is unavailable or the fallback commit fails, write a journal note with the reason and continue.
-    **Context-limit / error exit (worker):** if the worker's result has no real deliverable — a context-limit or error string (e.g. "prompt is too long", "maximum context length exceeded"), an empty/truncated body, or a hard failure — do NOT proceed to evaluation as if it succeeded. Treat it as a failed run: retry as-is with `tenet_retry_job` so it re-runs with fresh context (apply backoff between attempts). If the same worker context-limits **twice in a row**, the job is too large for one pass — split it into smaller sub-jobs rather than retrying identical a third time. Never accept a context-limited worker result as a done deliverable.
+    **Context-limit / error exit (worker):** if the worker's result has no real deliverable — a context-limit or error string (e.g. "prompt is too long", "maximum context length exceeded"), an empty/truncated body, or a hard failure — do NOT proceed to evaluation as if it succeeded. Treat it as a failed run: retry as-is with `tenet_retry_job` so it re-runs with fresh context — the retry dispatches immediately (retry = run-now), so apply backoff BEFORE calling it, then wait with `tenet_job_wait` before proceeding. If the same worker context-limits **twice in a row**, the job is too large for one pass — split it into smaller sub-jobs rather than retrying identical a third time. Never accept a context-limited worker result as a done deliverable.
 8.  **Start Evaluation**: `tenet_start_eval(job_id="<original_job_id>", output={...}, feature="<feature>")`
     Dispatches the output to the evaluation pipeline and returns eval job IDs plus `execution_mode`.
 9.  **Background Wait for Eval**: Same pattern as step 6. If `execution_mode` is sequential, later eval jobs may remain pending until parents complete; keep waiting on the returned IDs until all are terminal.
@@ -43,7 +43,7 @@ Execute this sequence for every job cycle:
     Retrieve every returned eval result. ALL must pass. A critic/eval result passes **only** when it returns a valid rubric JSON with `passed: true`. A result with **no valid rubric JSON — a context-limit / error exit** (e.g. "prompt is too long", "maximum context length exceeded", a raw error string, or an empty/truncated body) — **is NOT a pass**, even though the job reached a terminal state. Do not treat a context-limited critic as "passed with partial result"; the resume gate already refuses to unblock on unparseable output, and you must do the same.
 
     **On a context-limit / no-rubric critic exit:**
-    - **Retry as-is first.** `tenet_retry_job(job_id)` the affected critic so it re-runs with fresh context. This counts against the job's normal retry budget (default unlimited); apply backoff between attempts.
+    - **Retry as-is first.** `tenet_retry_job(job_id)` the affected critic so it re-runs with fresh context. This counts against the job's normal retry budget (default unlimited); the retry dispatches immediately, so apply backoff BEFORE calling it, then wait with `tenet_job_wait`.
     - **Split after 2 consecutive context-limits.** If the same critic context-limits twice in a row, the scope is too large for one pass — do not retry identical a third time. Split the critic's scope into multiple reduced-scope critic jobs (divide the files/diff into smaller batches, each its own eval job) and require all of those to pass. For a worker, redispatch as smaller sub-jobs.
     - **Never accept a context-limited result as a pass** to move on. If retries and splits keep failing, treat it as a failed eval: `tenet_retry_job` the source, or `tenet_report_blocking_finding` if a specific cause is suspected.
 11. **Update Knowledge or Retry**: `tenet_update_knowledge(...)` on success; `tenet_retry_job(...)` or `tenet_report_blocking_finding(...)` on failure, as described below.
@@ -111,7 +111,7 @@ The sub-agent must:
 - **Wait with backoff, never one blocking call.** Loop `tenet_job_wait` on the 30s → 45s → 67s → 100s → 120s (cap) schedule, re-calling with the returned `cursor` until `is_terminal`. A single `wait_seconds=120` returns non-terminal after at most 120s and cannot cover a long job.
 - **Read the critic count from the tool, never hardcode it.** `tenet_start_eval` returns a variable-length `jobs[]`; loop `tenet_job_wait` across every returned ID until all are terminal. In sequential `execution_mode`, later critics stay pending until their parent completes.
 - **Parse the rubric, not a top-level `passed`.** `tenet_job_result` returns `{job_id, status, output, error, duration_ms}` — there is no top-level `passed` field. The critic's verdict is rubric JSON nested in `output.output`; extract it and read `passed` from there.
-- **Apply the three-way classifier.** A terminal critic with no valid rubric JSON (context-limit / error / empty body) is **not** a pass — retry as-is, then split after 2 consecutive context-limits. Never accept a context-limited critic as a pass.
+- **Apply the three-way classifier.** A terminal critic with no valid rubric JSON (context-limit / error / empty body) is **not** a pass — retry as-is via `tenet_retry_job` (the retried critic dispatches immediately and returns status `running`; do NOT call `tenet_start_job` on it), then wait on it with `tenet_job_wait` until terminal and re-check its rubric. Split after 2 consecutive context-limits. Never accept a context-limited critic as a pass.
 - **Process steer within the delegated window.** The sub-agent re-checks `tenet_process_steer()` between waits so an emergency halt or new directive is not missed while you are not driving the loop directly.
 - **Return a structured summary** (per-critic PASS/FAIL + failure reasons). The orchestrator resumes from there.
 
@@ -200,36 +200,43 @@ When a report-only job is dispatched, the worker dispatch path prepends a **Repo
 
 ## Finding-category dispatch
 
-When `tenet_start_eval` returns failing critics, read each finding's `category` and dispatch the correct follow-up:
+When `tenet_start_eval` returns failing critics, read each finding's `category` and dispatch the correct follow-up. `tenet_retry_job` dispatches immediately (retry = run-now), so a job can be retried only **once per cycle** — consolidate ALL findings into a single retry call, then wait on the retried job with `tenet_job_wait` (it is running, not pending; `tenet_continue()` will not return it as `next_job`, and `tenet_start_job` on it throws):
 
 ```
-for finding in code_output.findings + test_output.findings:
-    if finding.category == "product_bug":
-        tenet_retry_job(job_id=source_job.id, enhanced_prompt=finding.detail)
-    elif finding.category == "test_bug":
-        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Strengthen or correct tests: " + finding.detail)
-    elif finding.category == "harness_bug":
-        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Fix harness/build/test issue: " + finding.detail)
-    elif finding.category == "evidence_mismatch":
-        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Refresh evidence from current commands: " + finding.detail)
-    elif finding.category == "contention":
+findings = code_output.findings + test_output.findings
+if findings:
+    if any(f.category == "product_bug" for f in findings):
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Fix product bugs: " + "; ".join(f.detail for f in findings))
+        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
+    elif any(f.category == "test_bug" for f in findings):
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Strengthen or correct tests: " + "; ".join(f.detail for f in findings))
+        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
+    elif any(f.category == "harness_bug" for f in findings):
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Fix harness/build/test issue: " + "; ".join(f.detail for f in findings))
+        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
+    elif any(f.category == "evidence_mismatch" for f in findings):
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Refresh evidence from current commands: " + "; ".join(f.detail for f in findings))
+        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
+    elif any(f.category == "contention" for f in findings):
         # If we're in parallel mode for this feature, switch to sequential:
         # Agent self-note -> context (sweepable), not directive
         tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="context")
         tenet_retry_job(job_id=source_job.id)
-    elif finding.category == "scope_conflict":
+        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
+    elif any(f.category == "scope_conflict" for f in findings):
         # If this is a report-only job that discovered a blocking finding, use the
         # blocking finding escape hatch. Otherwise retry with corrected scope.
         if source_job.report_only:
             tenet_report_blocking_finding(
                 job_id=source_job.id,
-                finding=finding.detail,
+                finding="; ".join(f.detail for f in findings),
                 why_it_blocks_report="The report-only job cannot produce a trustworthy report until this finding is resolved.",
                 recommended_followup="Resolve the scoped issue without report-only edits",
                 suspected_files=[]
             )
         else:
-            tenet_retry_job(job_id=source_job.id, enhanced_prompt="Respect declared scope: " + finding.detail)
+            tenet_retry_job(job_id=source_job.id, enhanced_prompt="Respect declared scope: " + "; ".join(f.detail for f in findings))
+            tenet_job_wait(job_id=source_job.id, wait_seconds=30)
 ```
 
 Plain "just retry" wastes cycles on test/harness/evidence bugs — route by category and include the category-specific context in the enhanced prompt. Use `tenet_report_blocking_finding` only for report-only jobs that must not edit files directly.

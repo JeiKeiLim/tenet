@@ -121,6 +121,12 @@ export class JobManager {
       throw new Error(`job not found: ${jobId}`);
     }
 
+    if (job.status === 'running') {
+      // Idempotent: already dispatched (e.g. a concurrent retry from another
+      // server process won the race). Return the running job as-is.
+      return job;
+    }
+
     if (job.status !== 'pending') {
       throw new Error(`job ${jobId} is ${job.status}, expected pending`);
     }
@@ -317,15 +323,17 @@ export class JobManager {
       params.prompt = enhancedPrompt;
     }
 
-    this.stateStore.updateJob(jobId, {
-      status: 'pending',
-      params,
-      startedAt: undefined,
-      completedAt: undefined,
-      lastHeartbeat: undefined,
-      error: undefined,
-      retryCount: job.retryCount + 1,
-    });
+    // Atomic conditional reset: only one process can win the completed/failed ->
+    // pending transition. If another MCP server process already retried this job,
+    // return its current state without dispatching (idempotent).
+    if (!this.stateStore.resetJobForRetry(jobId, params)) {
+      const current = this.stateStore.getJob(jobId);
+      if (!current) {
+        throw new Error(`failed to load retried job: ${jobId}`);
+      }
+      return current;
+    }
+
     this.stateStore.appendEvent(jobId, 'job_retried', {
       retry_count: job.retryCount + 1,
       has_enhanced_prompt: !!enhancedPrompt,
@@ -335,8 +343,8 @@ export class JobManager {
     // than leaving the job pending for a poller that doesn't exist. Without this, a
     // retried job (and everything chained behind it) wedges at pending/retry_reset
     // forever — there is no background dispatch loop, and the chain event that first
-    // started the job already fired. dispatchJob requires pending status, which is
-    // guaranteed here (we just reset the job).
+    // started the job already fired. dispatchJob is idempotent on running, so a
+    // concurrent dispatch from another process is safe.
     return this.dispatchJob(jobId);
   }
 
@@ -503,6 +511,10 @@ export class JobManager {
           status: 'completed',
           completedAt: finishedAt,
           lastHeartbeat: finishedAt,
+          // Completion clears the failure streak: a later failure gets a fresh
+          // retry budget, and re-running a completed job never accumulates
+          // retryCount (intentional re-runs are not failure retries).
+          retryCount: 0,
         });
         this.stateStore.appendEvent(jobId, 'job_completed', {
           adapter: adapter.name,
