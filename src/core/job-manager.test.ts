@@ -423,14 +423,45 @@ describe('JobManager', () => {
     expect(store.getJob(job.id)?.status).toBe('completed');
     expect(store.getJob(job.id)?.retryCount).toBe(0);
 
-    // Re-running the completed job is a fresh start, not a failure retry: it
-    // increments to 1, and completion resets it again — re-runs never accumulate.
+    // Re-running the completed job is a fresh start, not a failure retry: retryCount
+    // stays 0 (no retry preamble, no budget consumed), and completion keeps it 0.
     const rerun = manager.retryJob(job.id);
     expect(rerun.status).toBe('running');
-    expect(rerun.retryCount).toBe(1);
+    expect(rerun.retryCount).toBe(0);
     await manager.waitForJob(job.id, null, 5_000);
     expect(store.getJob(job.id)?.status).toBe('completed');
     expect(store.getJob(job.id)?.retryCount).toBe(0);
+  });
+
+  it('retry preamble only claims a failed previous attempt for failed-job retries, not completed-job re-runs', async () => {
+    const { store, manager, adapter } = createHarness();
+
+    // A completed-job re-run: retryCount stays 0, so no "previous attempt failed" preamble.
+    const completed = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { prompt: 'build the thing' },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+    const rerun = manager.retryJob(completed.id);
+    expect(rerun.status).toBe('running');
+    await manager.waitForJob(completed.id, null, 5_000);
+    expect(adapter.lastInvocation?.prompt).not.toContain('previous attempt failed');
+
+    // A failed-job retry: retryCount increments, so the preamble warns about the failure.
+    const failed = store.createJob({
+      type: 'dev',
+      status: 'failed',
+      params: { prompt: 'build the thing' },
+      retryCount: 0,
+      maxRetries: 3,
+      error: 'failed before',
+    });
+    const retried = manager.retryJob(failed.id);
+    expect(retried.status).toBe('running');
+    await manager.waitForJob(failed.id, null, 5_000);
+    expect(adapter.lastInvocation?.prompt).toContain('previous attempt failed');
   });
 
   it('dispatchJob is idempotent on an already-running job', () => {
@@ -489,7 +520,10 @@ describe('JobManager', () => {
     await manager.waitForJob(job.id, null, 5_000);
 
     expect(adapter.calls).toBe(1);
+    // The enhanced prompt REPLACES the original (params.prompt = enhancedPrompt),
+    // it is not appended to it.
     expect(adapter.lastInvocation?.prompt).toContain('NEW EVIDENCE: fix the root cause');
+    expect(adapter.lastInvocation?.prompt).not.toContain('original prompt');
   });
 
   it('detects stalled running jobs and marks them failed', () => {

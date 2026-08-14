@@ -559,9 +559,15 @@ export class StateStore {
   }
 
   /**
-   * Atomically reset a completed/failed job to pending for retry, incrementing
-   * retry_count. Returns true if THIS process won the transition (the job was
-   * still completed/failed); false if another process already retried it.
+   * Atomically reset a completed/failed job to pending for retry. Returns true if
+   * THIS process won the transition (the job was still completed/failed); false if
+   * another process already retried it.
+   *
+   * retry_count semantics: a FAILED job is a failure retry, so retry_count
+   * increments; a COMPLETED job is an intentional re-run (the previous attempt
+   * succeeded), so retry_count resets to 0 — re-runs are not failure retries and
+   * must not consume the retry budget or trigger the "previous attempt failed"
+   * worker preamble.
    *
    * The status guard makes the reset atomic across multiple MCP server processes
    * sharing the same DB (nested MCP clients each open .tenet/.state/tenet.db):
@@ -579,11 +585,45 @@ export class StateStore {
             completed_at = NULL,
             last_heartbeat = NULL,
             error = NULL,
-            retry_count = retry_count + 1
+            retry_count = CASE WHEN status = 'completed' THEN 0 ELSE retry_count + 1 END
         WHERE id = @id AND status IN ('completed', 'failed')
         `,
       )
       .run({ id: jobId, params: JSON.stringify(params) });
+    return result.changes > 0;
+  }
+
+  /**
+   * Atomically transition a pending job to running. Returns true if THIS process
+   * won the transition; false if the job is no longer pending (already dispatched
+   * by another process, or in a terminal state).
+   *
+   * The status guard closes the dispatch TOCTOU: without it, two processes that
+   * both read 'pending' before either writes would both mark the job running and
+   * both schedule execution (double adapter invocation).
+   */
+  markJobRunning(jobId: string, startedAt: number, agentName?: string): boolean {
+    const result = this.db
+      .prepare(
+        `
+        UPDATE jobs
+        SET status = 'running',
+            started_at = @started_at,
+            last_heartbeat = @last_heartbeat,
+            agent_name = @agent_name
+        WHERE id = @id AND status = 'pending'
+        `,
+      )
+      .run({
+        id: jobId,
+        started_at: startedAt,
+        last_heartbeat: startedAt,
+        agent_name: agentName ?? null,
+      });
+    if (result.changes > 0) {
+      this.appendEvent(jobId, 'job_status_changed', { status: 'running' });
+      this.syncStatusFiles();
+    }
     return result.changes > 0;
   }
 

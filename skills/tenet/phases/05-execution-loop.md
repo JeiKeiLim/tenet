@@ -200,43 +200,49 @@ When a report-only job is dispatched, the worker dispatch path prepends a **Repo
 
 ## Finding-category dispatch
 
-When `tenet_start_eval` returns failing critics, read each finding's `category` and dispatch the correct follow-up. `tenet_retry_job` dispatches immediately (retry = run-now), so a job can be retried only **once per cycle** — consolidate ALL findings into a single retry call, then wait on the retried job with `tenet_job_wait` (it is running, not pending; `tenet_continue()` will not return it as `next_job`, and `tenet_start_job` on it throws):
+When `tenet_start_eval` returns failing critics, read each finding's `category` and dispatch the correct follow-up. `tenet_retry_job` dispatches immediately (retry = run-now), so a job can be retried only **once while running** — consolidate ALL findings into a single retry call, apply any backoff BEFORE calling it, then wait on the retried job with `tenet_job_wait` (it is running, not pending; `tenet_continue()` will not return it as `next_job`):
 
 ```
 findings = code_output.findings + test_output.findings
 if findings:
-    if any(f.category == "product_bug" for f in findings):
-        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Fix product bugs: " + "; ".join(f.detail for f in findings))
-        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
-    elif any(f.category == "test_bug" for f in findings):
-        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Strengthen or correct tests: " + "; ".join(f.detail for f in findings))
-        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
-    elif any(f.category == "harness_bug" for f in findings):
-        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Fix harness/build/test issue: " + "; ".join(f.detail for f in findings))
-        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
-    elif any(f.category == "evidence_mismatch" for f in findings):
-        tenet_retry_job(job_id=source_job.id, enhanced_prompt="Refresh evidence from current commands: " + "; ".join(f.detail for f in findings))
-        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
-    elif any(f.category == "contention" for f in findings):
-        # If we're in parallel mode for this feature, switch to sequential:
-        # Agent self-note -> context (sweepable), not directive
-        tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="context")
-        tenet_retry_job(job_id=source_job.id)
-        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
-    elif any(f.category == "scope_conflict" for f in findings):
-        # If this is a report-only job that discovered a blocking finding, use the
-        # blocking finding escape hatch. Otherwise retry with corrected scope.
-        if source_job.report_only:
-            tenet_report_blocking_finding(
-                job_id=source_job.id,
-                finding="; ".join(f.detail for f in findings),
-                why_it_blocks_report="The report-only job cannot produce a trustworthy report until this finding is resolved.",
-                recommended_followup="Resolve the scoped issue without report-only edits",
-                suspected_files=[]
-            )
+    # scope_conflict on a report-only job is the safety-critical case: escalate via
+    # the blocking finding escape hatch, never retry. Check it FIRST so a coexisting
+    # higher-priority category cannot skip it.
+    if any(f.category == "scope_conflict" for f in findings) and source_job.report_only:
+        tenet_report_blocking_finding(
+            job_id=source_job.id,
+            finding="; ".join(f.detail for f in findings),
+            why_it_blocks_report="The report-only job cannot produce a trustworthy report until this finding is resolved.",
+            recommended_followup="Resolve the scoped issue without report-only edits",
+            suspected_files=[]
+        )
+    else:
+        # Consolidate ALL findings into ONE retry call (a second retry on a running
+        # job throws). Apply backoff BEFORE the call — the job starts the moment
+        # tenet_retry_job is invoked.
+        if any(f.category == "product_bug" for f in findings):
+            prompt = "Fix product bugs: " + "; ".join(f.detail for f in findings)
+        elif any(f.category == "test_bug" for f in findings):
+            prompt = "Strengthen or correct tests: " + "; ".join(f.detail for f in findings)
+        elif any(f.category == "harness_bug" for f in findings):
+            prompt = "Fix harness/build/test issue: " + "; ".join(f.detail for f in findings)
+        elif any(f.category == "evidence_mismatch" for f in findings):
+            prompt = "Refresh evidence from current commands: " + "; ".join(f.detail for f in findings)
+        elif any(f.category == "contention" for f in findings):
+            # If we're in parallel mode for this feature, switch to sequential:
+            # Agent self-note -> context (sweepable), not directive
+            tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="context")
+            prompt = None  # retry as-is
         else:
-            tenet_retry_job(job_id=source_job.id, enhanced_prompt="Respect declared scope: " + "; ".join(f.detail for f in findings))
-            tenet_job_wait(job_id=source_job.id, wait_seconds=30)
+            prompt = "Respect declared scope: " + "; ".join(f.detail for f in findings)
+        if prompt:
+            tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)
+        else:
+            tenet_retry_job(job_id=source_job.id)
+        # The retried job is already running: wait on it with the backoff schedule
+        # (30s -> 45s -> 67s -> 100s -> 120s cap, never one blocking call), then
+        # re-run tenet_start_eval on its new output.
+        tenet_job_wait(job_id=source_job.id, wait_seconds=30)
 ```
 
 Plain "just retry" wastes cycles on test/harness/evidence bugs — route by category and include the category-specific context in the enhanced prompt. Use `tenet_report_blocking_finding` only for report-only jobs that must not edit files directly.

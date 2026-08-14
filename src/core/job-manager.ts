@@ -132,12 +132,16 @@ export class JobManager {
     }
 
     const now = Date.now();
-    this.stateStore.updateJob(jobId, {
-      status: 'running',
-      startedAt: now,
-      lastHeartbeat: now,
-      agentName: this.resolveAgentName(job.type),
-    });
+    // Atomic pending -> running: only one process can win. If another process
+    // dispatched it between our read and this update, return the current job
+    // instead of double-executing.
+    if (!this.stateStore.markJobRunning(jobId, now, this.resolveAgentName(job.type))) {
+      const current = this.stateStore.getJob(jobId);
+      if (!current) {
+        throw new Error(`failed to load dispatched job: ${jobId}`);
+      }
+      return current;
+    }
     this.stateStore.setJobServerId(jobId, this.serverId);
     this.stateStore.appendEvent(jobId, 'job_started', { type: job.type });
 
@@ -334,8 +338,11 @@ export class JobManager {
       return current;
     }
 
+    // A completed job is an intentional re-run (retry_count resets to 0); a failed
+    // job is a failure retry (retry_count increments). Mirrors resetJobForRetry.
+    const newRetryCount = job.status === 'completed' ? 0 : job.retryCount + 1;
     this.stateStore.appendEvent(jobId, 'job_retried', {
-      retry_count: job.retryCount + 1,
+      retry_count: newRetryCount,
       has_enhanced_prompt: !!enhancedPrompt,
     });
 
