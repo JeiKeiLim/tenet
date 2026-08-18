@@ -216,23 +216,19 @@ if findings:
         f.category in ("scope_conflict", "product_bug", "test_bug", "harness_bug") for f in findings
     ):
         # Only the escalation categories block the report; retryable categories
-        # (evidence_mismatch / contention) are excluded from the finding text.
-        blocking = [f for f in findings if f.category in ("scope_conflict", "product_bug", "test_bug", "harness_bug")]
-        # recommended_followup is passed verbatim to the linked dev follow-up job
-        # (which CAN edit files), so scope it to the matching category and address
-        # the dev job, not the paused report-only parent. Details live in the
-        # finding field; the followup is the directive.
-        if any(f.category == "product_bug" for f in blocking):
-            followup = "Fix the product bug the report-only eval identified (see Finding for details)"
-        elif any(f.category == "test_bug" for f in blocking):
-            followup = "Strengthen or correct the tests the report-only eval flagged (see Finding for details)"
-        elif any(f.category == "harness_bug" for f in blocking):
-            followup = "Fix the harness/build/test issue the report-only eval flagged (see Finding for details)"
+        # (evidence_mismatch / contention) are the report-only job's own concern.
+        # Unknown categories are included (they may need code changes).
+        blocking = [f for f in findings if f.category not in ("evidence_mismatch", "contention")]
+        # Label every detail with its category so the dev follow-up job can map
+        # them; name the blocking categories in the directive (multi-category safe).
+        finding = "; ".join(f"{f.category}: {f.detail}" for f in blocking)
+        if any(f.category == "scope_conflict" for f in blocking):
+            followup = "Revert the out-of-scope edits the report-only job made to project files (do not modify .tenet/project/** doctrine): see Finding for details"
         else:
-            followup = "Revert the out-of-scope edits and complete the work within declared scope (see Finding for details)"
+            followup = "Resolve the blocking findings the report-only eval identified (" + ", ".join(sorted({f.category for f in blocking})) + "): see Finding for details"
         tenet_report_blocking_finding(
             job_id=source_job.id,
-            finding="; ".join(f.detail for f in blocking),
+            finding=finding,
             why_it_blocks_report="The report-only job cannot produce a trustworthy report until this finding is resolved.",
             recommended_followup=followup,
             suspected_files=[]

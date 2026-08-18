@@ -159,12 +159,12 @@ End with: {"passed": true/false, "stage": "<your stage>", "findings": [{"categor
 - `stage` — your roster `stage` (e.g. `security_critic`).
 - `findings[].category` — MUST be one of the standard enum so the orchestrator
   routes the fix correctly (see `phases/06-evaluation.md`):
-  - `product_bug` — implementation doesn't match intent → retry the dev job
-  - `test_bug` — tests assert the wrong thing → retry with test-strengthening
-  - `harness_bug` — build/lint/test infra itself is broken → remediate infra
-  - `evidence_mismatch` — report numbers contradict fresh command output
-  - `contention` — looks like a sibling eval stepping on shared state
-  - `scope_conflict` — work outside the job's declared scope
+  - `product_bug` — implementation doesn't match intent → retry the dev job (report-only source: escalate via blocking finding)
+  - `test_bug` — tests assert the wrong thing → retry with test-strengthening (report-only source: escalate)
+  - `harness_bug` — build/lint/test infra itself is broken → remediate infra (report-only source: escalate)
+  - `evidence_mismatch` — report numbers contradict fresh command output (retryable from report scope)
+  - `contention` — looks like a sibling eval stepping on shared state (retryable from report scope)
+  - `scope_conflict` — work outside the job's declared scope (report-only source: escalate; normal job: retry with corrected scope)
 
 If a critic's output doesn't parse to this shape, the eval gate treats it as
 not-passed. So end the prompt with the literal contract line above.
