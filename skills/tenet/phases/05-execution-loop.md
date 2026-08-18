@@ -210,24 +210,29 @@ if findings:
     # finding that needs code changes (scope_conflict, product_bug, test_bug,
     # harness_bug) is a blocking finding: escalate via the escape hatch, never retry
     # a doomed re-run. evidence_mismatch (refresh its own report) and contention
-    # (re-run after siblings) are retryable from report scope. Check this FIRST so a
-    # coexisting higher-priority category cannot skip it.
+    # (re-run with a sequential-mode steer) are retryable from report scope. Check
+    # this FIRST so a coexisting higher-priority category cannot skip it.
     if source_job.params.report_only and any(
         f.category in ("scope_conflict", "product_bug", "test_bug", "harness_bug") for f in findings
     ):
-        # recommended_followup is passed verbatim to the linked dev follow-up job,
-        # so make it category-specific rather than a generic scope note.
-        if any(f.category == "product_bug" for f in findings):
-            followup = "Fix the product bug the report-only eval identified: " + "; ".join(f.detail for f in findings)
-        elif any(f.category == "test_bug" for f in findings):
-            followup = "Strengthen or correct the tests the report-only eval flagged: " + "; ".join(f.detail for f in findings)
-        elif any(f.category == "harness_bug" for f in findings):
-            followup = "Fix the harness/build/test issue the report-only eval flagged: " + "; ".join(f.detail for f in findings)
+        # Only the escalation categories block the report; retryable categories
+        # (evidence_mismatch / contention) are excluded from the finding text.
+        blocking = [f for f in findings if f.category in ("scope_conflict", "product_bug", "test_bug", "harness_bug")]
+        # recommended_followup is passed verbatim to the linked dev follow-up job
+        # (which CAN edit files), so scope it to the matching category and address
+        # the dev job, not the paused report-only parent. Details live in the
+        # finding field; the followup is the directive.
+        if any(f.category == "product_bug" for f in blocking):
+            followup = "Fix the product bug the report-only eval identified (see Finding for details)"
+        elif any(f.category == "test_bug" for f in blocking):
+            followup = "Strengthen or correct the tests the report-only eval flagged (see Finding for details)"
+        elif any(f.category == "harness_bug" for f in blocking):
+            followup = "Fix the harness/build/test issue the report-only eval flagged (see Finding for details)"
         else:
-            followup = "Respect declared scope without report-only edits: " + "; ".join(f.detail for f in findings)
+            followup = "Revert the out-of-scope edits and complete the work within declared scope (see Finding for details)"
         tenet_report_blocking_finding(
             job_id=source_job.id,
-            finding="; ".join(f.detail for f in findings),
+            finding="; ".join(f.detail for f in blocking),
             why_it_blocks_report="The report-only job cannot produce a trustworthy report until this finding is resolved.",
             recommended_followup=followup,
             suspected_files=[]
