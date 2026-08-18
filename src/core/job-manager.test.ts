@@ -400,6 +400,26 @@ describe('JobManager', () => {
     expect(() => manager.retryJob(job.id)).toThrowError(/exhausted retries \(3\/3\)/);
   });
 
+  it('re-runs a completed job even when the retry budget is zero (re-runs are exempt from the gate)', async () => {
+    const { store, manager } = createHarness();
+
+    // maxRetries=0 blocks FAILED-job retries, but a completed-job re-run resets
+    // retry_count to 0 and never consumes the budget, so the gate does not apply.
+    const job = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { prompt: 're-run me' },
+      retryCount: 0,
+      maxRetries: 0,
+    });
+
+    const rerun = manager.retryJob(job.id);
+    expect(rerun.status).toBe('running');
+    expect(rerun.retryCount).toBe(0);
+    await manager.waitForJob(job.id, null, 5_000);
+    expect(store.getJob(job.id)?.status).toBe('completed');
+  });
+
   it('completion resets retryCount, so re-running a completed job never exhausts the budget', async () => {
     const { store, manager } = createHarness();
 
@@ -539,6 +559,17 @@ describe('JobManager', () => {
     expect(store.markJobRunning(job.id, 2_000, 'mock-adapter')).toBe(false);
     expect(store.getJob(job.id)?.startedAt).toBe(1_000);
     expect(store.getJob(job.id)?.lastHeartbeat).toBe(1_000);
+
+    // Terminal-state jobs are also rejected by the same guard.
+    const terminal = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { prompt: 'done' },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+    expect(store.markJobRunning(terminal.id, 3_000, 'mock-adapter')).toBe(false);
+    expect(store.getJob(terminal.id)?.status).toBe('completed');
   });
 
   it('retryJob with enhanced_prompt replaces the prompt for the retried invocation', async () => {

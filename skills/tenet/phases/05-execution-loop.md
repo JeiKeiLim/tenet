@@ -43,7 +43,7 @@ Execute this sequence for every job cycle:
     Retrieve every returned eval result. ALL must pass. A critic/eval result passes **only** when it returns a valid rubric JSON with `passed: true`. A result with **no valid rubric JSON — a context-limit / error exit** (e.g. "prompt is too long", "maximum context length exceeded", a raw error string, or an empty/truncated body) — **is NOT a pass**, even though the job reached a terminal state. Do not treat a context-limited critic as "passed with partial result"; the resume gate already refuses to unblock on unparseable output, and you must do the same.
 
     **On a context-limit / no-rubric critic exit:**
-    - **Retry as-is first.** `tenet_retry_job(job_id)` the affected critic so it re-runs with fresh context. This counts against the job's normal retry budget (default unlimited); the retry dispatches immediately, so apply backoff BEFORE calling it, then wait with `tenet_job_wait`.
+    - **Retry as-is first.** `tenet_retry_job(job_id)` the affected critic so it re-runs with fresh context. If the critic job is still `failed`, the retry counts against its retry budget (default unlimited); if it already reached `completed` (e.g. a context-limit left an empty rubric that the adapter still marked success), the re-run is exempt from the budget gate. Either way the retry dispatches immediately, so apply backoff BEFORE calling it, then wait with `tenet_job_wait`.
     - **Split after 2 consecutive context-limits.** If the same critic context-limits twice in a row, the scope is too large for one pass — do not retry identical a third time. Split the critic's scope into multiple reduced-scope critic jobs (divide the files/diff into smaller batches, each its own eval job) and require all of those to pass. For a worker, redispatch as smaller sub-jobs.
     - **Never accept a context-limited result as a pass** to move on. If retries and splits keep failing, treat it as a failed eval: `tenet_retry_job` the source, or `tenet_report_blocking_finding` if a specific cause is suspected.
 11. **Update Knowledge or Retry**: `tenet_update_knowledge(...)` on success; `tenet_retry_job(...)` or `tenet_report_blocking_finding(...)` on failure, as described below.
@@ -206,10 +206,14 @@ When `tenet_start_eval` returns failing critics, read each finding's `category` 
 findings = code_output.findings + test_output.findings
 if findings:
     # report_only lives on the job's params (registration / tenet_compile_context),
-    # not as a top-level field. scope_conflict on a report-only job is the
-    # safety-critical case: escalate via the blocking finding escape hatch, never
-    # retry. Check it FIRST so a coexisting higher-priority category cannot skip it.
-    if any(f.category == "scope_conflict" for f in findings) and source_job.params.report_only:
+    # not as a top-level field. A report-only job cannot edit project files, so any
+    # finding that needs code changes (scope_conflict, product_bug, test_bug,
+    # harness_bug) is a blocking finding: escalate via the escape hatch, never retry
+    # a doomed re-run. Only evidence_mismatch is retryable (the job refreshes its own
+    # report). Check this FIRST so a coexisting higher-priority category cannot skip it.
+    if source_job.params.report_only and any(
+        f.category in ("scope_conflict", "product_bug", "test_bug", "harness_bug") for f in findings
+    ):
         tenet_report_blocking_finding(
             job_id=source_job.id,
             finding="; ".join(f.detail for f in findings),
@@ -220,10 +224,7 @@ if findings:
     else:
         # Consolidate ALL findings into ONE retry call (a second retry on a running
         # job throws). Apply backoff BEFORE the call — the job starts the moment
-        # tenet_retry_job is invoked. A report-only job can only act on
-        # evidence_mismatch (its own report); code-fix findings (product_bug /
-        # test_bug / harness_bug) cannot be fixed from report scope — escalate those
-        # via tenet_report_blocking_finding instead of a doomed retry.
+        # tenet_retry_job is invoked.
         if any(f.category == "product_bug" for f in findings):
             prompt = "Fix product bugs: " + "; ".join(f.detail for f in findings)
         elif any(f.category == "test_bug" for f in findings):
