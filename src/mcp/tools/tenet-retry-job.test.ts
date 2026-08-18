@@ -85,8 +85,17 @@ describe('tenet_retry_job', () => {
     expect(parsed.job_id).toBe(job.id);
     expect(parsed.status).toBe('running');
     expect(parsed.retry_count).toBe(1);
+    expect(parsed.max_retries).toBe(3);
+    expect(parsed.retry_limit).toBe('3');
     expect(parsed.next_tool).toBe('tenet_job_wait');
+    expect(parsed.next_args).toEqual({ job_id: job.id, wait_seconds: 30 });
     expect(store.getJob(job.id)?.status).toBe('running');
+  });
+
+  it('throws when the job does not exist', async () => {
+    const { handler } = createHarness();
+
+    await expect(handler({ job_id: '00000000-0000-4000-8000-000000000000' })).rejects.toThrow(/job not found/);
   });
 
   it('throws when a FAILED job has exhausted its retry budget', async () => {

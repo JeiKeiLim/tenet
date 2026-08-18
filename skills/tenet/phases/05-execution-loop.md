@@ -213,19 +213,17 @@ if findings:
     # (re-run with a sequential-mode steer) are retryable from report scope. Check
     # this FIRST so a coexisting higher-priority category cannot skip it.
     if source_job.params.report_only and any(
-        f.category in ("scope_conflict", "product_bug", "test_bug", "harness_bug") for f in findings
+        f.category not in ("evidence_mismatch", "contention") for f in findings
     ):
-        # Only the escalation categories block the report; retryable categories
-        # (evidence_mismatch / contention) are the report-only job's own concern.
-        # Unknown categories are included (they may need code changes).
+        # A report-only job cannot edit project files, so ANY finding that is not
+        # retryable from report scope (evidence_mismatch / contention) is a blocking
+        # finding — including unknown categories, which may need code changes.
+        # Escalate via the escape hatch, never retry a doomed re-run.
         blocking = [f for f in findings if f.category not in ("evidence_mismatch", "contention")]
         # Label every detail with its category so the dev follow-up job can map
-        # them; name the blocking categories in the directive (multi-category safe).
+        # them; name ALL blocking categories in the directive (multi-category safe).
         finding = "; ".join(f"{f.category}: {f.detail}" for f in blocking)
-        if any(f.category == "scope_conflict" for f in blocking):
-            followup = "Revert the out-of-scope edits the report-only job made to project files (do not modify .tenet/project/** doctrine): see Finding for details"
-        else:
-            followup = "Resolve the blocking findings the report-only eval identified (" + ", ".join(sorted({f.category for f in blocking})) + "): see Finding for details"
+        followup = "Resolve the blocking findings the report-only eval identified (" + ", ".join(sorted({f.category for f in blocking})) + "): see Finding for details"
         tenet_report_blocking_finding(
             job_id=source_job.id,
             finding=finding,
@@ -236,15 +234,17 @@ if findings:
     else:
         # Consolidate ALL findings into ONE retry call (a second retry on a running
         # job throws). Apply backoff BEFORE the call — the job starts the moment
-        # tenet_retry_job is invoked.
+        # tenet_retry_job is invoked. Label each detail with its category so a
+        # multi-category finding set is not mislabeled under one prefix.
+        labeled = "; ".join(f"{f.category}: {f.detail}" for f in findings)
         if any(f.category == "product_bug" for f in findings):
-            prompt = "Fix product bugs: " + "; ".join(f.detail for f in findings)
+            prompt = "Fix product bugs: " + labeled
         elif any(f.category == "test_bug" for f in findings):
-            prompt = "Strengthen or correct tests: " + "; ".join(f.detail for f in findings)
+            prompt = "Strengthen or correct tests: " + labeled
         elif any(f.category == "harness_bug" for f in findings):
-            prompt = "Fix harness/build/test issue: " + "; ".join(f.detail for f in findings)
+            prompt = "Fix harness/build/test issue: " + labeled
         elif any(f.category == "evidence_mismatch" for f in findings):
-            prompt = "Refresh evidence from current commands: " + "; ".join(f.detail for f in findings)
+            prompt = "Refresh evidence from current commands: " + labeled
         elif any(f.category == "contention" for f in findings):
             # If we're in parallel mode for this feature, switch to sequential:
             # Agent self-note -> context (sweepable), not directive
