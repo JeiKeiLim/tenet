@@ -503,6 +503,44 @@ describe('JobManager', () => {
     expect(store.getJob(job.id)?.retryCount).toBe(1);
   });
 
+  it('resetJobForRetry resets retry_count to 0 for a completed job (re-run, not failure retry)', () => {
+    const { store } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { prompt: 're-run me' },
+      retryCount: 3,
+      maxRetries: 3,
+    });
+
+    expect(store.resetJobForRetry(job.id, { prompt: 're-run me' })).toBe(true);
+    expect(store.getJob(job.id)?.status).toBe('pending');
+    expect(store.getJob(job.id)?.retryCount).toBe(0);
+  });
+
+  it('markJobRunning is atomic: only the first caller wins the pending->running transition', () => {
+    const { store } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { prompt: 'dispatch me' },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    // First caller wins: pending -> running.
+    expect(store.markJobRunning(job.id, 1_000, 'mock-adapter')).toBe(true);
+    expect(store.getJob(job.id)?.status).toBe('running');
+
+    // Second caller (another process): status is no longer pending, so the guard
+    // rejects the transition — no double dispatch / double execution.
+    expect(store.markJobRunning(job.id, 2_000, 'mock-adapter')).toBe(false);
+    expect(store.getJob(job.id)?.startedAt).toBe(1_000);
+    expect(store.getJob(job.id)?.lastHeartbeat).toBe(1_000);
+  });
+
   it('retryJob with enhanced_prompt replaces the prompt for the retried invocation', async () => {
     const { store, manager, adapter } = createHarness();
 

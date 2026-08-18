@@ -316,7 +316,10 @@ export class JobManager {
       throw new Error(`job ${jobId} is ${job.status}, can only retry completed or failed jobs`);
     }
 
-    if (!hasRetryBudgetRemaining(job.retryCount, job.maxRetries)) {
+    // A completed-job re-run is an intentional re-run, not a failure retry: it
+    // resets retry_count to 0 (resetJobForRetry) and never consumes the budget, so
+    // the budget gate does not apply. A failed-job retry consumes the budget.
+    if (job.status !== 'completed' && !hasRetryBudgetRemaining(job.retryCount, job.maxRetries)) {
       throw new Error(
         `job ${jobId} has exhausted retries (${job.retryCount}/${formatMaxRetries(job.maxRetries)})`,
       );

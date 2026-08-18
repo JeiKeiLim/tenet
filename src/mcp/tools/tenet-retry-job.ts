@@ -10,9 +10,10 @@ export const registerTenetRetryJobTool = (registerTool: RegisterTool, jobManager
       description:
         'Re-run a completed or failed job: resets it to pending and dispatches it ' +
         'immediately (run-now — the job starts the moment this tool is called). Preserves ' +
-        'DAG linkage and increments retry count. The retry budget may be finite or unlimited, ' +
-        'depending on Tenet config. Optionally provide an enhanced prompt to replace the ' +
-        'original (e.g. add failure context).',
+        'DAG linkage. Retry count increments for failed jobs and resets to 0 for ' +
+        'completed-job re-runs (intentional re-runs do not consume the retry budget). ' +
+        'The retry budget may be finite or unlimited, depending on Tenet config. ' +
+        'Optionally provide an enhanced prompt to replace the original (e.g. add failure context).',
       inputSchema: z.object({
         job_id: z.string().uuid(),
         enhanced_prompt: z
