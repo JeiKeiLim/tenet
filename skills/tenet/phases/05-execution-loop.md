@@ -209,16 +209,27 @@ if findings:
     # not as a top-level field. A report-only job cannot edit project files, so any
     # finding that needs code changes (scope_conflict, product_bug, test_bug,
     # harness_bug) is a blocking finding: escalate via the escape hatch, never retry
-    # a doomed re-run. Only evidence_mismatch is retryable (the job refreshes its own
-    # report). Check this FIRST so a coexisting higher-priority category cannot skip it.
+    # a doomed re-run. evidence_mismatch (refresh its own report) and contention
+    # (re-run after siblings) are retryable from report scope. Check this FIRST so a
+    # coexisting higher-priority category cannot skip it.
     if source_job.params.report_only and any(
         f.category in ("scope_conflict", "product_bug", "test_bug", "harness_bug") for f in findings
     ):
+        # recommended_followup is passed verbatim to the linked dev follow-up job,
+        # so make it category-specific rather than a generic scope note.
+        if any(f.category == "product_bug" for f in findings):
+            followup = "Fix the product bug the report-only eval identified: " + "; ".join(f.detail for f in findings)
+        elif any(f.category == "test_bug" for f in findings):
+            followup = "Strengthen or correct the tests the report-only eval flagged: " + "; ".join(f.detail for f in findings)
+        elif any(f.category == "harness_bug" for f in findings):
+            followup = "Fix the harness/build/test issue the report-only eval flagged: " + "; ".join(f.detail for f in findings)
+        else:
+            followup = "Respect declared scope without report-only edits: " + "; ".join(f.detail for f in findings)
         tenet_report_blocking_finding(
             job_id=source_job.id,
             finding="; ".join(f.detail for f in findings),
             why_it_blocks_report="The report-only job cannot produce a trustworthy report until this finding is resolved.",
-            recommended_followup="Resolve the scoped issue without report-only edits",
+            recommended_followup=followup,
             suspected_files=[]
         )
     else:

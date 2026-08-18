@@ -11,7 +11,8 @@ export const registerTenetRetryJobTool = (registerTool: RegisterTool, jobManager
         'Re-run a completed or failed job: resets it to pending and dispatches it ' +
         'immediately (run-now — the job starts the moment this tool is called). Preserves ' +
         'DAG linkage. retry_count resets to 0 for completed-job re-runs (exempt from the ' +
-        'retry budget gate) and increments for failed-job retries. The retry budget may be ' +
+        'retry budget gate) and increments for failed-job retries. A FAILED job whose ' +
+        'retry budget is exhausted throws instead of re-running. The retry budget may be ' +
         'finite or unlimited, depending on Tenet config. Optionally provide an enhanced ' +
         'prompt to replace the original (e.g. add failure context).',
       inputSchema: z.object({
