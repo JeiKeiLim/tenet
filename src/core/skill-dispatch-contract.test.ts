@@ -45,6 +45,24 @@ describe('skill finding-category dispatch contract', () => {
     }
   });
 
+  it('normalizes a multi-line trailing-comma exclusion set (fixture for the strip)', () => {
+    // The current doc is single-line, so the /,\s*$/ strip is unexercised by the
+    // real fixture. Pin the normalization directly so a regression to /,+$/ is
+    // caught.
+    const normalize = (raw: string): string[] =>
+      raw
+        .replace(/\s+/g, ' ')
+        .replace(/,\s*$/, '')
+        .trim()
+        .split(',')
+        .map((x) => x.trim())
+        .sort();
+    expect(normalize('\n    "evidence_mismatch",\n    "contention",\n')).toEqual([
+      '"contention"',
+      '"evidence_mismatch"',
+    ]);
+  });
+
   it('fires the contention steer as a context NOTE inside the guard, before the report-only gate', () => {
     // The steer must be guarded on contention (and INSIDE the guard block, not
     // dedented out of it), be class="context" (a note, not a command — no MCP tool
@@ -146,10 +164,12 @@ describe('skill finding-category dispatch contract', () => {
     // retry branch so a coexisting higher-priority category cannot skip it").
     // Textual ordering is pinnable here. The gate anchor is line-anchored so a
     // comment mentioning the code text cannot satisfy it.
-    const gateMatch = doc.match(/\n +if source_job\.params\.report_only/);
+    // Anchor the gate condition semantics too (and any, not and not any / all).
+    const gateMatch = doc.match(/\n +if source_job\.params\.report_only and any\(/);
     // Whitespace-tolerant regex that still pins the enhanced_prompt (the
-    // category-routing behavior) and tolerates a multi-line reformat.
-    const retryMatch = doc.match(/tenet_retry_job\(job_id=source_job\.id,\s+enhanced_prompt=prompt\)/);
+    // category-routing behavior) and tolerates multi-line reformats, trailing
+    // commas, and added keyword args.
+    const retryMatch = doc.match(/tenet_retry_job\(\s*job_id=source_job\.id[\s\S]*?enhanced_prompt=prompt/);
     expect(gateMatch).not.toBeNull();
     expect(retryMatch).not.toBeNull();
     const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;

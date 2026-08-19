@@ -207,8 +207,9 @@ findings = code_output.findings + test_output.findings
 if findings:
     # If contention is present, add a context steer noting it, regardless of which
     # branch below wins — a higher-priority category must not skip it. Read the
-    # steer back via tenet_process_steer. eval_parallel_safe is written by the
-    # readiness gate (no MCP tool sets it), so the steer is a note, not a command.
+    # steer back via tenet_process_steer. eval_parallel_safe is written only by
+    # the readiness gate (no MCP tool sets it directly), so the steer is a note,
+    # not a command.
     # The report-only gate below is the override: when a blocking category
     # coexists on a report-only job, it escalates instead of retrying. Otherwise,
     # if contention recurs in parallel mode, re-run tenet_validate_readiness to
