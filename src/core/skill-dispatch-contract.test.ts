@@ -27,22 +27,31 @@ describe('skill finding-category dispatch contract', () => {
     }
   });
 
-  it('fires the contention steer as a context NOTE before the report-only gate', () => {
-    // The steer must be guarded on contention, be class="context" (a note, not a
-    // command — no MCP tool can set eval_parallel_safe), and precede the
-    // report_only gate so a higher-priority category cannot skip it on either path.
-    const guardIdx = doc.indexOf('if any(f.category == "contention" for f in findings)');
+  it('fires the contention steer as a context NOTE inside the guard, before the report-only gate', () => {
+    // The steer must be guarded on contention (and INSIDE the guard block, not
+    // dedented out of it), be class="context" (a note, not a command — no MCP tool
+    // can set eval_parallel_safe), and precede the report_only gate so a
+    // higher-priority category cannot skip it on either path.
+    const guardMatch = doc.match(/\n {4}if any\(f\.category == "contention"/);
     const steerIdx = doc.indexOf('tenet_add_steer(content=f"contention detected in eval');
     const gateIdx = doc.indexOf('if source_job.params.report_only');
-    expect(guardIdx).toBeGreaterThan(-1);
+    expect(guardMatch).not.toBeNull();
     expect(steerIdx).toBeGreaterThan(-1);
     expect(gateIdx).toBeGreaterThan(-1);
+    const guardIdx = guardMatch ? guardMatch.index ?? -1 : -1;
     expect(guardIdx).toBeLessThan(steerIdx);
     expect(steerIdx).toBeLessThan(gateIdx);
-    // The steer call must carry class="context" (search the call, not just one
-    // line, so a multi-line reformat does not false-fail).
-    const steerCall = doc.slice(steerIdx, doc.indexOf(')', steerIdx));
-    expect(steerCall).toContain('class="context"');
+    // The steer must be indented deeper than the guard (inside its block).
+    const lineStart = (idx: number): number => doc.lastIndexOf('\n', idx) + 1;
+    const guardLine = doc.slice(lineStart(guardIdx), doc.indexOf('\n', guardIdx));
+    const steerLine = doc.slice(lineStart(steerIdx), doc.indexOf('\n', steerIdx));
+    const guardIndent = guardLine.match(/^ */)?.[0].length ?? 0;
+    const steerIndent = steerLine.match(/^ */)?.[0].length ?? 0;
+    expect(steerIndent).toBeGreaterThan(guardIndent);
+    // The steer call must carry class="context" (search a window after the call
+    // start so a ')' inside the content string does not truncate the match).
+    const steerWindow = doc.slice(steerIdx, steerIdx + 300);
+    expect(steerWindow).toContain('class="context"');
   });
 
   it('checks the report-only gate before the retry branch', () => {

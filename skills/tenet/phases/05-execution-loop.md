@@ -210,8 +210,10 @@ if findings:
     # steer back via tenet_process_steer. eval_parallel_safe is written by the
     # readiness gate (no MCP tool sets it), so the steer is a note, not a command:
     # if contention recurs in parallel mode, re-run tenet_validate_readiness to
-    # re-evaluate the verdict (it can flip a wrong one); if it still recurs, report
-    # it to the user.
+    # re-evaluate the verdict (it can flip a wrong one), wait for the readiness job
+    # to complete (tenet_job_wait + tenet_job_result) before re-running
+    # tenet_start_eval; if the re-run returns passed:false or omits the verdict, or
+    # contention still recurs, report it to the user.
     if any(f.category == "contention" for f in findings):
         tenet_add_steer(content=f"contention detected in eval for {feature}", class="context")
     # report_only lives on the job's params (registration / tenet_compile_context),
