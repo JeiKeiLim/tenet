@@ -156,6 +156,10 @@ describe('skill finding-category dispatch contract', () => {
     expect(lower).toContain('add a context steer noting it');
     expect(lower).toContain('retryable from report scope');
     expect(lower).toContain('if a blocking category coexists on a report-only job, escalate instead');
+    // The recur chain must carry all three report triggers, matching 05/06.
+    expect(lower).toContain('passed: false');
+    expect(lower).toContain('omits the verdict');
+    expect(lower).toContain('still recurs');
   });
 
   it('checks the report-only gate before the retry branch', () => {
@@ -218,13 +222,20 @@ describe('skill finding-category dispatch contract', () => {
     // arguments — whitespace-tolerant for a multi-line close.
     const contentionIdx = doc.indexOf('elif any(f.category == "contention"');
     expect(contentionIdx).toBeGreaterThan(-1);
-    // prompt = None must appear INSIDE the contention branch: slice from the
-    // elif to the next statement at the same indentation (the else), and require
-    // the line-anchored assignment there — a prompt=None in a later branch or
-    // prose cannot satisfy it.
-    const branchEnd = doc.indexOf('\n        else:', contentionIdx);
-    const contentionSlice = doc.slice(contentionIdx, branchEnd > -1 ? branchEnd : undefined);
-    expect(contentionSlice).toMatch(/\n +prompt = None/);
+    // prompt = None must appear INSIDE the contention branch body. Derive the
+    // elif's indentation (whitespace-tolerant to re-indentation), slice to the
+    // next statement at the SAME indentation (the else), and require the
+    // assignment indented DEEPER than the elif — a dedented or later-branch
+    // prompt=None cannot satisfy it.
+    const contentionLineStart = doc.lastIndexOf('\n', contentionIdx) + 1;
+    const contentionIndent = doc.slice(contentionLineStart, contentionIdx).match(/^ */)?.[0].length ?? 0;
+    const rest = doc.slice(contentionIdx);
+    const branchEnd = rest.search(new RegExp(`\\n {${contentionIndent}}else:`));
+    expect(branchEnd).toBeGreaterThan(-1);
+    const contentionSlice = rest.slice(0, branchEnd);
+    const promptNoneMatch = contentionSlice.match(/\n( +)prompt = None/);
+    expect(promptNoneMatch).not.toBeNull();
+    expect(promptNoneMatch![1].length).toBeGreaterThan(contentionIndent);
     expect(doc).toMatch(/\n +if prompt:/);
     expect(doc).toMatch(/\n +else:\s*\n\s+tenet_retry_job\(\s*job_id=source_job\.id\s*\)/);
   });
