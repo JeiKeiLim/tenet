@@ -28,16 +28,21 @@ describe('skill finding-category dispatch contract', () => {
   });
 
   it('fires the contention steer as a context NOTE before the report-only gate', () => {
-    // The steer must be class="context" (a note, not a command — no MCP tool can
-    // set eval_parallel_safe) and must precede the report_only gate so a
-    // higher-priority category cannot skip it on either path.
+    // The steer must be guarded on contention, be class="context" (a note, not a
+    // command — no MCP tool can set eval_parallel_safe), and precede the
+    // report_only gate so a higher-priority category cannot skip it on either path.
+    const guardIdx = doc.indexOf('if any(f.category == "contention" for f in findings)');
     const steerIdx = doc.indexOf('tenet_add_steer(content=f"contention detected in eval');
     const gateIdx = doc.indexOf('if source_job.params.report_only');
+    expect(guardIdx).toBeGreaterThan(-1);
     expect(steerIdx).toBeGreaterThan(-1);
     expect(gateIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(steerIdx);
     expect(steerIdx).toBeLessThan(gateIdx);
-    const steerLine = doc.slice(steerIdx, doc.indexOf('\n', steerIdx));
-    expect(steerLine).toContain('class="context"');
+    // The steer call must carry class="context" (search the call, not just one
+    // line, so a multi-line reformat does not false-fail).
+    const steerCall = doc.slice(steerIdx, doc.indexOf(')', steerIdx));
+    expect(steerCall).toContain('class="context"');
   });
 
   it('checks the report-only gate before the retry branch', () => {
