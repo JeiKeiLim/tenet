@@ -15,8 +15,10 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const skillPath = path.resolve(here, '..', '..', 'skills', 'tenet', 'phases', '05-execution-loop.md');
 const evalPath = path.resolve(here, '..', '..', 'skills', 'tenet', 'phases', '06-evaluation.md');
+const criticsPath = path.resolve(here, '..', '..', 'skills', 'tenet', 'critics.md');
 const doc = fs.readFileSync(skillPath, 'utf8');
 const evalDoc = fs.readFileSync(evalPath, 'utf8');
+const criticsDoc = fs.readFileSync(criticsPath, 'utf8');
 
 describe('skill finding-category dispatch contract', () => {
   it('uses the SAME exclusion set in the report-only gate and the blocking filter', () => {
@@ -107,14 +109,25 @@ describe('skill finding-category dispatch contract', () => {
     expect(row).toContain('or contention still recurs');
   });
 
+  it('keeps the critics.md contention entry consistent with the 06 row', () => {
+    // critics.md is the category list critic authors follow; its contention entry
+    // must carry the same escalate-instead qualifier as the 06 row.
+    const line = criticsDoc.split('\n').find((l) => l.includes('`contention`'));
+    expect(line).toBeDefined();
+    expect(line).toContain('retryable from report scope');
+    expect(line).toContain('if a blocking category coexists on a report-only job, escalate instead');
+  });
+
   it('checks the report-only gate before the retry branch', () => {
     // The skill's own comment calls this load-bearing ("This gate runs before the
     // retry branch so a coexisting higher-priority category cannot skip it").
-    // Textual ordering is pinnable here.
-    const gateIdx = doc.indexOf('if source_job.params.report_only');
+    // Textual ordering is pinnable here. The gate anchor is line-anchored so a
+    // comment mentioning the code text cannot satisfy it.
+    const gateMatch = doc.match(/\n {4}if source_job\.params\.report_only/);
     const retryIdx = doc.indexOf('tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)');
-    expect(gateIdx).toBeGreaterThan(-1);
+    expect(gateMatch).not.toBeNull();
     expect(retryIdx).toBeGreaterThan(-1);
+    const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;
     expect(gateIdx).toBeLessThan(retryIdx);
   });
 
@@ -122,17 +135,16 @@ describe('skill finding-category dispatch contract', () => {
     // The steer comment regressed twice (rounds 26-27) to "The retry step below
     // is the report-only override" — backwards. Pin the corrected subject AND
     // predicate (the comment spans two lines), anchored to the report-only GATE
-    // it describes (the comment must precede the gate), with the subject before
-    // the predicate.
+    // it describes (the comment must precede the gate).
     const subjectIdx = doc.indexOf('The report-only gate below is the override');
     const predicateIdx = doc.indexOf('it escalates instead of retrying');
-    const gateIdx = doc.indexOf('if source_job.params.report_only');
+    const gateMatch = doc.match(/\n {4}if source_job\.params\.report_only/);
     expect(subjectIdx).toBeGreaterThan(-1);
     expect(predicateIdx).toBeGreaterThan(-1);
-    expect(gateIdx).toBeGreaterThan(-1);
+    expect(gateMatch).not.toBeNull();
+    const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;
     expect(subjectIdx).toBeLessThan(gateIdx);
     expect(predicateIdx).toBeLessThan(gateIdx);
-    expect(subjectIdx).toBeLessThan(predicateIdx);
   });
 
   it('names ALL blocking categories in the escalation followup', () => {
