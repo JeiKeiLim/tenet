@@ -214,7 +214,7 @@ if findings:
     # to complete (tenet_job_wait + tenet_job_result) before re-running
     # tenet_start_eval; if the re-run returns passed:false (the feature is not
     # ready) or omits the verdict, or contention still recurs, report it to the
-    # user. The retry step below is the report-only override: if a blocking
+    # user. The retry step below is the report-only override: when a blocking
     # category coexists on a report-only job, escalate instead of retrying (see
     # the report-only gate below).
     if any(f.category == "contention" for f in findings):

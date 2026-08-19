@@ -63,20 +63,22 @@ describe('skill finding-category dispatch contract', () => {
     // contention row has regressed repeatedly (wrong-condition negation, missing
     // steer step, missing read-back). Pin the load-bearing contingency chain IN
     // ORDER (steer -> read-back -> retry -> if recurs -> re-run readiness -> wait
-    // -> re-run eval), plus the escalate qualifier (with its coexists + report-only
-    // conditions) and the OR'd report triggers as presence-only. The escalate
-    // qualifier must precede the parallel-mode recursion (it is part of the retry
-    // decision, not the terminal action), but its order relative to the retry verb
-    // is a phrasing choice.
+    // -> re-run eval -> report to user). The escalate qualifier must sit after
+    // the steer/read-back and before the parallel-mode recursion (it is part of
+    // the retry decision, not the terminal action), but its order relative to the
+    // retry verb is a phrasing choice. The OR'd report triggers must precede the
+    // report action (their relative order is arbitrary).
     const row = evalDoc.split('\n').find((l) => l.includes('`contention`'));
     expect(row).toBeDefined();
     const ordered = [
       'context steer',
       'tenet_process_steer',
+      'retry the source job',
       'if it recurs in parallel mode',
       'tenet_validate_readiness',
       'wait for it to complete',
       're-run the eval',
+      'report it to the user',
     ];
     let prev = -1;
     for (const s of ordered) {
@@ -84,23 +86,22 @@ describe('skill finding-category dispatch contract', () => {
       expect(idx).toBeGreaterThan(prev);
       prev = idx;
     }
-    for (const s of [
-      'retry the source job',
-      'if a blocking category coexists on a report-only job, escalate instead',
-      'passed: false',
-      'omits the verdict',
-      'still recurs',
-      'or omits the verdict',
-      'or contention still recurs',
-    ]) {
-      expect(row).toContain(s);
-    }
-    // The escalate qualifier must precede the parallel-mode recursion.
+    // Escalate qualifier: after the steer/read-back, before the recursion.
     const escalateIdx = row!.indexOf('escalate instead');
+    const steerIdx = row!.indexOf('tenet_process_steer');
     const recursIdx = row!.indexOf('if it recurs in parallel mode');
-    expect(escalateIdx).toBeGreaterThan(-1);
-    expect(recursIdx).toBeGreaterThan(-1);
+    expect(escalateIdx).toBeGreaterThan(steerIdx);
     expect(escalateIdx).toBeLessThan(recursIdx);
+    expect(row).toContain('if a blocking category coexists on a report-only job, escalate instead');
+    // The OR'd report triggers must precede the report action; OR connectors stay OR.
+    const reportIdx = row!.indexOf('report it to the user');
+    for (const t of ['passed: false', 'omits the verdict', 'still recurs']) {
+      const idx = row!.indexOf(t);
+      expect(idx).toBeGreaterThan(-1);
+      expect(idx).toBeLessThan(reportIdx);
+    }
+    expect(row).toContain('or omits the verdict');
+    expect(row).toContain('or contention still recurs');
   });
 
   it('checks the report-only gate before the retry branch', () => {
