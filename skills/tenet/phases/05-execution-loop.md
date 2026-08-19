@@ -214,7 +214,8 @@ if findings:
     # to complete (tenet_job_wait + tenet_job_result) before re-running
     # tenet_start_eval; if the re-run returns passed:false (the feature is not
     # ready) or omits the verdict, or contention still recurs, report it to the
-    # user.
+    # user. On a report-only job, a coexisting blocking category escalates instead
+    # of retrying (see the report-only gate below).
     if any(f.category == "contention" for f in findings):
         tenet_add_steer(content=f"contention detected in eval for {feature}", class="context")
     # report_only lives on the job's params (registration / tenet_compile_context),

@@ -61,12 +61,13 @@ describe('skill finding-category dispatch contract', () => {
   it('pins the 06 contention row invariants and their order', () => {
     // The 06 finding-categories table is the canonical routing reference and its
     // contention row has regressed repeatedly (wrong-condition negation, missing
-    // steer step, missing read-back). Pin the full contingency chain IN ORDER —
-    // the wait must precede the eval re-run, and the report triggers must be
-    // present — so a reorder or a wrong-condition negation cannot slip through.
+    // steer step, missing read-back). Pin the load-bearing contingency chain IN
+    // ORDER (steer -> read-back -> retry -> if recurs -> re-run readiness -> wait
+    // -> re-run eval -> report), plus the escalate qualifier and the OR'd report
+    // triggers as presence-only (their relative order is semantically arbitrary).
     const row = evalDoc.split('\n').find((l) => l.includes('`contention`'));
     expect(row).toBeDefined();
-    const chain = [
+    const ordered = [
       'context steer',
       'tenet_process_steer',
       'retry the source job',
@@ -74,16 +75,16 @@ describe('skill finding-category dispatch contract', () => {
       'tenet_validate_readiness',
       'wait for it to complete',
       're-run the eval',
-      'passed: false',
-      'omits the verdict',
-      'still recurs',
       'report it to the user',
     ];
     let prev = -1;
-    for (const s of chain) {
+    for (const s of ordered) {
       const idx = row!.indexOf(s);
       expect(idx).toBeGreaterThan(prev);
       prev = idx;
+    }
+    for (const s of ['escalate instead', 'passed: false', 'omits the verdict', 'still recurs']) {
+      expect(row).toContain(s);
     }
   });
 
