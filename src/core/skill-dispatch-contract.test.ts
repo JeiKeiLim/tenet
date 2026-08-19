@@ -33,6 +33,17 @@ describe('skill finding-category dispatch contract', () => {
     expect(steerIdx).toBeLessThan(gateIdx);
   });
 
+  it('checks the report-only gate before the retry branch', () => {
+    // The skill's own comment calls this load-bearing ("This gate runs before the
+    // retry branch so a coexisting higher-priority category cannot skip it"), and
+    // it has regressed before (round-8/9). Textual ordering is pinnable here.
+    const gateIdx = doc.indexOf('if source_job.params.report_only');
+    const retryIdx = doc.indexOf('tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)');
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(retryIdx).toBeGreaterThan(-1);
+    expect(gateIdx).toBeLessThan(retryIdx);
+  });
+
   it('names ALL blocking categories in the escalation followup', () => {
     expect(doc).toContain('", ".join(sorted({f.category for f in blocking}))');
   });
