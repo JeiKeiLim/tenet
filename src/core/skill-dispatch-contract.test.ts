@@ -68,7 +68,7 @@ describe('skill finding-category dispatch contract', () => {
     // the retry decision, not the terminal action), but its order relative to the
     // retry verb is a phrasing choice. The OR'd report triggers must precede the
     // report action (their relative order is arbitrary).
-    const row = evalDoc.split('\n').find((l) => l.includes('`contention`'));
+    const row = evalDoc.split('\n').find((l) => l.startsWith('| `contention` |'));
     expect(row).toBeDefined();
     const ordered = [
       'context steer',
@@ -116,6 +116,12 @@ describe('skill finding-category dispatch contract', () => {
     expect(gateIdx).toBeGreaterThan(-1);
     expect(retryIdx).toBeGreaterThan(-1);
     expect(gateIdx).toBeLessThan(retryIdx);
+  });
+
+  it('names the report-only GATE (not the retry step) as the override', () => {
+    // The steer comment regressed twice (rounds 26-27) to "The retry step below
+    // is the report-only override" — backwards. Pin the corrected phrasing.
+    expect(doc).toContain('The report-only gate below is the override');
   });
 
   it('names ALL blocking categories in the escalation followup', () => {
