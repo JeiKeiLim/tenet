@@ -26,7 +26,7 @@ describe('skill finding-category dispatch contract', () => {
   });
 
   it('fires the contention steer before the report-only gate', () => {
-    const steerIdx = doc.indexOf('tenet_add_steer(content=f"set eval_parallel_safe=false');
+    const steerIdx = doc.indexOf('tenet_add_steer(content=f"contention detected in eval');
     const gateIdx = doc.indexOf('if source_job.params.report_only');
     expect(steerIdx).toBeGreaterThan(-1);
     expect(gateIdx).toBeGreaterThan(-1);
@@ -35,8 +35,8 @@ describe('skill finding-category dispatch contract', () => {
 
   it('checks the report-only gate before the retry branch', () => {
     // The skill's own comment calls this load-bearing ("This gate runs before the
-    // retry branch so a coexisting higher-priority category cannot skip it"), and
-    // it has regressed before (round-8/9). Textual ordering is pinnable here.
+    // retry branch so a coexisting higher-priority category cannot skip it").
+    // Textual ordering is pinnable here.
     const gateIdx = doc.indexOf('if source_job.params.report_only');
     const retryIdx = doc.indexOf('tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)');
     expect(gateIdx).toBeGreaterThan(-1);
