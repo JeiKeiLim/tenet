@@ -167,13 +167,14 @@ describe('skill finding-category dispatch contract', () => {
     // whitespace-tolerant across a multi-line reformat, optional parens, and the
     // `if (` style.
     const gateMatch = doc.match(/\n +if \(?\s*source_job\.params\.report_only\s+and\s+\(?\s*any\(/);
-    // Line-anchored, order-independent regex that pins enhanced_prompt=prompt as
-    // an argument of the SAME retry call: [^)]*? stops at the call's closing
-    // paren (best-effort — a nested call's paren can still be crossed), the
-    // leading \n + means a comment line (starting with #) cannot satisfy it, and
-    // the [,)] boundary means prompt is not matched as a prefix of a longer value.
+    // Line-anchored regex that pins enhanced_prompt=prompt as an argument of the
+    // SAME retry call: [^)]*? stops at the call's closing paren (best-effort — a
+    // nested call's paren can still be crossed), the leading \n + means a comment
+    // line (starting with #) cannot satisfy it, and the [,)\s] boundaries mean
+    // neither argument is matched as a prefix of a longer value nor broken by a
+    // multi-line last-argument reformat.
     const retryMatch = doc.match(
-      /\n +tenet_retry_job\(\s*(?:job_id=source_job\.id[^)]*?enhanced_prompt=prompt[,)]|enhanced_prompt=prompt[,)][^)]*?job_id=source_job\.id)/,
+      /\n +tenet_retry_job\(\s*job_id=source_job\.id[,)\s][^)]*?enhanced_prompt=prompt[,)\s]/,
     );
     expect(gateMatch).not.toBeNull();
     expect(retryMatch).not.toBeNull();
@@ -189,7 +190,7 @@ describe('skill finding-category dispatch contract', () => {
     // it describes (the comment must precede the gate).
     const subjectIdx = doc.indexOf('The report-only gate below is the override');
     const predicateIdx = doc.indexOf('it escalates instead of retrying');
-    const gateMatch = doc.match(/\n +if source_job\.params\.report_only/);
+    const gateMatch = doc.match(/\n +if \(?\s*source_job\.params\.report_only\s+and\s+\(?\s*any\(/);
     expect(subjectIdx).toBeGreaterThan(-1);
     expect(predicateIdx).toBeGreaterThan(-1);
     expect(gateMatch).not.toBeNull();
@@ -204,9 +205,16 @@ describe('skill finding-category dispatch contract', () => {
 
   it('labels retry-path details with their category', () => {
     expect(doc).toContain('labeled = "; ".join(f"{f.category}: {f.detail}" for f in findings)');
-    // The prompt passed to tenet_retry_job must actually be built from labeled
-    // (a regression that drops "+ labeled" from the prompt construction ships an
-    // unlabeled prompt with no test failure).
-    expect(doc).toMatch(/prompt = "[^"]*" \+ labeled/);
+    // The prompt passed to tenet_retry_job must actually be built from labeled.
+    // Line-anchored (a comment cannot satisfy it), with a boundary after labeled
+    // (a renamed variable cannot satisfy it), and ALL category branches must
+    // retain the concatenation (a partial drop ships unlabeled prompts).
+    const labeledUses = [...doc.matchAll(/\n +prompt = "[^"]*" \+ labeled\b/g)];
+    expect(labeledUses.length).toBeGreaterThanOrEqual(5);
+    // The if prompt: / else: guard must exist so the contention-only path
+    // (prompt = None) retries as-is instead of passing enhanced_prompt=null to a
+    // tool whose schema is z.string().optional() (null fails validation).
+    expect(doc).toMatch(/\n +if prompt:/);
+    expect(doc).toMatch(/\n +else:\n +tenet_retry_job\(job_id=source_job\.id\)/);
   });
 });
