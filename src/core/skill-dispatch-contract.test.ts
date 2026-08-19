@@ -167,14 +167,14 @@ describe('skill finding-category dispatch contract', () => {
     // whitespace-tolerant across a multi-line reformat, optional parens, and the
     // `if (` style.
     const gateMatch = doc.match(/\n +if \(?\s*source_job\.params\.report_only\s+and\s+\(?\s*any\(/);
-    // Line-anchored regex that pins enhanced_prompt=prompt as an argument of the
-    // SAME retry call: [^)]*? stops at the call's closing paren (best-effort — a
-    // nested call's paren can still be crossed), the leading \n + means a comment
-    // line (starting with #) cannot satisfy it, and the [,)\s] boundaries mean
-    // neither argument is matched as a prefix of a longer value nor broken by a
-    // multi-line last-argument reformat.
+    // Line-anchored, order-independent regex that pins enhanced_prompt=prompt as
+    // an argument of the SAME retry call: the first arg must be followed by a
+    // comma (so a bare call cannot match and [^)]*? cannot span across calls),
+    // the leading \n + means a comment line (starting with #) cannot satisfy it,
+    // and the [,)\s] boundary after prompt tolerates a multi-line last-argument
+    // reformat without matching a prefix of a longer value.
     const retryMatch = doc.match(
-      /\n +tenet_retry_job\(\s*job_id=source_job\.id[,)\s][^)]*?enhanced_prompt=prompt[,)\s]/,
+      /\n +tenet_retry_job\(\s*(?:job_id=source_job\.id,[^)]*?enhanced_prompt=prompt[,)\s]|enhanced_prompt=prompt[,)\s][^)]*?job_id=source_job\.id[,)\s])/,
     );
     expect(gateMatch).not.toBeNull();
     expect(retryMatch).not.toBeNull();
@@ -211,10 +211,12 @@ describe('skill finding-category dispatch contract', () => {
     // retain the concatenation (a partial drop ships unlabeled prompts).
     const labeledUses = [...doc.matchAll(/\n +prompt = "[^"]*" \+ labeled\b/g)];
     expect(labeledUses.length).toBeGreaterThanOrEqual(5);
-    // The if prompt: / else: guard must exist so the contention-only path
-    // (prompt = None) retries as-is instead of passing enhanced_prompt=null to a
-    // tool whose schema is z.string().optional() (null fails validation).
+    // The contention branch must set prompt = None, and the if prompt: / else:
+    // guard must exist, so the contention-only path retries as-is instead of
+    // passing enhanced_prompt=null to a tool whose schema is z.string().optional()
+    // (null fails validation).
+    expect(doc).toMatch(/\n +prompt = None/);
     expect(doc).toMatch(/\n +if prompt:/);
-    expect(doc).toMatch(/\n +else:\n +tenet_retry_job\(job_id=source_job\.id\)/);
+    expect(doc).toMatch(/\n +else:\s*\n\s+tenet_retry_job\(job_id=source_job\.id[,)\s]/);
   });
 });
