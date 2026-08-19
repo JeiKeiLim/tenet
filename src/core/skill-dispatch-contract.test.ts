@@ -32,7 +32,7 @@ describe('skill finding-category dispatch contract', () => {
     // dedented out of it), be class="context" (a note, not a command — no MCP tool
     // can set eval_parallel_safe), and precede the report_only gate so a
     // higher-priority category cannot skip it on either path.
-    const guardMatch = doc.match(/\n {4}if any\(f\.category == "contention"/);
+    const guardMatch = doc.match(/\n +if any\(f\.category == "contention"/);
     const steerIdx = doc.indexOf('tenet_add_steer(content=f"contention detected in eval');
     const gateIdx = doc.indexOf('if source_job.params.report_only');
     expect(guardMatch).not.toBeNull();
@@ -42,16 +42,16 @@ describe('skill finding-category dispatch contract', () => {
     expect(guardIdx).toBeLessThan(steerIdx);
     expect(steerIdx).toBeLessThan(gateIdx);
     // The steer must be indented deeper than the guard (inside its block).
-    const lineStart = (idx: number): number => doc.lastIndexOf('\n', idx) + 1;
-    const guardLine = doc.slice(lineStart(guardIdx), doc.indexOf('\n', guardIdx));
-    const steerLine = doc.slice(lineStart(steerIdx), doc.indexOf('\n', steerIdx));
+    // guardIdx points at the '\n' before the guard line, so the guard line runs
+    // from guardIdx+1 to the next '\n'.
+    const guardLine = doc.slice(guardIdx + 1, doc.indexOf('\n', guardIdx + 1));
+    const steerLine = doc.slice(doc.lastIndexOf('\n', steerIdx) + 1, doc.indexOf('\n', steerIdx));
     const guardIndent = guardLine.match(/^ */)?.[0].length ?? 0;
     const steerIndent = steerLine.match(/^ */)?.[0].length ?? 0;
     expect(steerIndent).toBeGreaterThan(guardIndent);
-    // The steer call must carry class="context" (search a window after the call
-    // start so a ')' inside the content string does not truncate the match).
-    const steerWindow = doc.slice(steerIdx, steerIdx + 300);
-    expect(steerWindow).toContain('class="context"');
+    // The steer call must carry class="context" — assert the exact call so a
+    // comment or later line cannot satisfy the check vacuously.
+    expect(doc).toContain('tenet_add_steer(content=f"contention detected in eval for {feature}", class="context")');
   });
 
   it('checks the report-only gate before the retry branch', () => {
