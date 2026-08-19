@@ -37,20 +37,21 @@ describe('skill finding-category dispatch contract', () => {
     // can set eval_parallel_safe), and precede the report_only gate so a
     // higher-priority category cannot skip it on either path.
     const guardMatch = doc.match(/\n +if any\(f\.category == "contention"/);
-    const steerIdx = doc.indexOf('tenet_add_steer(content=f"contention detected in eval');
+    const steerMatch = doc.match(/\n +tenet_add_steer\(content=f"contention detected in eval/);
     const gateMatch = doc.match(/\n +if source_job\.params\.report_only/);
     expect(guardMatch).not.toBeNull();
-    expect(steerIdx).toBeGreaterThan(-1);
+    expect(steerMatch).not.toBeNull();
     expect(gateMatch).not.toBeNull();
     const guardIdx = guardMatch ? guardMatch.index ?? -1 : -1;
+    const steerIdx = steerMatch ? steerMatch.index ?? -1 : -1;
     const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;
     expect(guardIdx).toBeLessThan(steerIdx);
     expect(steerIdx).toBeLessThan(gateIdx);
     // The steer must be indented deeper than the guard (inside its block).
-    // guardIdx points at the '\n' before the guard line, so the guard line runs
-    // from guardIdx+1 to the next '\n'.
+    // guardIdx and steerIdx point at the '\n' before their lines, so each line
+    // runs from idx+1 to the next '\n'.
     const guardLine = doc.slice(guardIdx + 1, doc.indexOf('\n', guardIdx + 1));
-    const steerLine = doc.slice(doc.lastIndexOf('\n', steerIdx) + 1, doc.indexOf('\n', steerIdx));
+    const steerLine = doc.slice(steerIdx + 1, doc.indexOf('\n', steerIdx + 1));
     const guardIndent = guardLine.match(/^ */)?.[0].length ?? 0;
     const steerIndent = steerLine.match(/^ */)?.[0].length ?? 0;
     expect(steerIndent).toBeGreaterThan(guardIndent);
@@ -118,6 +119,7 @@ describe('skill finding-category dispatch contract', () => {
     const line = criticsDoc.split('\n').find((l) => l.startsWith('  - `contention`'));
     expect(line).toBeDefined();
     const lower = line!.toLowerCase();
+    expect(lower).toContain('add a context steer noting it');
     expect(lower).toContain('retryable from report scope');
     expect(lower).toContain('if a blocking category coexists on a report-only job, escalate instead');
   });
