@@ -31,13 +31,15 @@ describe('skill finding-category dispatch contract', () => {
     const sets = [...doc.matchAll(/f\.category not in \(([^)]*)\)/g)].map((m) =>
       m[1]
         .replace(/\s+/g, ' ')
-        .replace(/,+$/, '')
+        .replace(/,\s*$/, '')
         .trim()
         .split(',')
         .map((x) => x.trim())
         .sort(),
     );
     expect(sets.length).toBeGreaterThanOrEqual(2);
+    // The invariant is that the gate and the filter AGREE; also pin the expected
+    // set so a wrong-but-agreeing set is caught.
     for (const s of sets) {
       expect(s).toEqual(['"contention"', '"evidence_mismatch"']);
     }
@@ -145,11 +147,13 @@ describe('skill finding-category dispatch contract', () => {
     // Textual ordering is pinnable here. The gate anchor is line-anchored so a
     // comment mentioning the code text cannot satisfy it.
     const gateMatch = doc.match(/\n +if source_job\.params\.report_only/);
-    // Prefix anchor tolerates a multi-line reformat or added keyword args.
-    const retryIdx = doc.indexOf('tenet_retry_job(job_id=source_job.id');
+    // Whitespace-tolerant regex that still pins the enhanced_prompt (the
+    // category-routing behavior) and tolerates a multi-line reformat.
+    const retryMatch = doc.match(/tenet_retry_job\(job_id=source_job\.id,\s+enhanced_prompt=prompt\)/);
     expect(gateMatch).not.toBeNull();
-    expect(retryIdx).toBeGreaterThan(-1);
+    expect(retryMatch).not.toBeNull();
     const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;
+    const retryIdx = retryMatch ? retryMatch.index ?? -1 : -1;
     expect(gateIdx).toBeLessThan(retryIdx);
   });
 
