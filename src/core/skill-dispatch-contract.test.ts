@@ -93,11 +93,14 @@ describe('skill finding-category dispatch contract', () => {
     expect(escalateIdx).toBeGreaterThan(steerIdx);
     expect(escalateIdx).toBeLessThan(recursIdx);
     expect(row).toContain('if a blocking category coexists on a report-only job, escalate instead');
-    // The OR'd report triggers must precede the report action; OR connectors stay OR.
+    // The OR'd report triggers must follow the eval re-run and precede the report
+    // action (their relative order is arbitrary); OR connectors stay OR.
+    const rerunIdx = row!.indexOf('re-run the eval');
     const reportIdx = row!.indexOf('report it to the user');
     for (const t of ['passed: false', 'omits the verdict', 'still recurs']) {
       const idx = row!.indexOf(t);
       expect(idx).toBeGreaterThan(-1);
+      expect(idx).toBeGreaterThan(rerunIdx);
       expect(idx).toBeLessThan(reportIdx);
     }
     expect(row).toContain('or omits the verdict');
