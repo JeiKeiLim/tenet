@@ -215,8 +215,9 @@ if findings:
     # not as a top-level field. A report-only job cannot edit project files, so ANY
     # finding that is not retryable from report scope (evidence_mismatch / contention)
     # is a blocking finding — including unknown categories, which may need code
-    # changes. Escalate via the escape hatch, never retry a doomed re-run. Check
-    # this FIRST so a coexisting higher-priority category cannot skip it.
+    # changes. Escalate via the escape hatch, never retry a doomed re-run. This gate
+    # runs before the retry branch so a coexisting higher-priority category cannot
+    # skip it.
     if source_job.params.report_only and any(
         f.category not in ("evidence_mismatch", "contention") for f in findings
     ):
@@ -225,6 +226,11 @@ if findings:
         blocking = [f for f in findings if f.category not in ("evidence_mismatch", "contention")]
         finding = "; ".join(f"{f.category}: {f.detail}" for f in blocking)
         followup = "Resolve the blocking findings the report-only eval identified (" + ", ".join(sorted({f.category for f in blocking})) + "): see Finding for details"
+        if any(f.category == "scope_conflict" for f in blocking):
+            # Actionable remediation for the common case (the report-only job edited
+            # project files). No doctrine clause: the follow-up dev job is created
+            # without allow_project_doctrine_edits, so its own eval enforces that.
+            followup += " For scope_conflict: revert any out-of-scope edits the report-only job made to project files."
         tenet_report_blocking_finding(
             job_id=source_job.id,
             finding=finding,
@@ -265,7 +271,7 @@ Plain "just retry" wastes cycles on test/harness/evidence bugs — route by cate
 
 ## Eval-mode decision (reminder)
 
-The critics dispatched by `tenet_start_eval` (the configured set from `.tenet/critics.json`) run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step — just call `tenet_start_eval` and wait for every job id in the `jobs[]` list it returns.
+The critics dispatched by `tenet_start_eval` (the configured set from `.tenet/critics.json`) run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step for the normal eval — just call `tenet_start_eval` and wait for every job id in the `jobs[]` list it returns. The one exception is the contention steer above: when a `contention` finding appears, the dispatch block adds a context steer asking for sequential mode — read it back via `tenet_process_steer` and honor it before the next `tenet_start_eval`.
 
 ## Git-Aware Pipeline
 

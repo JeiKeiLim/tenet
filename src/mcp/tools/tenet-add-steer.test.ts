@@ -74,4 +74,23 @@ describe('tenet_add_steer', () => {
     expect(inbox.userMessages[0].class).toBe('emergency');
     expect(inbox.userMessages[0].source).toBe('user');
   });
+
+  it('targets specific jobs via affected_job_ids', async () => {
+    const { store, handler } = createHarness();
+
+    const result = await handler({
+      content: 'set eval_parallel_safe=false for billing',
+      class: 'context',
+      affected_job_ids: ['job-1', 'job-2'],
+    });
+    const parsed = parseResult(result);
+    expect(parsed.affected_job_ids).toEqual(['job-1', 'job-2']);
+
+    // A targeted steer is visible to the targeted job and to broadcasts, but not
+    // to an unrelated job.
+    const targeted = store.getSteerInbox({ jobId: 'job-1', agentLimit: 10 });
+    expect(targeted.agentMessages).toHaveLength(1);
+    const unrelated = store.getSteerInbox({ jobId: 'job-9', agentLimit: 10 });
+    expect(unrelated.agentMessages).toHaveLength(0);
+  });
 });
