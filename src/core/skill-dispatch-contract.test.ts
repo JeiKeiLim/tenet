@@ -49,9 +49,9 @@ describe('skill finding-category dispatch contract', () => {
     const guardIndent = guardLine.match(/^ */)?.[0].length ?? 0;
     const steerIndent = steerLine.match(/^ */)?.[0].length ?? 0;
     expect(steerIndent).toBeGreaterThan(guardIndent);
-    // The steer call must carry class="context" — assert the exact call so a
-    // comment or later line cannot satisfy the check vacuously.
-    expect(doc).toContain('tenet_add_steer(content=f"contention detected in eval for {feature}", class="context")');
+    // The steer call must carry class="context" — anchored to the steer call's
+    // own line (non-vacuous) without pinning the message text or argument order.
+    expect(steerLine).toContain('class="context"');
   });
 
   it('checks the report-only gate before the retry branch', () => {
