@@ -206,24 +206,21 @@ When `tenet_start_eval` returns failing critics, read each finding's `category` 
 findings = code_output.findings + test_output.findings
 if findings:
     # report_only lives on the job's params (registration / tenet_compile_context),
-    # not as a top-level field. A report-only job cannot edit project files, so any
-    # finding that needs code changes (scope_conflict, product_bug, test_bug,
-    # harness_bug) is a blocking finding: escalate via the escape hatch, never retry
-    # a doomed re-run. evidence_mismatch (refresh its own report) and contention
-    # (re-run with a sequential-mode steer) are retryable from report scope. Check
+    # not as a top-level field. A report-only job cannot edit project files, so ANY
+    # finding that is not retryable from report scope (evidence_mismatch / contention)
+    # is a blocking finding — including unknown categories, which may need code
+    # changes. Escalate via the escape hatch, never retry a doomed re-run. Check
     # this FIRST so a coexisting higher-priority category cannot skip it.
     if source_job.params.report_only and any(
         f.category not in ("evidence_mismatch", "contention") for f in findings
     ):
-        # A report-only job cannot edit project files, so ANY finding that is not
-        # retryable from report scope (evidence_mismatch / contention) is a blocking
-        # finding — including unknown categories, which may need code changes.
-        # Escalate via the escape hatch, never retry a doomed re-run.
-        blocking = [f for f in findings if f.category not in ("evidence_mismatch", "contention")]
         # Label every detail with its category so the dev follow-up job can map
         # them; name ALL blocking categories in the directive (multi-category safe).
+        blocking = [f for f in findings if f.category not in ("evidence_mismatch", "contention")]
         finding = "; ".join(f"{f.category}: {f.detail}" for f in blocking)
         followup = "Resolve the blocking findings the report-only eval identified (" + ", ".join(sorted({f.category for f in blocking})) + "): see Finding for details"
+        if any(f.category == "scope_conflict" for f in blocking):
+            followup += " For scope_conflict: revert any out-of-scope edits the report-only job made to project files (do not modify .tenet/project/** doctrine)."
         tenet_report_blocking_finding(
             job_id=source_job.id,
             finding=finding,
@@ -237,6 +234,10 @@ if findings:
         # tenet_retry_job is invoked. Label each detail with its category so a
         # multi-category finding set is not mislabeled under one prefix.
         labeled = "; ".join(f"{f.category}: {f.detail}" for f in findings)
+        # If contention is present, switch to sequential mode regardless of which
+        # category branch wins — a higher-priority category must not skip the steer.
+        if any(f.category == "contention" for f in findings):
+            tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="context")
         if any(f.category == "product_bug" for f in findings):
             prompt = "Fix product bugs: " + labeled
         elif any(f.category == "test_bug" for f in findings):
@@ -246,12 +247,9 @@ if findings:
         elif any(f.category == "evidence_mismatch" for f in findings):
             prompt = "Refresh evidence from current commands: " + labeled
         elif any(f.category == "contention" for f in findings):
-            # If we're in parallel mode for this feature, switch to sequential:
-            # Agent self-note -> context (sweepable), not directive
-            tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="context")
-            prompt = None  # retry as-is
+            prompt = None  # retry as-is (steer already added above)
         else:
-            prompt = "Respect declared scope: " + "; ".join(f.detail for f in findings)
+            prompt = "Respect declared scope: " + labeled
         if prompt:
             tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)
         else:
