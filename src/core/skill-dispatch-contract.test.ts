@@ -52,20 +52,23 @@ describe('skill finding-category dispatch contract', () => {
     const steerIndent = steerLine.match(/^ */)?.[0].length ?? 0;
     expect(steerIndent).toBeGreaterThan(guardIndent);
     // The steer call must carry class="context" — anchored to the steer call's
-    // own line (non-vacuous). Note: the anchor above still pins the message
-    // prefix, so a message rewording requires updating this test too.
+    // own line (non-vacuous). Note: the anchor above pins the message prefix AND
+    // that content= is the first argument, so a message rewording or argument
+    // reorder requires updating this test too.
     expect(steerLine).toContain('class="context"');
   });
 
-  it('keeps the 06 contention row consistent with the dispatch block', () => {
+  it('pins the 06 contention row invariants', () => {
     // The 06 finding-categories table is the canonical routing reference and its
     // contention row has regressed twice (wrong-condition negation, missing steer
-    // step). Pin the key invariants: the steer step, the re-run-readiness path,
-    // and the report-to-user terminal action.
+    // step). Pin the key invariants: the steer step, the guarding condition, the
+    // re-run-readiness path with wait, and the report-to-user terminal action.
     const row = evalDoc.split('\n').find((l) => l.includes('`contention`'));
     expect(row).toBeDefined();
     expect(row).toContain('context steer');
+    expect(row).toContain('if it recurs in parallel mode');
     expect(row).toContain('tenet_validate_readiness');
+    expect(row).toContain('wait for it to complete');
     expect(row).toContain('report it to the user');
   });
 
