@@ -214,8 +214,9 @@ if findings:
     # to complete (tenet_job_wait + tenet_job_result) before re-running
     # tenet_start_eval; if the re-run returns passed:false (the feature is not
     # ready) or omits the verdict, or contention still recurs, report it to the
-    # user. On a report-only job, a coexisting blocking category escalates instead
-    # of retrying (see the report-only gate below).
+    # user. The retry step below is the report-only override: if a blocking
+    # category coexists on a report-only job, escalate instead of retrying (see
+    # the report-only gate below).
     if any(f.category == "contention" for f in findings):
         tenet_add_steer(content=f"contention detected in eval for {feature}", class="context")
     # report_only lives on the job's params (registration / tenet_compile_context),
@@ -277,7 +278,7 @@ Plain "just retry" wastes cycles on test/harness/evidence bugs — route by cate
 
 ## Eval-mode decision (reminder)
 
-The critics dispatched by `tenet_start_eval` (the configured set from `.tenet/critics.json`) run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step for the normal eval — just call `tenet_start_eval` and wait for every job id in the `jobs[]` list it returns. The one exception is the contention steer above: when a `contention` finding appears, the dispatch block adds a context steer noting it — read it back via `tenet_process_steer` and follow the contingency chain in the dispatch block's comment (re-run readiness, wait for it, re-run the eval, report to the user if it still recurs).
+The critics dispatched by `tenet_start_eval` (the configured set from `.tenet/critics.json`) run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step for the normal eval — just call `tenet_start_eval` and wait for every job id in the `jobs[]` list it returns. The one exception is the contention steer above: when a `contention` finding appears, the dispatch block adds a context steer noting it — read it back via `tenet_process_steer` and follow the contingency chain in the dispatch block's comment (re-run readiness, wait for it, re-run the eval, report to the user if the re-run returns `passed: false` or omits the verdict, or contention still recurs).
 
 ## Git-Aware Pipeline
 
