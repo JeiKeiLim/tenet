@@ -121,17 +121,18 @@ describe('skill finding-category dispatch contract', () => {
   it('names the report-only GATE (not the retry step) as the override', () => {
     // The steer comment regressed twice (rounds 26-27) to "The retry step below
     // is the report-only override" — backwards. Pin the corrected subject AND
-    // predicate (the comment spans two lines), anchored to the steer block
-    // before the contention guard, so a misplaced or predicate-flipped comment
-    // fails.
+    // predicate (the comment spans two lines), anchored to the report-only GATE
+    // it describes (the comment must precede the gate), with the subject before
+    // the predicate.
     const subjectIdx = doc.indexOf('The report-only gate below is the override');
     const predicateIdx = doc.indexOf('it escalates instead of retrying');
-    const guardIdx = doc.indexOf('if any(f.category == "contention"');
+    const gateIdx = doc.indexOf('if source_job.params.report_only');
     expect(subjectIdx).toBeGreaterThan(-1);
     expect(predicateIdx).toBeGreaterThan(-1);
-    expect(guardIdx).toBeGreaterThan(-1);
-    expect(subjectIdx).toBeLessThan(guardIdx);
-    expect(predicateIdx).toBeLessThan(guardIdx);
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(subjectIdx).toBeLessThan(gateIdx);
+    expect(predicateIdx).toBeLessThan(gateIdx);
+    expect(subjectIdx).toBeLessThan(predicateIdx);
   });
 
   it('names ALL blocking categories in the escalation followup', () => {
