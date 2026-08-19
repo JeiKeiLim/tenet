@@ -218,10 +218,13 @@ describe('skill finding-category dispatch contract', () => {
     // arguments — whitespace-tolerant for a multi-line close.
     const contentionIdx = doc.indexOf('elif any(f.category == "contention"');
     expect(contentionIdx).toBeGreaterThan(-1);
-    // prompt = None must appear AFTER the contention elif, on its own line
-    // (line-anchored so a comment or prose mention cannot satisfy it).
-    const afterContention = doc.slice(contentionIdx);
-    expect(afterContention).toMatch(/\n +prompt = None/);
+    // prompt = None must appear INSIDE the contention branch: slice from the
+    // elif to the next statement at the same indentation (the else), and require
+    // the line-anchored assignment there — a prompt=None in a later branch or
+    // prose cannot satisfy it.
+    const branchEnd = doc.indexOf('\n        else:', contentionIdx);
+    const contentionSlice = doc.slice(contentionIdx, branchEnd > -1 ? branchEnd : undefined);
+    expect(contentionSlice).toMatch(/\n +prompt = None/);
     expect(doc).toMatch(/\n +if prompt:/);
     expect(doc).toMatch(/\n +else:\s*\n\s+tenet_retry_job\(\s*job_id=source_job\.id\s*\)/);
   });
