@@ -20,6 +20,19 @@ const doc = fs.readFileSync(skillPath, 'utf8');
 const evalDoc = fs.readFileSync(evalPath, 'utf8');
 const criticsDoc = fs.readFileSync(criticsPath, 'utf8');
 
+// Shared normalization for an exclusion-set capture: whitespace- and
+// trailing-comma-normalized, compared as a set (order is irrelevant for a
+// membership check). Shared so the fixture exercises the SAME path as the real
+// extraction.
+const normalizeExclusionSet = (raw: string): string[] =>
+  raw
+    .replace(/\s+/g, ' ')
+    .replace(/,\s*$/, '')
+    .trim()
+    .split(',')
+    .map((x) => x.trim())
+    .sort();
+
 describe('skill finding-category dispatch contract', () => {
   it('uses the SAME exclusion set in the report-only gate and the blocking filter', () => {
     // Extract every `f.category not in (...)` set; the gate and the filter must
@@ -29,13 +42,7 @@ describe('skill finding-category dispatch contract', () => {
     // trailing-comma-normalized, and compared as a set (order is irrelevant for
     // a membership check).
     const sets = [...doc.matchAll(/f\.category not in \(([^)]*)\)/g)].map((m) =>
-      m[1]
-        .replace(/\s+/g, ' ')
-        .replace(/,\s*$/, '')
-        .trim()
-        .split(',')
-        .map((x) => x.trim())
-        .sort(),
+      normalizeExclusionSet(m[1]),
     );
     expect(sets.length).toBeGreaterThanOrEqual(2);
     // The invariant is that the gate and the filter AGREE; also pin the expected
@@ -47,17 +54,9 @@ describe('skill finding-category dispatch contract', () => {
 
   it('normalizes a multi-line trailing-comma exclusion set (fixture for the strip)', () => {
     // The current doc is single-line, so the /,\s*$/ strip is unexercised by the
-    // real fixture. Pin the normalization directly so a regression to /,+$/ is
-    // caught.
-    const normalize = (raw: string): string[] =>
-      raw
-        .replace(/\s+/g, ' ')
-        .replace(/,\s*$/, '')
-        .trim()
-        .split(',')
-        .map((x) => x.trim())
-        .sort();
-    expect(normalize('\n    "evidence_mismatch",\n    "contention",\n')).toEqual([
+    // real fixture. Pin the SHARED normalization directly so a regression to
+    // /,+$/ in the real extraction path is caught.
+    expect(normalizeExclusionSet('\n    "evidence_mismatch",\n    "contention",\n')).toEqual([
       '"contention"',
       '"evidence_mismatch"',
     ]);
@@ -164,12 +163,13 @@ describe('skill finding-category dispatch contract', () => {
     // retry branch so a coexisting higher-priority category cannot skip it").
     // Textual ordering is pinnable here. The gate anchor is line-anchored so a
     // comment mentioning the code text cannot satisfy it.
-    // Anchor the gate condition semantics too (and any, not and not any / all).
-    const gateMatch = doc.match(/\n +if source_job\.params\.report_only and any\(/);
-    // Whitespace-tolerant regex that still pins the enhanced_prompt (the
-    // category-routing behavior) and tolerates multi-line reformats, trailing
-    // commas, and added keyword args.
-    const retryMatch = doc.match(/tenet_retry_job\(\s*job_id=source_job\.id[\s\S]*?enhanced_prompt=prompt/);
+    // Anchor the gate condition semantics too (and any, not and not any / all),
+    // whitespace-tolerant across a multi-line reformat.
+    const gateMatch = doc.match(/\n +if source_job\.params\.report_only\s+and\s+any\(/);
+    // Whitespace-tolerant regex that pins enhanced_prompt=prompt as an argument
+    // of the SAME retry call: [^)]*? stops at the call's closing paren, so it
+    // cannot span across call boundaries or into comments.
+    const retryMatch = doc.match(/tenet_retry_job\(\s*job_id=source_job\.id[^)]*?enhanced_prompt=prompt/);
     expect(gateMatch).not.toBeNull();
     expect(retryMatch).not.toBeNull();
     const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;
