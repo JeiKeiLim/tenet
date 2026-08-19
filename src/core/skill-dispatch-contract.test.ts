@@ -24,10 +24,22 @@ describe('skill finding-category dispatch contract', () => {
   it('uses the SAME exclusion set in the report-only gate and the blocking filter', () => {
     // Extract every `f.category not in (...)` set; the gate and the filter must
     // agree, or a report-only job with an unknown category falls to a doomed retry.
-    const sets = [...doc.matchAll(/f\.category not in \(([^)]*)\)/g)].map((m) => m[1].replace(/\s+/g, ' ').trim());
+    // The pattern is specific enough that it only appears in the two real sets
+    // (a comment would need to contain the exact code text). Whitespace- and
+    // trailing-comma-normalized, and compared as a set (order is irrelevant for
+    // a membership check).
+    const sets = [...doc.matchAll(/f\.category not in \(([^)]*)\)/g)].map((m) =>
+      m[1]
+        .replace(/\s+/g, ' ')
+        .replace(/,+$/, '')
+        .trim()
+        .split(',')
+        .map((x) => x.trim())
+        .sort(),
+    );
     expect(sets.length).toBeGreaterThanOrEqual(2);
     for (const s of sets) {
-      expect(s).toBe('"evidence_mismatch", "contention"');
+      expect(s).toEqual(['"contention"', '"evidence_mismatch"']);
     }
   });
 
@@ -133,7 +145,8 @@ describe('skill finding-category dispatch contract', () => {
     // Textual ordering is pinnable here. The gate anchor is line-anchored so a
     // comment mentioning the code text cannot satisfy it.
     const gateMatch = doc.match(/\n +if source_job\.params\.report_only/);
-    const retryIdx = doc.indexOf('tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)');
+    // Prefix anchor tolerates a multi-line reformat or added keyword args.
+    const retryIdx = doc.indexOf('tenet_retry_job(job_id=source_job.id');
     expect(gateMatch).not.toBeNull();
     expect(retryIdx).toBeGreaterThan(-1);
     const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;
