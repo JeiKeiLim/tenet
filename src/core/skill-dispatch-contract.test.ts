@@ -14,7 +14,9 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const skillPath = path.resolve(here, '..', '..', 'skills', 'tenet', 'phases', '05-execution-loop.md');
+const evalPath = path.resolve(here, '..', '..', 'skills', 'tenet', 'phases', '06-evaluation.md');
 const doc = fs.readFileSync(skillPath, 'utf8');
+const evalDoc = fs.readFileSync(evalPath, 'utf8');
 
 describe('skill finding-category dispatch contract', () => {
   it('uses the SAME exclusion set in the report-only gate and the blocking filter', () => {
@@ -50,8 +52,21 @@ describe('skill finding-category dispatch contract', () => {
     const steerIndent = steerLine.match(/^ */)?.[0].length ?? 0;
     expect(steerIndent).toBeGreaterThan(guardIndent);
     // The steer call must carry class="context" — anchored to the steer call's
-    // own line (non-vacuous) without pinning the message text or argument order.
+    // own line (non-vacuous). Note: the anchor above still pins the message
+    // prefix, so a message rewording requires updating this test too.
     expect(steerLine).toContain('class="context"');
+  });
+
+  it('keeps the 06 contention row consistent with the dispatch block', () => {
+    // The 06 finding-categories table is the canonical routing reference and its
+    // contention row has regressed twice (wrong-condition negation, missing steer
+    // step). Pin the key invariants: the steer step, the re-run-readiness path,
+    // and the report-to-user terminal action.
+    const row = evalDoc.split('\n').find((l) => l.includes('`contention`'));
+    expect(row).toBeDefined();
+    expect(row).toContain('context steer');
+    expect(row).toContain('tenet_validate_readiness');
+    expect(row).toContain('report it to the user');
   });
 
   it('checks the report-only gate before the retry branch', () => {
