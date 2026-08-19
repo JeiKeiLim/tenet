@@ -24,7 +24,7 @@ describe('skill finding-category dispatch contract', () => {
   it('uses the SAME exclusion set in the report-only gate and the blocking filter', () => {
     // Extract every `f.category not in (...)` set; the gate and the filter must
     // agree, or a report-only job with an unknown category falls to a doomed retry.
-    const sets = [...doc.matchAll(/f\.category not in \(([^)]*)\)/g)].map((m) => m[1].trim());
+    const sets = [...doc.matchAll(/f\.category not in \(([^)]*)\)/g)].map((m) => m[1].replace(/\s+/g, ' ').trim());
     expect(sets.length).toBeGreaterThanOrEqual(2);
     for (const s of sets) {
       expect(s).toBe('"evidence_mismatch", "contention"');
@@ -56,11 +56,13 @@ describe('skill finding-category dispatch contract', () => {
     const steerIndent = steerLine.match(/^ */)?.[0].length ?? 0;
     expect(steerIndent).toBeGreaterThan(guardIndent);
     // The steer call must carry class="context" as an actual argument — anchored
-    // to the full argument form (", class=\"context\")") so a trailing comment or
-    // string literal mentioning the text cannot satisfy it. Note: the anchor
-    // above pins the message prefix AND that content= is the first argument, so
-    // a message rewording or argument reorder requires updating this test too.
-    expect(steerLine).toContain(', class="context")');
+    // to the argument form (", class=\"context\"") which tolerates trailing
+    // arguments (e.g. affected_job_ids). This is best-effort: a contrived comment
+    // containing the exact substring could still satisfy it, but the realistic
+    // gaps are closed. Note: the anchor above pins the message prefix AND that
+    // content= is the first argument, so a message rewording or argument reorder
+    // requires updating this test too.
+    expect(steerLine).toContain(', class="context"');
   });
 
   it('pins the 06 contention row invariants and their order', () => {
