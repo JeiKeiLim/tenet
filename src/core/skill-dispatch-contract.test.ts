@@ -38,11 +38,12 @@ describe('skill finding-category dispatch contract', () => {
     // higher-priority category cannot skip it on either path.
     const guardMatch = doc.match(/\n +if any\(f\.category == "contention"/);
     const steerIdx = doc.indexOf('tenet_add_steer(content=f"contention detected in eval');
-    const gateIdx = doc.indexOf('if source_job.params.report_only');
+    const gateMatch = doc.match(/\n +if source_job\.params\.report_only/);
     expect(guardMatch).not.toBeNull();
     expect(steerIdx).toBeGreaterThan(-1);
-    expect(gateIdx).toBeGreaterThan(-1);
+    expect(gateMatch).not.toBeNull();
     const guardIdx = guardMatch ? guardMatch.index ?? -1 : -1;
+    const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;
     expect(guardIdx).toBeLessThan(steerIdx);
     expect(steerIdx).toBeLessThan(gateIdx);
     // The steer must be indented deeper than the guard (inside its block).
@@ -111,11 +112,14 @@ describe('skill finding-category dispatch contract', () => {
 
   it('keeps the critics.md contention entry consistent with the 06 row', () => {
     // critics.md is the category list critic authors follow; its contention entry
-    // must carry the same escalate-instead qualifier as the 06 row.
-    const line = criticsDoc.split('\n').find((l) => l.includes('`contention`'));
+    // must carry the same escalate-instead qualifier as the 06 row. Anchor to the
+    // category-list entry (not the first mention) and compare case-insensitively
+    // (the 06 row capitalizes "Retryable").
+    const line = criticsDoc.split('\n').find((l) => l.startsWith('  - `contention`'));
     expect(line).toBeDefined();
-    expect(line).toContain('retryable from report scope');
-    expect(line).toContain('if a blocking category coexists on a report-only job, escalate instead');
+    const lower = line!.toLowerCase();
+    expect(lower).toContain('retryable from report scope');
+    expect(lower).toContain('if a blocking category coexists on a report-only job, escalate instead');
   });
 
   it('checks the report-only gate before the retry branch', () => {
@@ -123,7 +127,7 @@ describe('skill finding-category dispatch contract', () => {
     // retry branch so a coexisting higher-priority category cannot skip it").
     // Textual ordering is pinnable here. The gate anchor is line-anchored so a
     // comment mentioning the code text cannot satisfy it.
-    const gateMatch = doc.match(/\n {4}if source_job\.params\.report_only/);
+    const gateMatch = doc.match(/\n +if source_job\.params\.report_only/);
     const retryIdx = doc.indexOf('tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)');
     expect(gateMatch).not.toBeNull();
     expect(retryIdx).toBeGreaterThan(-1);
@@ -138,7 +142,7 @@ describe('skill finding-category dispatch contract', () => {
     // it describes (the comment must precede the gate).
     const subjectIdx = doc.indexOf('The report-only gate below is the override');
     const predicateIdx = doc.indexOf('it escalates instead of retrying');
-    const gateMatch = doc.match(/\n {4}if source_job\.params\.report_only/);
+    const gateMatch = doc.match(/\n +if source_job\.params\.report_only/);
     expect(subjectIdx).toBeGreaterThan(-1);
     expect(predicateIdx).toBeGreaterThan(-1);
     expect(gateMatch).not.toBeNull();
