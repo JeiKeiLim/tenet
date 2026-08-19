@@ -164,12 +164,15 @@ describe('skill finding-category dispatch contract', () => {
     // Textual ordering is pinnable here. The gate anchor is line-anchored so a
     // comment mentioning the code text cannot satisfy it.
     // Anchor the gate condition semantics too (and any, not and not any / all),
-    // whitespace-tolerant across a multi-line reformat.
-    const gateMatch = doc.match(/\n +if source_job\.params\.report_only\s+and\s+any\(/);
-    // Whitespace-tolerant regex that pins enhanced_prompt=prompt as an argument
-    // of the SAME retry call: [^)]*? stops at the call's closing paren, so it
-    // cannot span across call boundaries or into comments.
-    const retryMatch = doc.match(/tenet_retry_job\(\s*job_id=source_job\.id[^)]*?enhanced_prompt=prompt/);
+    // whitespace-tolerant across a multi-line reformat and optional parens.
+    const gateMatch = doc.match(/\n +if source_job\.params\.report_only\s+and\s+\(?\s*any\(/);
+    // Line-anchored, order-independent regex that pins enhanced_prompt=prompt as
+    // an argument of the SAME retry call: [^)]*? stops at the call's closing
+    // paren, so it cannot span across call boundaries; the leading \n + means a
+    // comment line (starting with #) cannot satisfy it.
+    const retryMatch = doc.match(
+      /\n +tenet_retry_job\(\s*(?:job_id=source_job\.id[^)]*?enhanced_prompt=prompt|enhanced_prompt=prompt[^)]*?job_id=source_job\.id)/,
+    );
     expect(gateMatch).not.toBeNull();
     expect(retryMatch).not.toBeNull();
     const gateIdx = gateMatch ? gateMatch.index ?? -1 : -1;
