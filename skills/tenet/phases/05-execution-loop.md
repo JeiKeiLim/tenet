@@ -200,11 +200,17 @@ When a report-only job is dispatched, the worker dispatch path prepends a **Repo
 
 ## Finding-category dispatch
 
-When `tenet_start_eval` returns failing critics, read each finding's `category` and dispatch the correct follow-up. `tenet_retry_job` dispatches immediately (retry = run-now), so a job can be retried only **once while running** — consolidate ALL findings into a single retry call, apply any backoff BEFORE calling it, then wait on the retried job with `tenet_job_wait` (it is running, not pending; `tenet_continue()` will not return it as `next_job`):
+When `tenet_start_eval` returns failing critics, read each finding's `category` and dispatch the correct follow-up. `tenet_retry_job` dispatches immediately (retry = run-now), and a **running job cannot be retried** (retryJob only accepts completed/failed jobs) — so consolidate ALL findings into a single retry call, apply any backoff BEFORE calling it, then wait on the retried job with `tenet_job_wait` (it is running, not pending; `tenet_continue()` will not return it as `next_job`):
 
 ```
 findings = code_output.findings + test_output.findings
 if findings:
+    # If contention is present, switch to sequential mode regardless of which
+    # branch below wins — a higher-priority category must not skip the steer.
+    # Read the steer back via tenet_process_steer and act on it (re-run the eval
+    # sequentially) before the next tenet_start_eval.
+    if any(f.category == "contention" for f in findings):
+        tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="context")
     # report_only lives on the job's params (registration / tenet_compile_context),
     # not as a top-level field. A report-only job cannot edit project files, so ANY
     # finding that is not retryable from report scope (evidence_mismatch / contention)
@@ -219,8 +225,6 @@ if findings:
         blocking = [f for f in findings if f.category not in ("evidence_mismatch", "contention")]
         finding = "; ".join(f"{f.category}: {f.detail}" for f in blocking)
         followup = "Resolve the blocking findings the report-only eval identified (" + ", ".join(sorted({f.category for f in blocking})) + "): see Finding for details"
-        if any(f.category == "scope_conflict" for f in blocking):
-            followup += " For scope_conflict: revert any out-of-scope edits the report-only job made to project files (do not modify .tenet/project/** doctrine)."
         tenet_report_blocking_finding(
             job_id=source_job.id,
             finding=finding,
@@ -234,10 +238,6 @@ if findings:
         # tenet_retry_job is invoked. Label each detail with its category so a
         # multi-category finding set is not mislabeled under one prefix.
         labeled = "; ".join(f"{f.category}: {f.detail}" for f in findings)
-        # If contention is present, switch to sequential mode regardless of which
-        # category branch wins — a higher-priority category must not skip the steer.
-        if any(f.category == "contention" for f in findings):
-            tenet_add_steer(content=f"set eval_parallel_safe=false for {feature}", class="context")
         if any(f.category == "product_bug" for f in findings):
             prompt = "Fix product bugs: " + labeled
         elif any(f.category == "test_bug" for f in findings):
@@ -249,7 +249,9 @@ if findings:
         elif any(f.category == "contention" for f in findings):
             prompt = None  # retry as-is (steer already added above)
         else:
-            prompt = "Respect declared scope: " + labeled
+            # scope_conflict or an unclassified category: retry with the labeled
+            # details so the worker can judge what the finding actually requires.
+            prompt = "Respect declared scope / address the unclassified findings: " + labeled
         if prompt:
             tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)
         else:
