@@ -80,13 +80,7 @@ This survives across server restarts and is queryable by other tools.
 
 #### Override
 
-User can override via steer:
-
-```
-tenet_add_steer(content="set eval_parallel_safe=true for {feature}", class="directive")
-```
-
-Orchestrator interprets the directive, writes to the config table directly.
+`eval_parallel_safe:{feature}` is written only by the readiness gate (`persistReadinessVerdict`); no MCP tool sets it directly. To change the verdict, re-run `tenet_validate_readiness` (the readiness agent is non-deterministic, so a re-run can flip a wrong verdict). Contention findings add a context steer as a *note*, not a directive — see `skills/tenet/phases/05-execution-loop.md`.
 
 #### Why this shape
 

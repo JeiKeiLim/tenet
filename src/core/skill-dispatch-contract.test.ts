@@ -217,9 +217,11 @@ describe('skill finding-category dispatch contract', () => {
     // validation). The else branch must be a BARE retry call — no trailing
     // arguments — whitespace-tolerant for a multi-line close.
     const contentionIdx = doc.indexOf('elif any(f.category == "contention"');
-    const promptNoneIdx = doc.indexOf('prompt = None');
     expect(contentionIdx).toBeGreaterThan(-1);
-    expect(promptNoneIdx).toBeGreaterThan(contentionIdx);
+    // prompt = None must appear AFTER the contention elif, on its own line
+    // (line-anchored so a comment or prose mention cannot satisfy it).
+    const afterContention = doc.slice(contentionIdx);
+    expect(afterContention).toMatch(/\n +prompt = None/);
     expect(doc).toMatch(/\n +if prompt:/);
     expect(doc).toMatch(/\n +else:\s*\n\s+tenet_retry_job\(\s*job_id=source_job\.id\s*\)/);
   });
