@@ -209,9 +209,11 @@ if findings:
     # branch below wins — a higher-priority category must not skip it. Read the
     # steer back via tenet_process_steer. eval_parallel_safe is written by the
     # readiness gate (no MCP tool sets it), so the steer is a note, not a command:
-    # if contention recurs in parallel mode, report it to the user.
+    # if contention recurs in parallel mode, re-run tenet_validate_readiness to
+    # re-evaluate the verdict (it can flip a wrong one); if it still recurs, report
+    # it to the user.
     if any(f.category == "contention" for f in findings):
-        tenet_add_steer(content=f"contention detected in eval for {feature} — consider sequential mode", class="context")
+        tenet_add_steer(content=f"contention detected in eval for {feature}", class="context")
     # report_only lives on the job's params (registration / tenet_compile_context),
     # not as a top-level field. A report-only job cannot edit project files, so ANY
     # finding that is not retryable from report scope (evidence_mismatch / contention)
@@ -271,7 +273,7 @@ Plain "just retry" wastes cycles on test/harness/evidence bugs — route by cate
 
 ## Eval-mode decision (reminder)
 
-The critics dispatched by `tenet_start_eval` (the configured set from `.tenet/critics.json`) run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step for the normal eval — just call `tenet_start_eval` and wait for every job id in the `jobs[]` list it returns. The one exception is the contention steer above: when a `contention` finding appears, the dispatch block adds a context steer noting it. Read it back via `tenet_process_steer`. `eval_parallel_safe` is written by the readiness gate (no MCP tool sets it), so the steer is a note, not a command — if contention recurs in parallel mode, report it to the user.
+The critics dispatched by `tenet_start_eval` (the configured set from `.tenet/critics.json`) run **in parallel** or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict (see `phases/02-spec-and-harness.md`). If the verdict is missing, Tenet defaults to sequential (safe fallback). The orchestrator doesn't need a separate step for the normal eval — just call `tenet_start_eval` and wait for every job id in the `jobs[]` list it returns. The one exception is the contention steer above: when a `contention` finding appears, the dispatch block adds a context steer noting it. Read it back via `tenet_process_steer`. `eval_parallel_safe` is written by the readiness gate (no MCP tool sets it), so the steer is a note, not a command — if contention recurs in parallel mode, re-run `tenet_validate_readiness` to re-evaluate the verdict (it can flip a wrong one); if it still recurs, report it to the user.
 
 ## Git-Aware Pipeline
 

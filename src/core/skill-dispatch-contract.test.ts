@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url';
 // These assertions pin the invariants that ARE textually checkable and that have
 // regressed repeatedly across review rounds: the escalation gate and the blocking
 // filter must use the SAME exclusion set, the contention steer must precede the
-// report-only gate, and the followup must name all blocking categories.
+// report-only gate and be a context note (not a command), the report-only gate
+// must precede the retry branch, the followup must name all blocking categories,
+// and the retry path must label details with their category.
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const skillPath = path.resolve(here, '..', '..', 'skills', 'tenet', 'phases', '05-execution-loop.md');
@@ -25,12 +27,17 @@ describe('skill finding-category dispatch contract', () => {
     }
   });
 
-  it('fires the contention steer before the report-only gate', () => {
+  it('fires the contention steer as a context NOTE before the report-only gate', () => {
+    // The steer must be class="context" (a note, not a command — no MCP tool can
+    // set eval_parallel_safe) and must precede the report_only gate so a
+    // higher-priority category cannot skip it on either path.
     const steerIdx = doc.indexOf('tenet_add_steer(content=f"contention detected in eval');
     const gateIdx = doc.indexOf('if source_job.params.report_only');
     expect(steerIdx).toBeGreaterThan(-1);
     expect(gateIdx).toBeGreaterThan(-1);
     expect(steerIdx).toBeLessThan(gateIdx);
+    const steerLine = doc.slice(steerIdx, doc.indexOf('\n', steerIdx));
+    expect(steerLine).toContain('class="context"');
   });
 
   it('checks the report-only gate before the retry branch', () => {
