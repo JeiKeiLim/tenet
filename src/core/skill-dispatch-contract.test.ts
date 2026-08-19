@@ -56,11 +56,11 @@ describe('skill finding-category dispatch contract', () => {
     const steerIndent = steerLine.match(/^ */)?.[0].length ?? 0;
     expect(steerIndent).toBeGreaterThan(guardIndent);
     // The steer call must carry class="context" as an actual argument — anchored
-    // to the argument form (", class=\"context\"") so a trailing comment or
+    // to the full argument form (", class=\"context\")") so a trailing comment or
     // string literal mentioning the text cannot satisfy it. Note: the anchor
     // above pins the message prefix AND that content= is the first argument, so
     // a message rewording or argument reorder requires updating this test too.
-    expect(steerLine).toContain(', class="context"');
+    expect(steerLine).toContain(', class="context")');
   });
 
   it('pins the 06 contention row invariants and their order', () => {
