@@ -58,18 +58,33 @@ describe('skill finding-category dispatch contract', () => {
     expect(steerLine).toContain('class="context"');
   });
 
-  it('pins the 06 contention row invariants', () => {
+  it('pins the 06 contention row invariants and their order', () => {
     // The 06 finding-categories table is the canonical routing reference and its
-    // contention row has regressed twice (wrong-condition negation, missing steer
-    // step). Pin the key invariants: the steer step, the guarding condition, the
-    // re-run-readiness path with wait, and the report-to-user terminal action.
+    // contention row has regressed repeatedly (wrong-condition negation, missing
+    // steer step, missing read-back). Pin the full contingency chain IN ORDER —
+    // the wait must precede the eval re-run, and the report triggers must be
+    // present — so a reorder or a wrong-condition negation cannot slip through.
     const row = evalDoc.split('\n').find((l) => l.includes('`contention`'));
     expect(row).toBeDefined();
-    expect(row).toContain('context steer');
-    expect(row).toContain('if it recurs in parallel mode');
-    expect(row).toContain('tenet_validate_readiness');
-    expect(row).toContain('wait for it to complete');
-    expect(row).toContain('report it to the user');
+    const chain = [
+      'context steer',
+      'tenet_process_steer',
+      'retry the source job',
+      'if it recurs in parallel mode',
+      'tenet_validate_readiness',
+      'wait for it to complete',
+      're-run the eval',
+      'passed: false',
+      'omits the verdict',
+      'still recurs',
+      'report it to the user',
+    ];
+    let prev = -1;
+    for (const s of chain) {
+      const idx = row!.indexOf(s);
+      expect(idx).toBeGreaterThan(prev);
+      prev = idx;
+    }
   });
 
   it('checks the report-only gate before the retry branch', () => {
