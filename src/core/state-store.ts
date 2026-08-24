@@ -563,11 +563,8 @@ export class StateStore {
    * THIS process won the transition (the job was still completed/failed); false if
    * another process already retried it.
    *
-   * retry_count semantics: a FAILED job is a failure retry, so retry_count
-   * increments; a COMPLETED job is an intentional re-run (the previous attempt
-   * succeeded), so retry_count resets to 0 — re-runs are not failure retries and
-   * must not consume the retry budget or trigger the "previous attempt failed"
-   * worker preamble.
+   * retry_count increments on every retry, completed or failed — a retry is a
+   * re-run of the job either way, and it consumes the same retry budget.
    *
    * The status guard makes the reset atomic across multiple MCP server processes
    * sharing the same DB (nested MCP clients each open .tenet/.state/tenet.db):
@@ -585,7 +582,7 @@ export class StateStore {
             completed_at = NULL,
             last_heartbeat = NULL,
             error = NULL,
-            retry_count = CASE WHEN status = 'completed' THEN 0 ELSE retry_count + 1 END
+            retry_count = retry_count + 1
         WHERE id = @id AND status IN ('completed', 'failed')
         `,
       )

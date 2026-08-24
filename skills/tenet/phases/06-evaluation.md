@@ -17,7 +17,7 @@ Every critic finding (code critic, test critic) MUST include a `category` so the
 
 The critic emits findings as objects: `{"category": "...", "detail": "..."}`. Orchestrators MUST read the category to pick the right response — plain retry loops waste cycles on bugs that aren't product bugs.
 
-> **Retries are run-now:** `tenet_retry_job` dispatches the retried job immediately (status `running`). After any retry, wait with `tenet_job_wait` and re-run `tenet_start_eval` on the retried job — it will not come back as `next_job` from `tenet_continue()`; `tenet_start_job` on it is a harmless no-op (returns the running job).
+> **Retries are run-now:** `tenet_retry_job` dispatches the retried job immediately (status `running`). After any retry, wait with `tenet_job_wait` and re-run `tenet_start_eval` on the retried job — it will not come back as `next_job` from `tenet_continue()`.
 
 ## E2E Surface And Verification Honesty
 

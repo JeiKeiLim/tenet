@@ -121,12 +121,6 @@ export class JobManager {
       throw new Error(`job not found: ${jobId}`);
     }
 
-    if (job.status === 'running') {
-      // Idempotent: already dispatched (e.g. a concurrent retry from another
-      // server process won the race). Return the running job as-is.
-      return job;
-    }
-
     if (job.status !== 'pending') {
       throw new Error(`job ${jobId} is ${job.status}, expected pending`);
     }
@@ -316,10 +310,7 @@ export class JobManager {
       throw new Error(`job ${jobId} is ${job.status}, can only retry completed or failed jobs`);
     }
 
-    // A completed-job re-run is an intentional re-run, not a failure retry: it
-    // resets retry_count to 0 (resetJobForRetry) and never consumes the budget, so
-    // the budget gate does not apply. A failed-job retry consumes the budget.
-    if (job.status !== 'completed' && !hasRetryBudgetRemaining(job.retryCount, job.maxRetries)) {
+    if (!hasRetryBudgetRemaining(job.retryCount, job.maxRetries)) {
       throw new Error(
         `job ${jobId} has exhausted retries (${job.retryCount}/${formatMaxRetries(job.maxRetries)})`,
       );
@@ -341,9 +332,7 @@ export class JobManager {
       return current;
     }
 
-    // A completed job is an intentional re-run (retry_count resets to 0); a failed
-    // job is a failure retry (retry_count increments). Mirrors resetJobForRetry.
-    const newRetryCount = job.status === 'completed' ? 0 : job.retryCount + 1;
+    const newRetryCount = job.retryCount + 1;
     this.stateStore.appendEvent(jobId, 'job_retried', {
       retry_count: newRetryCount,
       has_enhanced_prompt: !!enhancedPrompt,
@@ -353,8 +342,8 @@ export class JobManager {
     // than leaving the job pending for a poller that doesn't exist. Without this, a
     // retried job (and everything chained behind it) wedges at pending/retry_reset
     // forever — there is no background dispatch loop, and the chain event that first
-    // started the job already fired. dispatchJob is idempotent on running, so a
-    // concurrent dispatch from another process is safe.
+    // started the job already fired. resetJobForRetry's atomic guard means the job
+    // is pending here, so dispatchJob can claim it.
     return this.dispatchJob(jobId);
   }
 
@@ -521,10 +510,6 @@ export class JobManager {
           status: 'completed',
           completedAt: finishedAt,
           lastHeartbeat: finishedAt,
-          // Completion clears the failure streak: a later failure gets a fresh
-          // retry budget, and re-running a completed job never accumulates
-          // retryCount (intentional re-runs are not failure retries).
-          retryCount: 0,
         });
         this.stateStore.appendEvent(jobId, 'job_completed', {
           adapter: adapter.name,

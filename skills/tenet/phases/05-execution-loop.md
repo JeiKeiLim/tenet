@@ -43,7 +43,7 @@ Execute this sequence for every job cycle:
     Retrieve every returned eval result. ALL must pass. A critic/eval result passes **only** when it returns a valid rubric JSON with `passed: true`. A result with **no valid rubric JSON — a context-limit / error exit** (e.g. "prompt is too long", "maximum context length exceeded", a raw error string, or an empty/truncated body) — **is NOT a pass**, even though the job reached a terminal state. Do not treat a context-limited critic as "passed with partial result"; the resume gate already refuses to unblock on unparseable output, and you must do the same.
 
     **On a context-limit / no-rubric critic exit:**
-    - **Retry as-is first.** `tenet_retry_job(job_id)` the affected critic so it re-runs with fresh context. If the critic job is still `failed`, the retry counts against its retry budget (default unlimited); if it already reached `completed` (e.g. a context-limit left an empty rubric that the adapter still marked success), the re-run is exempt from the budget gate. Either way the retry dispatches immediately, so apply backoff BEFORE calling it, then wait with `tenet_job_wait`.
+    - **Retry as-is first.** `tenet_retry_job(job_id)` the affected critic so it re-runs with fresh context. This counts against the job's normal retry budget (default unlimited). The retry dispatches immediately, so apply backoff BEFORE calling it, then wait with `tenet_job_wait`.
     - **Split after 2 consecutive context-limits.** If the same critic context-limits twice in a row, the scope is too large for one pass — do not retry identical a third time. Split the critic's scope into multiple reduced-scope critic jobs (divide the files/diff into smaller batches, each its own eval job) and require all of those to pass. For a worker, redispatch as smaller sub-jobs.
     - **Never accept a context-limited result as a pass** to move on. If retries and splits keep failing, treat it as a failed eval: `tenet_retry_job` the source, or `tenet_report_blocking_finding` if a specific cause is suspected.
 11. **Update Knowledge or Retry**: `tenet_update_knowledge(...)` on success; `tenet_retry_job(...)` or `tenet_report_blocking_finding(...)` on failure, as described below.
@@ -111,7 +111,7 @@ The sub-agent must:
 - **Wait with backoff, never one blocking call.** Loop `tenet_job_wait` on the 30s → 45s → 67s → 100s → 120s (cap) schedule, re-calling with the returned `cursor` until `is_terminal`. A single `wait_seconds=120` returns non-terminal after at most 120s and cannot cover a long job.
 - **Read the critic count from the tool, never hardcode it.** `tenet_start_eval` returns a variable-length `jobs[]`; loop `tenet_job_wait` across every returned ID until all are terminal. In sequential `execution_mode`, later critics stay pending until their parent completes.
 - **Parse the rubric, not a top-level `passed`.** `tenet_job_result` returns `{job_id, status, output, error, duration_ms}` — there is no top-level `passed` field. The critic's verdict is rubric JSON nested in `output.output`; extract it and read `passed` from there.
-- **Apply the three-way classifier.** A terminal critic with no valid rubric JSON (context-limit / error / empty body) is **not** a pass — retry as-is via `tenet_retry_job` (the retried critic dispatches immediately and returns status `running`; calling `tenet_start_job` on it is a harmless no-op), then wait on it with `tenet_job_wait` until terminal and re-check its rubric. Split after 2 consecutive context-limits. Never accept a context-limited critic as a pass.
+- **Apply the three-way classifier.** A terminal critic with no valid rubric JSON (context-limit / error / empty body) is **not** a pass — retry as-is via `tenet_retry_job` (the retried critic dispatches immediately and returns status `running`), then wait on it with `tenet_job_wait` until terminal and re-check its rubric. Split after 2 consecutive context-limits. Never accept a context-limited critic as a pass.
 - **Process steer within the delegated window.** The sub-agent re-checks `tenet_process_steer()` between waits so an emergency halt or new directive is not missed while you are not driving the loop directly.
 - **Return a structured summary** (per-critic PASS/FAIL + failure reasons). The orchestrator resumes from there.
 
@@ -247,29 +247,29 @@ if findings:
             suspected_files=[]
         )
     else:
-        # Consolidate ALL findings into ONE retry call (a second retry on a running
-        # job throws). Apply backoff BEFORE the call — the job starts the moment
-        # tenet_retry_job is invoked. Label each detail with its category so a
-        # multi-category finding set is not mislabeled under one prefix.
-        labeled = "; ".join(f"{f.category}: {f.detail}" for f in findings)
-        if any(f.category == "product_bug" for f in findings):
-            prompt = "Fix product bugs: " + labeled
-        elif any(f.category == "test_bug" for f in findings):
-            prompt = "Strengthen or correct tests: " + labeled
-        elif any(f.category == "harness_bug" for f in findings):
-            prompt = "Fix harness/build/test issue: " + labeled
-        elif any(f.category == "evidence_mismatch" for f in findings):
-            prompt = "Refresh evidence from current commands: " + labeled
-        elif any(f.category == "contention" for f in findings):
-            prompt = None  # retry as-is (steer already added above)
-        else:
-            # scope_conflict or an unclassified category: retry with the labeled
-            # details so the worker can judge what the finding actually requires.
-            prompt = "Respect declared scope / address the unclassified findings: " + labeled
-        if prompt:
-            tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)
-        else:
-            tenet_retry_job(job_id=source_job.id)
+        # Route every finding through its category-specific instruction, then make
+        # ONE retry call — a second retry on a running job throws (the first call
+        # dispatches it immediately). The loop only BUILDS the prompt; it must not
+        # call tenet_retry_job per finding. Apply backoff BEFORE the call — the job
+        # starts the moment tenet_retry_job is invoked.
+        instructions = []
+        for f in findings:
+            if f.category == "product_bug":
+                instructions.append("Fix product bugs: " + f.detail)
+            elif f.category == "test_bug":
+                instructions.append("Strengthen or correct tests: " + f.detail)
+            elif f.category == "harness_bug":
+                instructions.append("Fix harness/build/test issue: " + f.detail)
+            elif f.category == "evidence_mismatch":
+                instructions.append("Refresh evidence from current commands: " + f.detail)
+            elif f.category == "contention":
+                instructions.append("Contention (steer added above; re-run against settled state): " + f.detail)
+            elif f.category == "scope_conflict":
+                instructions.append("Respect declared scope: " + f.detail)
+            else:
+                instructions.append(f"{f.category}: {f.detail}")
+        prompt = "; ".join(instructions)
+        tenet_retry_job(job_id=source_job.id, enhanced_prompt=prompt)
         # The retried job is already running: wait on it with the backoff schedule
         # (30s -> 45s -> 67s -> 100s -> 120s cap, never one blocking call) until
         # is_terminal, then re-run tenet_start_eval on its new output.

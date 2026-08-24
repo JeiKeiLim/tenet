@@ -112,21 +112,34 @@ describe('tenet_retry_job', () => {
     await expect(handler({ job_id: job.id })).rejects.toThrow(/exhausted retries \(3\/3\)/);
   });
 
-  it('re-runs a completed job even when the retry budget is zero (re-runs are exempt from the gate)', async () => {
+  it('throws when a COMPLETED job has exhausted its retry budget (re-runs are not exempt)', async () => {
+    const { store, handler } = createHarness();
+    const job = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'build-login', prompt: 'build login' },
+      retryCount: 3,
+      maxRetries: 3,
+    });
+
+    await expect(handler({ job_id: job.id })).rejects.toThrow(/exhausted retries \(3\/3\)/);
+  });
+
+  it('re-runs a completed job within budget and increments retry count', async () => {
     const { store, handler } = createHarness();
     const job = store.createJob({
       type: 'dev',
       status: 'completed',
       params: { name: 'build-login', prompt: 'build login' },
       retryCount: 0,
-      maxRetries: 0,
+      maxRetries: 3,
     });
 
     const result = await handler({ job_id: job.id });
     const parsed = parseResult(result);
 
     expect(parsed.status).toBe('running');
-    expect(parsed.retry_count).toBe(0);
+    expect(parsed.retry_count).toBe(1);
     expect(store.getJob(job.id)?.status).toBe('running');
   });
 });
