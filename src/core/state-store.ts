@@ -558,6 +558,72 @@ export class StateStore {
     }
   }
 
+  /**
+   * Atomically reset a completed/failed job to pending for retry. Returns true if
+   * THIS process won the transition (the job was still completed/failed); false if
+   * another process already retried it.
+   *
+   * retry_count increments on every retry, completed or failed — a retry is a
+   * re-run of the job either way, and it consumes the same retry budget.
+   *
+   * The status guard makes the reset atomic across multiple MCP server processes
+   * sharing the same DB (nested MCP clients each open .tenet/.state/tenet.db):
+   * only one process can win the completed/failed -> pending transition, so
+   * concurrent retries cannot double-increment retry_count or double-dispatch.
+   */
+  resetJobForRetry(jobId: string, params: Record<string, unknown>): boolean {
+    const result = this.db
+      .prepare(
+        `
+        UPDATE jobs
+        SET status = 'pending',
+            params = @params,
+            started_at = NULL,
+            completed_at = NULL,
+            last_heartbeat = NULL,
+            error = NULL,
+            retry_count = retry_count + 1
+        WHERE id = @id AND status IN ('completed', 'failed')
+        `,
+      )
+      .run({ id: jobId, params: JSON.stringify(params) });
+    return result.changes > 0;
+  }
+
+  /**
+   * Atomically transition a pending job to running. Returns true if THIS process
+   * won the transition; false if the job is no longer pending (already dispatched
+   * by another process, or in a terminal state).
+   *
+   * The status guard closes the dispatch TOCTOU: without it, two processes that
+   * both read 'pending' before either writes would both mark the job running and
+   * both schedule execution (double adapter invocation).
+   */
+  markJobRunning(jobId: string, startedAt: number, agentName?: string): boolean {
+    const result = this.db
+      .prepare(
+        `
+        UPDATE jobs
+        SET status = 'running',
+            started_at = @started_at,
+            last_heartbeat = @last_heartbeat,
+            agent_name = @agent_name
+        WHERE id = @id AND status = 'pending'
+        `,
+      )
+      .run({
+        id: jobId,
+        started_at: startedAt,
+        last_heartbeat: startedAt,
+        agent_name: agentName ?? null,
+      });
+    if (result.changes > 0) {
+      this.appendEvent(jobId, 'job_status_changed', { status: 'running' });
+      this.syncStatusFiles();
+    }
+    return result.changes > 0;
+  }
+
   getActiveJobs(): Job[] {
     const rows = this.db.prepare(`SELECT * FROM jobs WHERE status IN ('pending', 'running') ORDER BY created_at ASC`).all() as JobRow[];
     return rows.map((row) => this.toJob(row));

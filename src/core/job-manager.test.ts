@@ -49,7 +49,7 @@ const stores: StateStore[] = [];
 const createHarness = (
   adapterDelayMs = 0,
   outputOverride?: string,
-): { store: StateStore; manager: JobManager } => {
+): { store: StateStore; manager: JobManager; adapter: MockAdapter } => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
   const store = new StateStore(tempDir);
   tempDirs.push(tempDir);
@@ -59,7 +59,8 @@ const createHarness = (
   store.setConfig('agent_override_eval', 'mock-adapter');
 
   const registry = new AdapterRegistry();
-  registry.register(new MockAdapter('mock-adapter', adapterDelayMs, outputOverride));
+  const adapter = new MockAdapter('mock-adapter', adapterDelayMs, outputOverride);
+  registry.register(adapter);
 
   const manager = new JobManager(store, registry, {
     heartbeatTimeoutMs: 100,
@@ -67,7 +68,7 @@ const createHarness = (
     maxParallelAgents: 2,
   });
 
-  return { store, manager };
+  return { store, manager, adapter };
 };
 
 const createRegistry = (...adapters: AgentAdapter[]): AdapterRegistry => {
@@ -330,7 +331,7 @@ describe('JobManager', () => {
     expect(store.getJob(job.id)?.maxRetries).toBe(UNLIMITED_RETRIES);
   });
 
-  it('allows retrying a job with unlimited retry budget', () => {
+  it('allows retrying a job with unlimited retry budget', async () => {
     const { store, manager } = createHarness();
 
     const job = store.createJob({
@@ -344,9 +345,15 @@ describe('JobManager', () => {
 
     const retried = manager.retryJob(job.id, 'try again with new evidence');
 
-    expect(retried.status).toBe('pending');
+    // Retry = run-now: the job is re-dispatched immediately, never left pending
+    // for a poller that doesn't exist (see retryJob's dispatchJob call).
+    expect(retried.status).toBe('running');
     expect(retried.retryCount).toBe(100);
     expect(retried.maxRetries).toBe(UNLIMITED_RETRIES);
+
+    // Let the retried job run to completion so no executeJob dangles after teardown.
+    await manager.waitForJob(job.id, null, 5_000);
+    expect(store.getJob(job.id)?.status).toBe('completed');
   });
 
   it('treats zero max retries as no retry budget', () => {
@@ -362,6 +369,165 @@ describe('JobManager', () => {
     });
 
     expect(() => manager.retryJob(job.id)).toThrowError(/exhausted retries \(0\/0\)/);
+  });
+
+  it('rejects retrying a non-terminal job', () => {
+    const { store, manager } = createHarness();
+
+    const running = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { prompt: 'still running' },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    expect(() => manager.retryJob(running.id)).toThrowError(/can only retry completed or failed jobs/);
+  });
+
+  it('rejects retrying when the finite budget is exhausted at the limit', () => {
+    const { store, manager } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'failed',
+      params: { prompt: 'no budget left' },
+      retryCount: 3,
+      maxRetries: 3,
+      error: 'failed',
+    });
+
+    expect(() => manager.retryJob(job.id)).toThrowError(/exhausted retries \(3\/3\)/);
+  });
+
+  it('re-running a completed job counts against the retry budget like any retry', async () => {
+    const { store, manager } = createHarness();
+
+    // A re-run of a completed job is still a retry: retryCount increments and the
+    // budget gate applies (no exemption for completed-job re-runs).
+    const job = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { prompt: 're-run me' },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const rerun = manager.retryJob(job.id);
+    expect(rerun.status).toBe('running');
+    expect(rerun.retryCount).toBe(1);
+    await manager.waitForJob(job.id, null, 5_000);
+    expect(store.getJob(job.id)?.status).toBe('completed');
+    expect(store.getJob(job.id)?.retryCount).toBe(1);
+  });
+
+  it('rejects re-running a completed job when the retry budget is exhausted', () => {
+    const { store, manager } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { prompt: 'no budget left' },
+      retryCount: 3,
+      maxRetries: 3,
+    });
+
+    expect(() => manager.retryJob(job.id)).toThrowError(/exhausted retries \(3\/3\)/);
+  });
+
+  it('resetJobForRetry is atomic: only the first caller wins the transition', () => {
+    const { store } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'failed',
+      params: { prompt: 'retry me' },
+      retryCount: 0,
+      maxRetries: 3,
+      error: 'failed before',
+    });
+
+    // First caller wins: completed/failed -> pending, retry_count incremented.
+    expect(store.resetJobForRetry(job.id, { prompt: 'retry me' })).toBe(true);
+    expect(store.getJob(job.id)?.status).toBe('pending');
+    expect(store.getJob(job.id)?.retryCount).toBe(1);
+
+    // Second caller (another server process): status is no longer completed/failed,
+    // so the guard rejects the transition — no double increment, no double dispatch.
+    expect(store.resetJobForRetry(job.id, { prompt: 'retry me' })).toBe(false);
+    expect(store.getJob(job.id)?.retryCount).toBe(1);
+  });
+
+  it('resetJobForRetry increments retry_count for a completed job too (re-runs consume the budget)', () => {
+    const { store } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { prompt: 're-run me' },
+      retryCount: 3,
+      maxRetries: 3,
+    });
+
+    expect(store.resetJobForRetry(job.id, { prompt: 're-run me' })).toBe(true);
+    expect(store.getJob(job.id)?.status).toBe('pending');
+    expect(store.getJob(job.id)?.retryCount).toBe(4);
+  });
+
+  it('markJobRunning is atomic: only the first caller wins the pending->running transition', () => {
+    const { store } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { prompt: 'dispatch me' },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    // First caller wins: pending -> running.
+    expect(store.markJobRunning(job.id, 1_000, 'mock-adapter')).toBe(true);
+    expect(store.getJob(job.id)?.status).toBe('running');
+
+    // Second caller (another process): status is no longer pending, so the guard
+    // rejects the transition — no double dispatch / double execution.
+    expect(store.markJobRunning(job.id, 2_000, 'mock-adapter')).toBe(false);
+    expect(store.getJob(job.id)?.startedAt).toBe(1_000);
+    expect(store.getJob(job.id)?.lastHeartbeat).toBe(1_000);
+
+    // Terminal-state jobs are also rejected by the same guard.
+    const terminal = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { prompt: 'done' },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+    expect(store.markJobRunning(terminal.id, 3_000, 'mock-adapter')).toBe(false);
+    expect(store.getJob(terminal.id)?.status).toBe('completed');
+  });
+
+  it('retryJob with enhanced_prompt replaces the prompt for the retried invocation', async () => {
+    const { store, manager, adapter } = createHarness();
+
+    const job = store.createJob({
+      type: 'dev',
+      status: 'failed',
+      params: { prompt: 'original prompt' },
+      retryCount: 0,
+      maxRetries: 3,
+      error: 'failed before',
+    });
+
+    const retried = manager.retryJob(job.id, 'NEW EVIDENCE: fix the root cause');
+    expect(retried.status).toBe('running');
+    await manager.waitForJob(job.id, null, 5_000);
+
+    expect(adapter.calls).toBe(1);
+    // The enhanced prompt REPLACES the original (params.prompt = enhancedPrompt),
+    // it is not appended to it.
+    expect(adapter.lastInvocation?.prompt).toContain('NEW EVIDENCE: fix the root cause');
+    expect(adapter.lastInvocation?.prompt).not.toContain('original prompt');
   });
 
   it('detects stalled running jobs and marks them failed', () => {

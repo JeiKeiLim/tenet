@@ -80,13 +80,7 @@ This survives across server restarts and is queryable by other tools.
 
 #### Override
 
-User can override via steer:
-
-```
-tenet_add_steer(content="set eval_parallel_safe=true for {feature}", class="directive")
-```
-
-Orchestrator interprets the directive, writes to the config table directly.
+`eval_parallel_safe:{feature}` is written only by the readiness gate (`persistReadinessVerdict`); no MCP tool sets it directly. To change the verdict, re-run `tenet_validate_readiness` (the readiness agent is non-deterministic, so a re-run can flip a wrong verdict). Contention findings add a context steer as a *note*, not a directive — see `skills/tenet/phases/05-execution-loop.md`.
 
 #### Why this shape
 
@@ -195,7 +189,7 @@ Categories enable smarter routing in the orchestrator:
 - `test_bug` → spawn test fix job (existing flow)
 - `harness_bug` → spawn `harness_fix` job (could be new type, or `dev` with a flag)
 - `evidence_mismatch` → re-run the source job's verification commands and refresh the report
-- `contention` → re-run the failing eval *after* sibling evals complete (or after switching to sequential)
+- `contention` → add a context steer noting it, retry the source job (if a blocking category coexists on a report-only job, escalate instead); if it recurs in parallel mode, re-run `tenet_validate_readiness` (can flip a wrong `eval_parallel_safe` verdict), wait for it, re-run the eval, and report to the user if it still recurs (see `skills/tenet/phases/05-execution-loop.md`)
 - `scope_conflict` → trigger the remediation escape hatch (Part 2)
 
 The orchestrator skill (`05-execution-loop.md`) gets a small dispatch table for these categories.

@@ -231,7 +231,7 @@ suppress it entirely.
 | `tenet_continue` | Get the next actionable job from the DAG |
 | `tenet_job_wait` | Check or long-poll job status |
 | `tenet_job_result` | Retrieve job output and status |
-| `tenet_retry_job` | Reset a failed/completed job to pending |
+| `tenet_retry_job` | Re-run a failed/completed job (resets + dispatches immediately) |
 | `tenet_cancel_job` | Cancel a running or pending job |
 | `tenet_start_eval` | Dispatch the configured critics (3 built-in + custom) from `.tenet/critics.json` |
 | `tenet_report_blocking_finding` | Let report-only jobs pause and spawn a linked follow-up job |

@@ -8,14 +8,16 @@ Every critic finding (code critic, test critic) MUST include a `category` so the
 
 | Category | Meaning | Orchestrator action |
 |----------|---------|---------------------|
-| `product_bug` | Implementation does not match spec intent | Retry the source dev job |
-| `test_bug` | Tests assert wrong thing or would pass when they should fail | Retry with explicit test-strengthening requirements |
-| `harness_bug` | Build/lint/test harness itself is broken | Retry or remediate with scope limited to build/CI/scripts |
-| `evidence_mismatch` | Report numbers don't match fresh command output | Re-run the source job's verification commands, refresh report |
-| `contention` | Failure looks like sibling eval stepping on shared state | Re-run after siblings complete, or switch to sequential mode |
-| `scope_conflict` | Job edited files outside its declared scope (e.g. report-only job touched code, or a normal job edited `.tenet/project/**`) | Trigger the blocking finding escape hatch (see 05-execution-loop.md) |
+| `product_bug` | Implementation does not match spec intent | Retry the source dev job (report-only source: escalate via blocking finding — it cannot fix code) |
+| `test_bug` | Tests assert wrong thing or would pass when they should fail | Retry with explicit test-strengthening requirements (report-only source: escalate) |
+| `harness_bug` | Build/lint/test harness itself is broken | Retry or remediate with scope limited to build/CI/scripts (report-only source: escalate) |
+| `evidence_mismatch` | Report numbers don't match fresh command output | Re-run the source job's verification commands, refresh report (retryable from report scope) |
+| `contention` | Failure looks like sibling eval stepping on shared state | Retryable from report scope (see 05-execution-loop.md): add a context steer noting it (read it back via `tenet_process_steer`), then retry the source job (run-now; if a blocking category coexists on a report-only job, escalate instead); if it recurs in parallel mode, re-run `tenet_validate_readiness`, wait for it to complete, then re-run the eval; if the re-run returns `passed: false` (feature not ready) or omits the verdict, or contention still recurs, report it to the user |
+| `scope_conflict` | Job edited files outside its declared scope (e.g. report-only job touched code, or a normal job edited `.tenet/project/**`) | Report-only source: trigger the blocking finding escape hatch. Normal job: retry with corrected scope (see 05-execution-loop.md) |
 
 The critic emits findings as objects: `{"category": "...", "detail": "..."}`. Orchestrators MUST read the category to pick the right response — plain retry loops waste cycles on bugs that aren't product bugs.
+
+> **Retries are run-now:** `tenet_retry_job` dispatches the retried job immediately (status `running`). After any retry, wait with `tenet_job_wait` and re-run `tenet_start_eval` on the retried job — it will not come back as `next_job` from `tenet_continue()`.
 
 ## E2E Surface And Verification Honesty
 
@@ -156,7 +158,7 @@ Record results via `tenet_update_knowledge` with a descriptive title. Example: `
 - **Stage 3 Fail (Code Critic)**: Run reflection to find the root cause, then retry via `tenet_retry_job` with the critic findings.
 - **Stage 4 Fail (Test Critic)**: Retry via `tenet_retry_job` with explicit test-strengthening requirements from the critic.
 - **Integration test Fail**: If the job is `report_only`, call `tenet_report_blocking_finding` with the observed finding, why it blocks the report, recommended follow-up, and likely target files. Otherwise retry the integration job with an enhanced prompt.
-- **Retry policy**: Use `tenet_retry_job` while there is a concrete unresolved finding and the next attempt will use new evidence or a changed approach. Tenet defaults to unlimited retries; projects may configure a finite retry budget. If MCP reports a finite budget is exhausted, mark the job blocked. If failures stagnate, stop and report even when retries remain.
+- **Retry policy**: Use `tenet_retry_job` while there is a concrete unresolved finding and the next attempt will use new evidence or a changed approach. Tenet defaults to unlimited retries; projects may configure a finite retry budget. If MCP reports a finite budget is exhausted, mark the job blocked. If failures stagnate, stop and report even when retries remain. Retries are run-now: `tenet_retry_job` dispatches the job immediately (status `running`), so apply backoff BEFORE calling it, then wait with `tenet_job_wait` and re-run `tenet_start_eval` on the retried job — it will not reappear as `next_job` from `tenet_continue()`.
 
 ### Stage 5: Interaction E2E (Independent Job)
 

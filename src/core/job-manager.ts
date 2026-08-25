@@ -126,12 +126,16 @@ export class JobManager {
     }
 
     const now = Date.now();
-    this.stateStore.updateJob(jobId, {
-      status: 'running',
-      startedAt: now,
-      lastHeartbeat: now,
-      agentName: this.resolveAgentName(job.type),
-    });
+    // Atomic pending -> running: only one process can win. If another process
+    // dispatched it between our read and this update, return the current job
+    // instead of double-executing.
+    if (!this.stateStore.markJobRunning(jobId, now, this.resolveAgentName(job.type))) {
+      const current = this.stateStore.getJob(jobId);
+      if (!current) {
+        throw new Error(`failed to load dispatched job: ${jobId}`);
+      }
+      return current;
+    }
     this.stateStore.setJobServerId(jobId, this.serverId);
     this.stateStore.appendEvent(jobId, 'job_started', { type: job.type });
 
@@ -317,26 +321,30 @@ export class JobManager {
       params.prompt = enhancedPrompt;
     }
 
-    this.stateStore.updateJob(jobId, {
-      status: 'pending',
-      params,
-      startedAt: undefined,
-      completedAt: undefined,
-      lastHeartbeat: undefined,
-      error: undefined,
-      retryCount: job.retryCount + 1,
-    });
+    // Atomic conditional reset: only one process can win the completed/failed ->
+    // pending transition. If another MCP server process already retried this job,
+    // return its current state without dispatching (idempotent).
+    if (!this.stateStore.resetJobForRetry(jobId, params)) {
+      const current = this.stateStore.getJob(jobId);
+      if (!current) {
+        throw new Error(`failed to load retried job: ${jobId}`);
+      }
+      return current;
+    }
+
+    const newRetryCount = job.retryCount + 1;
     this.stateStore.appendEvent(jobId, 'job_retried', {
-      retry_count: job.retryCount + 1,
+      retry_count: newRetryCount,
       has_enhanced_prompt: !!enhancedPrompt,
     });
 
-    const updated = this.stateStore.getJob(jobId);
-    if (!updated) {
-      throw new Error(`failed to load retried job: ${jobId}`);
-    }
-
-    return updated;
+    // Retry is an explicit "run it again now" action: dispatch immediately rather
+    // than leaving the job pending for a poller that doesn't exist. Without this, a
+    // retried job (and everything chained behind it) wedges at pending/retry_reset
+    // forever — there is no background dispatch loop, and the chain event that first
+    // started the job already fired. resetJobForRetry's atomic guard means the job
+    // is pending here, so dispatchJob can claim it.
+    return this.dispatchJob(jobId);
   }
 
   continue(): ContinuationState {
