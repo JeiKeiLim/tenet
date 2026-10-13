@@ -4,7 +4,7 @@ title: Orchestrator stops loop without calling tenet_wait_job
 status: To Do
 assignee: []
 created_date: '2026-07-07 22:11'
-updated_date: '2026-07-08 23:28'
+updated_date: '2026-10-13 00:42'
 labels:
   - bug
   - orchestrator
@@ -25,6 +25,12 @@ When using qwen3.6 27b as orchestrator, it sometimes says it will wait for a job
 - [ ] #2 Implement a mechanism to prevent the orchestrator from stopping without calling wait
 - [ ] #3 Verify fix works with qwen3.6 27b or similar weaker models
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+RE-SCOPE (2026-10-13 cleanup audit): ACs #1/#2 are resolved - the delegation-by-default prompt shipped (commit 5a5b315) and is present at HEAD (skills/tenet/phases/05-execution-loop.md:103-118, including the never-tight-loop rule at :15). Only AC#3 remains: one weak-orchestrator run confirming the fix (never collected per TASK-037's final summary). Consider a priority downgrade since the decided fix has shipped.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 

@@ -4,6 +4,7 @@ title: 'Queue-servicer: one place decides what runs next'
 status: To Do
 assignee: []
 created_date: '2026-08-12 22:30'
+updated_date: '2026-10-13 00:42'
 labels:
   - architecture
   - design
@@ -23,3 +24,9 @@ KEY DESIGN QUESTION to resolve before building: which jobs are allowed to advanc
 
 Related: concurrency limiting (dispatchJob/startJob do not check maxParallelAgents today); continue()/job_wait should still surface actionable state.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+RE-SCOPE (2026-10-13 cleanup audit): survives as the design-decision record for queue serving (self-advance vs orchestrator-blessing). Unique unowned content: the maxParallelAgents dispatch gap (src/core/job-manager.ts:118-137) and blocked_on_finding auto-resume. Sequenced behind TASK-055 (the minimal event-driven first slice) and TASK-054; per TASK-055 DoD #4, update pointers here when 055 lands.
+<!-- SECTION:NOTES:END -->
