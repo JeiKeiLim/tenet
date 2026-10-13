@@ -1,10 +1,10 @@
 ---
 id: TASK-007
 title: Critic applicability — per-job applicable_jobs roster filter
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-07 02:16'
-updated_date: '2026-10-13 22:23'
+updated_date: '2026-10-13 23:03'
 labels:
   - critics
   - eval
@@ -56,16 +56,20 @@ The 2026-10-13 audit hard-blocked this task on TASK-048 ("per-job assignment nee
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Roster entries accept `applicable_jobs` (array of decomposition job-id strings); missing/empty = all; invalid entries tolerated (critic kept, bad ids ignored); unit tests cover all three.
-- [ ] #2 `tenet_start_eval` with source job `dag_id: F1` and roster [A applicable `["F1"]`, B applicable `["F2"]`, C list-less] dispatches A + C only; `expected_eval_stages` = A + C stages; result lists B under `skipped_inapplicable` with reason.
-- [ ] #3 Source job with no `dag_id` (ad-hoc) → full roster dispatches (fail-safe), integration-tested.
-- [ ] #4 A filtered round passes the existing round-gate semantics unchanged (existing gate tests green + one new filtered-round case).
-- [ ] #5 Staleness warning appears in the `tenet_start_eval` result when an entry references a `dag_id` no registered job carries (non-fatal).
-- [ ] #6 Skill + authoring docs updated: `02-spec-and-harness.md` §4.5 declares the field; `skills/tenet/critics.md` documents it.
-- [ ] #7 Backwards compat: rosters without the field dispatch identically to today (regression test).
+- [x] #1 Roster entries accept `applicable_jobs` (array of decomposition job-id strings); missing/empty = all; invalid entries tolerated (critic kept, bad ids ignored); unit tests cover all three.
+- [x] #2 `tenet_start_eval` with source job `dag_id: F1` and roster [A applicable `["F1"]`, B applicable `["F2"]`, C list-less] dispatches A + C only; `expected_eval_stages` = A + C stages; result lists B under `skipped_inapplicable` with reason.
+- [x] #3 Source job with no `dag_id` (ad-hoc) → full roster dispatches (fail-safe), integration-tested.
+- [x] #4 A filtered round passes the existing round-gate semantics unchanged (existing gate tests green + one new filtered-round case).
+- [x] #5 Staleness warning appears in the `tenet_start_eval` result when an entry references a `dag_id` no registered job carries (non-fatal).
+- [x] #6 Skill + authoring docs updated: `02-spec-and-harness.md` §4.5 declares the field; `skills/tenet/critics.md` documents it.
+- [x] #7 Backwards compat: rosters without the field dispatch identically to today (regression test).
 <!-- AC:END -->
 
+## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
+1. critic-roster.ts: optional applicable_jobs (string[]) on CriticRosterEntry; resolved applicableJobs (string[]) on ResolvedCritic (missing/empty = all); resolveRoster keeps only non-empty string ids (invalid entries ignored, critic kept). 2. state-store.ts: new getAllDagIds() — distinct params.dag_id across all jobs (staleness-check input). 3. tenet-start-eval.ts: resolve source job dag_id; filter enabled critics (ad-hoc source, no dag_id = full roster, fail-safe); result gains skipped_inapplicable [{id, reason}] + stale_dag_id_warnings (non-fatal); expected_eval_stages stamps from the filtered dispatch list — zero gate changes. 4. Tests: critic-roster unit (passthrough / invalid-entry tolerance / default-all / no-field shape); tenet-start-eval (F1 filter case with expected_eval_stages + skipped_inapplicable, ad-hoc full roster, staleness warning, no-field regression, filtered-round gate case). 5. Docs: 02-spec-and-harness.md §4.5 tailoring instruction + skills/tenet/critics.md field docs. 6. make check; tick ACs 1-7; finalize.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
@@ -73,4 +77,12 @@ The 2026-10-13 audit hard-blocked this task on TASK-048 ("per-job assignment nee
 DEPENDENCY (2026-10-13 cleanup audit): infrastructure-blocked on TASK-048 (run-local critic roster + merge) - today tenet_start_eval runs the same enabled roster against every job (src/mcp/tools/tenet-start-eval.ts:412-413). See TASK-048 for the blocking rationale.
 
 2026-10-14 — Design converged after a maintainer discussion prompted by a real-run eval-cost report (~69h critic vs ~6h dev across 4 jobs; worst job 10 rounds ≈ 1,600 critic-minutes). Re-scoped from "planning generates per-job critic descriptions; orchestrator chooses after each job" (old ACs #1/#2) to declarative `applicable_jobs` + deterministic dispatch-time filter — selection is filtering, not agent judgment. The ad-hoc open question (old Options A/B/C) is answered: critic declares applicability; ad-hoc jobs get the full roster, fail-safe. The 2026-10-13 hard block on TASK-048 is lifted — rationale in the description (applicability lives on roster entries, which already have a run-end lifecycle; no new per-job artifact). Priority raised Medium → High on the measured pain. A scope-glob/git-diff delta re-eval proposal from the same discussion was rejected by the maintainer ("re-run all critics when code changed is by design") — see description; do not re-litigate. Sibling task from the same discussion: TASK-056 (critic retry safeguard — enforcement in tenet_retry_job); independent, no ordering.
+
+2026-10-14 — Implemented. critic-roster.ts: applicable_jobs resolves to applicableJobs (non-empty string ids only; invalid entries dropped, critic kept; missing/empty/non-array = all; honored on built-ins, which ship list-less). state-store.ts: new getAllDagIds() (distinct non-empty params.dag_id across all jobs). tenet-start-eval.ts: filter sits between roster load and dispatch-list construction (upstream of the parallel/sequential split); ad-hoc source (no dag_id) gets the full roster fail-safe; result gains skipped_inapplicable [{id, reason}] + stale_dag_id_warnings (non-fatal, DB queried only when an entry declares a list); tool description documents the field. Zero gate changes — expected_eval_stages stamps from the filtered dispatch list. Tests: critic-roster.test.ts +3 (passthrough incl. built-in, invalid-entry tolerance, missing/empty/non-array = all); tenet-start-eval.test.ts +4 (filter case with stamped stages + skipped_inapplicable, ad-hoc full roster, staleness warning, no-field backwards compat); integration.test.ts C26 (filtered 2-stage round unblocks on its own consensus stamp); state-store.test.ts getAllDagIds. Docs: skills/tenet/critics.md (applicable_jobs roster bullet + dispatch line) + 02-spec-and-harness.md §4.5 Step 2 item 3 (declare at tailoring). Validation: make check green — 31 files, 381 tests.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped per-job critic applicability: roster entries accept applicable_jobs (decomposition dag_ids; missing/empty = all jobs), filtered deterministically at tenet_start_eval dispatch; ad-hoc jobs fail-safe to the full roster. Result reports skipped_inapplicable + stale_dag_id_warnings; expected_eval_stages stamps from the filtered list so the round gate needed zero changes (verified by new C26 filtered-round gate test). Docs updated (critics.md authoring bullet, §4.5 tailoring instruction). Verified: make check — 31 files, 381 tests green.
+<!-- SECTION:FINAL_SUMMARY:END -->

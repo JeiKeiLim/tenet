@@ -354,6 +354,50 @@ describe('StateStore', () => {
     expect(store.getBlockedJobs()).toHaveLength(1);
   });
 
+  it('getAllDagIds returns distinct non-empty dag_id params across all jobs', () => {
+    const { store } = createStore();
+
+    store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { dag_id: 'F1', name: 'job one' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { dag_id: 'F1', name: 'job one retry view' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { dag_id: 'F2', name: 'job two' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    store.createJob({
+      type: 'critic_eval',
+      status: 'completed',
+      params: { eval_stage: 'code_critic' }, // no dag_id
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { dag_id: '', name: 'empty dag id ignored' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+
+    const ids = store.getAllDagIds();
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids)).toEqual(new Set(['F1', 'F2']));
+  });
+
   it('opens read-only without syncing JSON config into SQLite', () => {
     const { tempDir, store } = createStore();
     store.close();

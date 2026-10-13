@@ -369,7 +369,10 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         'Code critic — purpose alignment check (spec + diff). Test critic — test sufficiency (spec + tests). ' +
         'Interaction-e2e — agent-driven verification through the job\'s public surface (browser UI via ' +
         'Playwright MCP; CLI/API/library via shell), exploratory not just scripted. Custom critics use their own prompt ' +
-        'under .tenet/critics/. Execution mode (parallel vs sequential) is decided by the readiness verdict ' +
+        'under .tenet/critics/. Critics may declare applicable_jobs (decomposition job ids) — a critic whose list ' +
+        'does not include the source job\'s dag_id is skipped for that eval and reported under skipped_inapplicable ' +
+        '(missing/empty list = every job; ad-hoc jobs get the full roster). ' +
+        'Execution mode (parallel vs sequential) is decided by the readiness verdict ' +
         'stored at eval_parallel_safe:{feature}; when missing or false, critics run sequentially in roster ' +
         'order to avoid contention on shared state (DB, sessions, rate limits, ports). ' +
         'Returns a jobs[] list of every dispatched critic (variable length). Wait for all to complete. ALL must pass.',
@@ -411,9 +414,53 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
       // skipped and reported, never fatal.
       const { critics: roster, warning: rosterWarning } = loadCriticRoster(projectPath);
       const enabledCritics = roster.filter((c) => c.enabled);
+
+      // Per-job applicability: a critic may declare the decomposition job ids
+      // it applies to (`applicable_jobs`, matched against the source job's
+      // `params.dag_id`). Missing/empty list = every job. Ad-hoc source jobs
+      // (no dag_id) get the full roster — non-applicability can't be proven
+      // off-DAG, and the incentive gradient stays uphill (going off-DAG costs
+      // more critics, never fewer).
+      const sourceDagId =
+        sourceJob && typeof sourceJob.params.dag_id === 'string' && sourceJob.params.dag_id.length > 0
+          ? sourceJob.params.dag_id
+          : undefined;
+      const applicableCritics: ResolvedCritic[] = [];
+      const skippedInapplicable: Array<{ id: string; reason: string }> = [];
+      for (const critic of enabledCritics) {
+        if (
+          sourceDagId &&
+          critic.applicableJobs.length > 0 &&
+          !critic.applicableJobs.includes(sourceDagId)
+        ) {
+          skippedInapplicable.push({
+            id: critic.id,
+            reason: `applicable_jobs [${critic.applicableJobs.join(', ')}] does not include this job's dag_id ${sourceDagId}`,
+          });
+          continue;
+        }
+        applicableCritics.push(critic);
+      }
+
+      // Staleness signal (non-fatal): an entry declaring an id no registered
+      // job carries is drift between the roster and the decomposition.
+      const staleDagIdWarnings: string[] = [];
+      const criticsWithLists = enabledCritics.filter((c) => c.applicableJobs.length > 0);
+      if (criticsWithLists.length > 0) {
+        const registeredDagIds = new Set(stateStore.getAllDagIds());
+        for (const critic of criticsWithLists) {
+          const unknown = critic.applicableJobs.filter((id) => !registeredDagIds.has(id));
+          if (unknown.length > 0) {
+            staleDagIdWarnings.push(
+              `critic '${critic.id}' declares applicable_jobs [${unknown.join(', ')}] but no registered job carries ${unknown.length === 1 ? 'that dag_id' : 'those dag_ids'} (roster/decomposition drift?)`,
+            );
+          }
+        }
+      }
+
       const dispatchList: CriticDispatch[] = [];
       const skippedCritics: string[] = [];
-      for (const critic of enabledCritics) {
+      for (const critic of applicableCritics) {
         const dispatch = buildCriticDispatch(critic, jobScope, outputStr, projectPath);
         if (!dispatch) {
           skippedCritics.push(critic.id);
@@ -466,6 +513,8 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
           critics_dispatched: 0,
           ...(rosterWarning ? { roster_warning: rosterWarning } : {}),
           ...(skippedCritics.length ? { skipped_critics: skippedCritics } : {}),
+          ...(skippedInapplicable.length ? { skipped_inapplicable: skippedInapplicable } : {}),
+          ...(staleDagIdWarnings.length ? { stale_dag_id_warnings: staleDagIdWarnings } : {}),
           message:
             'No critics dispatched — the roster has no enabled critics with readable prompts. Eval cannot pass without at least one critic.',
         });
@@ -520,6 +569,8 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         critics_dispatched: dispatched.length,
         ...(rosterWarning ? { roster_warning: rosterWarning } : {}),
         ...(skippedCritics.length ? { skipped_critics: skippedCritics } : {}),
+        ...(skippedInapplicable.length ? { skipped_inapplicable: skippedInapplicable } : {}),
+        ...(staleDagIdWarnings.length ? { stale_dag_id_warnings: staleDagIdWarnings } : {}),
         message: parallelSafe
           ? `${dispatched.length} critic(s) dispatched in parallel. Wait for all via tenet_job_wait + tenet_job_result. ALL must pass.`
           : `Critics dispatched sequentially in roster order. Wait for each via tenet_job_wait + tenet_job_result. ALL must pass.`,

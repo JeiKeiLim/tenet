@@ -1910,6 +1910,57 @@ describe('integration: blocking finding auto-resume', () => {
     // wait, not unblock on the round's stale green.
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
   });
+
+  it('C26 (round-id): a filtered round (applicable_jobs) unblocks on its own stamped stages', async () => {
+    // tenet_start_eval stamps expected_eval_stages from what actually dispatched,
+    // so a job whose round ran 2 of 3 built-ins (interaction_e2e filtered out as
+    // inapplicable via applicable_jobs) carries a 2-stage consensus stamp. The
+    // gate must use that stamp — same semantics as any stamped round, which is
+    // why applicability filtering needs zero gate changes.
+    const { store, manager, reportBlockingFinding } = createHarness([
+      { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
+      { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
+      { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
+    ]);
+
+    const parent = store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { name: 'final-report', prompt: 'verify', report_only: true },
+      retryCount: 0,
+      maxRetries: 3,
+    });
+
+    const r = await reportBlockingFinding({
+      job_id: parent.id,
+      finding: 'some bug',
+      why_it_blocks_report: 'report cannot pass',
+      recommended_followup: 'fix it',
+    });
+    const childId = parseResult(r).child_job_id as string;
+    await manager.waitForJob(childId, null, 5_000);
+
+    // A filtered round: interaction_e2e declared inapplicable for this job, so
+    // the dispatch stamped only the two stages that ran.
+    const filteredStages = ['code_critic', 'test_critic'];
+    const c = manager.startJob('critic_eval', {
+      source_job_id: childId,
+      eval_stage: 'code_critic',
+      eval_round: 'round-1',
+      expected_eval_stages: filteredStages,
+      prompt: 'Code Critic review — filtered round',
+    });
+    const t = manager.startJob('eval', {
+      source_job_id: childId,
+      eval_stage: 'test_critic',
+      eval_round: 'round-1',
+      expected_eval_stages: filteredStages,
+      prompt: 'Test Critic review — filtered round',
+    });
+    await manager.waitForJob(c.id, null, 5_000);
+    await manager.waitForJob(t.id, null, 5_000);
+    expect(store.getJob(parent.id)?.status).toBe('pending');
+  });
 });
 
 // ─── D. Layer 2 status surfacing via tenet_get_status ───────────────────────

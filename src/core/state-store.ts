@@ -634,6 +634,23 @@ export class StateStore {
     return rows.map((row) => this.toJob(row));
   }
 
+  /**
+   * Distinct `params.dag_id` values across all registered jobs (decomposition
+   * ids like F1, F2). Input to `tenet_start_eval`'s applicability staleness
+   * check — a critic declaring an id no job carries is drift, not an error.
+   */
+  getAllDagIds(): string[] {
+    const rows = this.db.prepare('SELECT params FROM jobs').all() as Array<Pick<JobRow, 'params'>>;
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const dagId = parseJson<Record<string, unknown>>(row.params, {}).dag_id;
+      if (typeof dagId === 'string' && dagId.length > 0) {
+        ids.add(dagId);
+      }
+    }
+    return [...ids];
+  }
+
   appendEvent(jobId: string, event: string, data?: unknown): void {
     const payload = data === undefined ? null : JSON.stringify(data);
     this.db
