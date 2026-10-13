@@ -12,8 +12,12 @@ export const registerTenetRetryJobTool = (registerTool: RegisterTool, jobManager
         'immediately (run-now — the job starts the moment this tool is called). Preserves ' +
         'DAG linkage and increments the retry count. A job whose retry budget is exhausted ' +
         'throws instead of re-running. The retry budget may be finite or unlimited, ' +
-        'depending on Tenet config. Optionally provide an enhanced prompt to replace the ' +
-        'original (e.g. add failure context).',
+        'depending on Tenet config. Critic jobs (dispatched by tenet_start_eval) ' +
+        'may only be retried in place when their last run produced no verdict ' +
+        '(infra failure) and no dev/integration_test job has completed since ' +
+        'their eval round dispatched — otherwise re-run the full eval via ' +
+        'tenet_start_eval for a fresh round. Optionally provide an enhanced ' +
+        'prompt to replace the original (e.g. add failure context).',
       inputSchema: z.object({
         job_id: z.string().uuid(),
         enhanced_prompt: z

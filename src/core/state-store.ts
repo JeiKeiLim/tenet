@@ -651,6 +651,29 @@ export class StateStore {
     return [...ids];
   }
 
+  /**
+   * Completed jobs of the given types whose completion time is strictly after
+   * `sinceMs`. Powers the critic-retry safeguard's "code changed since the
+   * round dispatched" window: `completed_at` is authoritative, falling back to
+   * `created_at` for rows that never got a completion stamp (the same
+   * COALESCE the archive queries use).
+   */
+  getCompletedJobsByTypeSince(types: Job['type'][], sinceMs: number): Job[] {
+    if (types.length === 0) {
+      return [];
+    }
+    const placeholders = types.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM jobs
+         WHERE status = 'completed' AND type IN (${placeholders})
+           AND COALESCE(completed_at, created_at) > ?
+         ORDER BY created_at ASC`,
+      )
+      .all(...types, sinceMs) as JobRow[];
+    return rows.map((row) => this.toJob(row));
+  }
+
   appendEvent(jobId: string, event: string, data?: unknown): void {
     const payload = data === undefined ? null : JSON.stringify(data);
     this.db

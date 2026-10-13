@@ -245,9 +245,12 @@ describe('integration: sequential critic chain', () => {
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
       // First interaction_e2e invocation fails at the environment level (like the
       // observed api_error 400 "model does not support image input"); the retry passes.
+      // The failing rule serves a no-verdict body — a real adapter-level failure
+      // never returns the critic's rubric — so the in-place retry stays legal
+      // under the TASK-056 critic-retry safeguard.
       {
         match: matchers.evalStage('interaction_e2e'),
-        fixture: 'playwright-layer2-completed.json',
+        fixture: 'critic-infra-error.md',
         success: false,
         error: 'api_error 400: this model does not support image input',
         maxUses: 1,
@@ -290,9 +293,10 @@ describe('integration: sequential critic chain', () => {
     const { store, manager, startEval, retryJob } = createHarness([
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
       // test_critic fails on its first invocation (context-limit style), passes on retry.
+      // No-verdict body, so the in-place retry is legal under the TASK-056 safeguard.
       {
         match: matchers.evalStage('test_critic'),
-        fixture: 'test-critic-passing.json',
+        fixture: 'critic-infra-error.md',
         success: false,
         error: 'context limit exceeded',
         maxUses: 1,
@@ -389,14 +393,20 @@ describe('integration: blocking finding auto-resume', () => {
     expect(store.getJob(parent.id)?.status).toBe('pending');
   });
 
-  it('C1b: a retried critic that passes unblocks the blocked parent (retry → resume-gate)', async () => {
-    const { store, manager, reportBlockingFinding, retryJob } = createHarness([
+  it('C1b (round-id): a LEGAL no-verdict critic retry keeps its round — the patched round unblocks the parent, siblings not re-run', async () => {
+    // TASK-056 safeguard's legal path, end-to-end: the critic failed with NO
+    // verdict (infra failure) and nothing code-writing completed since the
+    // round dispatched, so the in-place retry is allowed. The retried critic
+    // keeps its eval_round, siblings are NOT re-run, and the patched round —
+    // not a fresh one — greens the resume gate.
+    const { store, manager, startEval, reportBlockingFinding, retryJob } = createHarness([
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
-      // test_critic fails on its first invocation, passes on retry.
+      // test_critic fails on its first invocation with a NO-VERDICT body
+      // (infra failure), passes on retry.
       {
         match: matchers.evalStage('test_critic'),
-        fixture: 'test-critic-passing.json',
+        fixture: 'critic-infra-error.md',
         success: false,
         error: 'context limit exceeded',
         maxUses: 1,
@@ -404,6 +414,8 @@ describe('integration: blocking finding auto-resume', () => {
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
       { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
+
+    store.setConfig('eval_parallel_safe:resume-retry', 'true');
 
     const parent = store.createJob({
       type: 'dev',
@@ -425,37 +437,44 @@ describe('integration: blocking finding auto-resume', () => {
     await manager.waitForJob(childId, null, 5_000);
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
 
-    // Orchestrator fires the 3 critics; test_critic fails on its first invocation.
-    const code = manager.startJob('critic_eval', {
-      source_job_id: childId,
-      eval_stage: 'code_critic',
-      prompt: 'Code Critic review',
-    });
-    const test = manager.startJob('eval', {
-      source_job_id: childId,
-      eval_stage: 'test_critic',
-      prompt: 'Test Critic review',
-    });
-    const play = manager.startJob('interaction_e2e', {
-      source_job_id: childId,
-      eval_stage: 'interaction_e2e',
-      prompt: 'Interaction E2E eval',
-    });
+    // Round dispatch via the real tool: every critic is stamped with the same
+    // eval_round. code + interaction_e2e pass; test_critic fails with no verdict.
+    const evalResult = await startEval({ job_id: childId, output: {}, feature: 'resume-retry' });
+    const evalParsed = parseResult(evalResult);
+    const codeId = jobId(evalParsed, 'code_critic');
+    const testId = jobId(evalParsed, 'test_critic');
+    const playId = jobId(evalParsed, 'interaction_e2e');
+    const roundId = store.getJob(testId)?.params.eval_round;
+    expect(typeof roundId).toBe('string');
 
-    await manager.waitForJob(code.id, null, 5_000);
-    await manager.waitForJob(test.id, null, 5_000);
-    expect(store.getJob(test.id)?.status).toBe('failed');
+    await manager.waitForJob(codeId, null, 5_000);
+    await manager.waitForJob(testId, null, 5_000);
+    await manager.waitForJob(playId, null, 5_000);
+    expect(store.getJob(testId)?.status).toBe('failed');
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
+    const codeBefore = store.getJob(codeId);
+    const playBefore = store.getJob(playId);
 
-    // Retry the failed critic: it re-dispatches immediately and passes.
-    const retriedResult = await retryJob({ job_id: test.id });
+    // The legal retry: no verdict + no code-writing completion since the round
+    // dispatched (the child dev completed before the round started).
+    const retriedResult = await retryJob({ job_id: testId });
     expect(parseResult(retriedResult).status).toBe('running');
-    await manager.waitForJob(test.id, null, 5_000);
-    expect(store.getJob(test.id)?.status).toBe('completed');
+    expect(store.getJob(testId)?.params.eval_round).toBe(roundId); // in-place: round kept
 
-    // interaction_e2e completes; the resume gate sees all critics passed and unblocks the parent.
-    await manager.waitForJob(play.id, null, 5_000);
+    await manager.waitForJob(testId, null, 5_000);
+    expect(store.getJob(testId)?.status).toBe('completed');
+
+    // The patched round greens the gate — parent resumes with zero sibling re-runs.
     expect(store.getJob(parent.id)?.status).toBe('pending');
+    for (const [id, before] of [
+      [codeId, codeBefore],
+      [playId, playBefore],
+    ] as const) {
+      const after = store.getJob(id);
+      expect(after?.status).toBe('completed');
+      expect(after?.retryCount).toBe(before?.retryCount); // 0 — never re-dispatched
+      expect(after?.completedAt).toBe(before?.completedAt); // untouched by the patch
+    }
   });
 
   it('C2: only one critic passed → parent stays blocked_on_finding', async () => {

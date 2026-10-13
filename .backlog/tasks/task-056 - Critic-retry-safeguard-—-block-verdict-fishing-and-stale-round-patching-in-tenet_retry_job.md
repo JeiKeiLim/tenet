@@ -3,9 +3,10 @@ id: TASK-056
 title: >-
   Critic retry safeguard — block verdict-fishing and stale-round patching in
   tenet_retry_job
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-13 22:22'
+updated_date: '2026-10-13 23:46'
 labels:
   - critics
   - eval
@@ -51,11 +52,33 @@ TASK-007 (critic applicability — `applicable_jobs` roster field) — the other
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Retry of a critic whose last output parses to a verdict (red or green) is refused with an error naming the fix-loop path
-- [ ] #2 Retry of a no-verdict critic with no dev/integration_test completion since its round dispatch is allowed; the retried critic keeps id/params/eval_round and the patched round greens without sibling re-runs (integration test)
-- [ ] #3 Retry of a no-verdict critic after ANY dev or integration_test completion in the window (source retry OR ad-hoc dev job) is refused with reason
-- [ ] #4 Critic with unresolvable eval_round (legacy/unstamped rows) is refused — fail-closed, never guess
-- [ ] #5 Dev and other non-critic job retry behavior is unchanged (regression)
-- [ ] #6 Existing round-gate + retry integration tests stay green; new tests lock each distinct refusal reason
-- [ ] #7 One-line skill note at the classifier (05-execution-loop.md:114) that retry-in-place is server-enforced for no-verdict failures only
+- [x] #1 Retry of a critic whose last output parses to a verdict (red or green) is refused with an error naming the fix-loop path
+- [x] #2 Retry of a no-verdict critic with no dev/integration_test completion since its round dispatch is allowed; the retried critic keeps id/params/eval_round and the patched round greens without sibling re-runs (integration test)
+- [x] #3 Retry of a no-verdict critic after ANY dev or integration_test completion in the window (source retry OR ad-hoc dev job) is refused with reason
+- [x] #4 Critic with unresolvable eval_round (legacy/unstamped rows) is refused — fail-closed, never guess
+- [x] #5 Dev and other non-critic job retry behavior is unchanged (regression)
+- [x] #6 Existing round-gate + retry integration tests stay green; new tests lock each distinct refusal reason
+- [x] #7 One-line skill note at the classifier (05-execution-loop.md:114) that retry-in-place is server-enforced for no-verdict failures only
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Enforce inside retryJob (job-manager.ts, single choke point; only caller is the MCP tool) for critic jobs (non-empty eval_stage + source_job_id params, same pair the gate uses): (1) last stored output must not parse to a verdict — extractRubricJson + boolean-passed guard (object branch returns any object); red or green both refuse. (2) no dev/integration_test completion in (roundDispatch, now]; roundDispatch = min createdAt of eval_round siblings via getEvalsForSource; missing/unresolvable eval_round = fail-closed refuse. Hard errors name the legal path; no force flag. New StateStore.getCompletedJobsByTypeSince(types, since) with COALESCE(completed_at, created_at). Tests: tenet-retry-job.test.ts locks each refusal reason; integration.test.ts legal end-to-end (round preserved, siblings untouched, round greens); state-store.test.ts for the query. Docs: classifier note in 05-execution-loop.md + one sentence in tool description.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented inside retryJob (job-manager.ts assertCriticRetryLegal, called after the budget check, before resetJobForRetry — refused retries touch no state). Critic detection: non-empty params.eval_stage + source_job_id, the same pair the resume gate uses. Condition 1: extractRubricJson over extractAdapterRawOutput(getJobOutput), guarded by typeof parsed.passed === 'boolean' — extractRubricJson's object branch returns any object, and a structured body without 'passed' is no-verdict by the gate's own standard, so the classifier's retry-as-is stays legal for it. Condition 2: eval_round must be stamped (missing → fail-closed refusal; declared-but-unresolvable round → refusal, defense-in-depth); roundDispatch = min createdAt of the round's siblings via getEvalsForSource; refuse when any dev/integration_test completion (COALESCE(completed_at, created_at)) falls in (roundDispatch, now]. Hard errors name the legal path; no force flag. New StateStore.getCompletedJobsByTypeSince(types, since) — generic query, the dev/integration_test policy stays at the caller.
+
+Found while testing: FakeAdapter serves the fixture body even on success:false and setJobOutput stores output on failed invocations too, so B3/B4/C1b's 'failed' critics carried green-verdict bodies — which the safeguard (correctly) refuses. Their failing rules now serve tests/fixtures/fake-agents/critic-infra-error.md (realistic adapter-level no-verdict body). C1b rewritten from unstamped hand-fired critics to a real startEval-stamped round; it now asserts the full AC#2 contract end-to-end: round preserved, siblings not re-run (retryCount/completedAt untouched), patched round unblocks the blocked parent.
+
+Tests: +9 tenet-retry-job.test.ts (red/green verdict refusals, legal no-verdict retry, structured-no-passed allowed, ad-hoc dev / integration_test / source re-completion in window, dev-before-window legal, unstamped fail-closed), +1 state-store.test.ts (type/status/window filter), C1b rewritten. Docs: 05-execution-loop.md classifier note (server-enforced for no-verdict failures only) + tenet_retry_job description sentence. make check green: 31 files, 391 tests.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Critic retry safeguard enforced at the action layer: tenet_retry_job now refuses verdict re-rolls (red or green) and stale-round patches, each refusal naming the legal path (fix loop / fresh tenet_start_eval round); the three-way classifier's no-verdict retry is now server-enforced, not advisory. Unstamped/legacy critic rows fail closed.
+<!-- SECTION:FINAL_SUMMARY:END -->
