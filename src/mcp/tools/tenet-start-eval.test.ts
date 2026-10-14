@@ -570,3 +570,127 @@ describe('tenet_start_eval configurable critic roster', () => {
     await waitForAll(manager, parsed);
   });
 });
+
+describe('tenet_start_eval per-job critic applicability (applicable_jobs)', () => {
+  /** Roster: two list-less critics, one matching the source dag_id, one for F2 only. */
+  const writeApplicabilityRoster = (store: StateStore): void => {
+    writeCriticPrompt(store, 'migration.md', '## Migration Critic\n\nReview alembic migrations only.\n');
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true, enabled: true }, // list-less → every job
+        { id: 'test_critic', builtin: true, enabled: true, applicable_jobs: ['job-1'] },
+        { id: 'interaction_e2e', builtin: true, enabled: true }, // list-less → every job
+        {
+          id: 'migration',
+          builtin: false,
+          enabled: true,
+          stage: 'migration_critic',
+          prompt_file: '.tenet/critics/migration.md',
+          applicable_jobs: ['F2'],
+        },
+      ],
+    });
+  };
+
+  it('skips critics whose applicable_jobs does not include the source dag_id', async () => {
+    const { store, manager, handler } = createHarness();
+    writeApplicabilityRoster(store);
+    const sourceId = createSourceJob(store, 'oauth'); // dag_id: 'job-1'
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    // A (test_critic, lists job-1) + both list-less critics dispatch; B (F2-only) skipped.
+    expect(parsed.critics_dispatched).toBe(3);
+    expect(jobRoles(parsed)).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
+    const skipped = parsed.skipped_inapplicable as Array<{ id: string; reason: string }>;
+    expect(skipped).toEqual([{ id: 'migration', reason: expect.stringContaining('F2') }]);
+
+    // expected_eval_stages is stamped from what actually dispatched (the filtered list).
+    expect(store.getJob(jobId(parsed, 'code_critic'))?.params.expected_eval_stages).toEqual([
+      'code_critic',
+      'test_critic',
+      'interaction_e2e',
+    ]);
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('dispatches the full roster for an ad-hoc source job (no dag_id) — fail-safe', async () => {
+    const { store, manager, handler } = createHarness();
+    writeApplicabilityRoster(store);
+    const sourceId = store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { name: 'adhoc', prompt: 'ad-hoc hotfix', feature: 'oauth' },
+      retryCount: 0,
+      maxRetries: 3,
+    }).id;
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    // Non-applicability can't be proven off-DAG — everything runs.
+    expect(parsed.critics_dispatched).toBe(4);
+    expect(jobRoles(parsed)).toEqual(['code_critic', 'test_critic', 'interaction_e2e', 'migration_critic']);
+    expect(parsed.skipped_inapplicable).toBeUndefined();
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('warns (non-fatal) when applicable_jobs references a dag_id no registered job carries', async () => {
+    const { store, manager, handler } = createHarness();
+    writeCriticPrompt(store, 'migration.md', '## Migration Critic\n\nReview alembic migrations only.\n');
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true, enabled: true },
+        { id: 'test_critic', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: true },
+        {
+          id: 'migration',
+          builtin: false,
+          enabled: true,
+          stage: 'migration_critic',
+          prompt_file: '.tenet/critics/migration.md',
+          applicable_jobs: ['job-1', 'GONE'],
+        },
+      ],
+    });
+    const sourceId = createSourceJob(store, 'oauth'); // dag_id 'job-1' — the only registered one
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    // The critic still dispatched (its list includes the source dag_id) — the
+    // stale reference is a warning, never fatal.
+    expect(parsed.critics_dispatched).toBe(4);
+    const warnings = parsed.stale_dag_id_warnings as string[];
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('GONE');
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('dispatches every critic when no entry declares applicable_jobs (backwards compat)', async () => {
+    const { store, manager, handler } = createHarness();
+    writeCriticPrompt(store, 'security.md', '## Security Critic\n\nReview the diff.\n');
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true, enabled: true },
+        { id: 'test_critic', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: true },
+        { id: 'security', builtin: false, enabled: true, stage: 'security_critic', prompt_file: '.tenet/critics/security.md' },
+      ],
+    });
+    const sourceId = createSourceJob(store, 'oauth'); // dag_id present, but no entry declares a list
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    expect(parsed.critics_dispatched).toBe(4);
+    expect(jobRoles(parsed)).toEqual(['code_critic', 'test_critic', 'interaction_e2e', 'security_critic']);
+    expect(parsed.skipped_inapplicable).toBeUndefined();
+    expect(parsed.stale_dag_id_warnings).toBeUndefined();
+
+    await waitForAll(manager, parsed);
+  });
+});

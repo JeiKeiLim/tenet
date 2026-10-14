@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-14 04:15'
-updated_date: '2026-07-14 04:33'
+updated_date: '2026-10-13 00:40'
 labels:
   - critics
   - local-models
@@ -14,6 +14,7 @@ labels:
 dependencies: []
 ordinal: 45000
 ---
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
@@ -39,3 +40,9 @@ Related to TASK-007 (dynamic critics per job), TASK-036 (critic tiers), TASK-004
 - [ ] #3 Frontier model critics can be broader and fewer
 - [ ] #4 Quality of checking is maintained regardless of model tier
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+ANNOTATIONS (2026-10-13 backlog cleanup audit): (1) INHERITED from TASK-001 (closed as superseded): the weak-model-critic prompt-vs-capability question; recorded stance: capability/structural, prompt-simplification rejected. (2) PARK GATE REWORDED: proceed when a real weak/local-model run shows critic failures (measure-first rule per parked TASK-037) - no longer gated behind TASK-001. (3) INHERITED from TASK-046 (closed): supporting research citation - arXiv:2510.08847 (What is Your Agent's GPA?).
+<!-- SECTION:NOTES:END -->

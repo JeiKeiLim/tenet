@@ -97,6 +97,7 @@ describe('resolveRoster', () => {
       jobType: 'critic_eval',
       promptFile: '.tenet/critics/security.md',
       fullContext: true,
+      applicableJobs: [],
     });
   });
 
@@ -138,6 +139,40 @@ describe('resolveRoster', () => {
     expect(byId(defaults, 'test_critic')?.fullContext).toBe(true);
     expect(byId(defaults, 'interaction_e2e')?.fullContext).toBe(false);
     expect(byId(defaults, 'lint')?.fullContext).toBe(true); // custom default true
+  });
+
+  it('resolves applicable_jobs to applicableJobs (honored on built-ins too)', () => {
+    const roster = resolveRoster({
+      critics: [
+        { id: 'code_critic', builtin: true, applicable_jobs: ['F1', 'F2'] },
+        { id: 'migration', prompt_file: '.tenet/critics/migration.md', applicable_jobs: ['F3'] },
+      ],
+    });
+    expect(byId(roster, 'code_critic')?.applicableJobs).toEqual(['F1', 'F2']);
+    expect(byId(roster, 'migration')?.applicableJobs).toEqual(['F3']);
+  });
+
+  it('drops invalid applicable_jobs entries but keeps the critic', () => {
+    const roster = resolveRoster({
+      critics: [
+        { id: 'migration', prompt_file: '.tenet/critics/migration.md', applicable_jobs: ['', 42, null, 'F1'] },
+      ],
+    });
+    // Bad ids ignored, critic kept with the valid remainder.
+    expect(byId(roster, 'migration')?.applicableJobs).toEqual(['F1']);
+  });
+
+  it('treats a missing, empty, or non-array applicable_jobs as "applies to all" ([])', () => {
+    const roster = resolveRoster({
+      critics: [
+        { id: 'code_critic', builtin: true }, // field absent
+        { id: 'test_critic', builtin: true, applicable_jobs: [] }, // empty list
+        { id: 'interaction_e2e', builtin: true, applicable_jobs: 'F1' }, // non-array → ignored
+      ],
+    });
+    for (const id of ['code_critic', 'test_critic', 'interaction_e2e']) {
+      expect(byId(roster, id)?.applicableJobs).toEqual([]);
+    }
   });
 
   it('drops duplicate ids (first wins) and skips malformed entries', () => {

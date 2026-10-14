@@ -1,9 +1,10 @@
 ---
 id: TASK-032
 title: 'Context filtering: what to send to worker from project document?'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-07 21:57'
+updated_date: '2026-10-13 00:42'
 labels:
   - design
 dependencies: []
@@ -60,4 +61,14 @@ Sending all context (spec, harness, all decomposition, etc.) to the worker feels
 - [ ] #5 Consider backward compatibility — existing runs should not break
 <!-- AC:END -->
 
+## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
+CLOSED 2026-10-13 (backlog cleanup audit, adversarially verified) as superseded: the shipped full-inline worker context design answered this task's question in the opposite direction, with recorded rationale (commit b910117) and a dial-back contingency (src/core/job-manager.ts:721-725; commit 2975e33 - narrow the inlined decomposition if it proves too much in practice). The investigation findings (two context-assembly paths, wasteful-patterns map, key-files table) were folded into TASK-010, the single surviving context-narrowing tracker - the cleanup audit caught a mutual-supersession knot between this task and TASK-010 (each pointing at the other as survivor) and resolved it in 010's favor. See TASK-010's ABSORBED note for the inherited map.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Superseded: the full-inline design decided the question; investigation findings folded into TASK-010 (surviving measure-first context tracker).
+<!-- SECTION:FINAL_SUMMARY:END -->

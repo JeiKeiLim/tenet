@@ -4,6 +4,7 @@ title: Critic model selection
 status: To Do
 assignee: []
 created_date: '2026-07-07 02:16'
+updated_date: '2026-10-13 00:42'
 labels: []
 dependencies: []
 priority: high
@@ -23,3 +24,9 @@ Add per-critic model selection so correlated blind spots don't survive. Dispatch
 - [ ] #3 Frontier model critic review gate is available as option
 - [ ] #4 Configuration management for growing config complexity is addressed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+SCOPE NOTE (2026-10-13 cleanup): core scope is per-critic model selection + the frontier review gate (no per-critic model field exists today: src/core/critic-roster.ts:100-108; every critic dispatches on one agent). The PM-agent consider-item is owned by TASK-006 - drop it when scheduling this task.
+<!-- SECTION:NOTES:END -->

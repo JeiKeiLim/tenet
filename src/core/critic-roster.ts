@@ -94,6 +94,15 @@ export type CriticRosterEntry = {
    * can consult the spec on demand if its review raises a question.
    */
   full_context?: boolean;
+  /**
+   * Decomposition job ids (`F1`, `F2`, … — the `dag_id`s from decomposition.md)
+   * this critic applies to. Missing or empty = applies to every job. When the
+   * source job's `params.dag_id` isn't listed, `tenet_start_eval` skips this
+   * critic for that job's eval; ad-hoc source jobs (no `dag_id`) always get the
+   * full roster — non-applicability can't be proven off-DAG. Honored on
+   * built-ins too (they ship list-less = run everywhere).
+   */
+  applicable_jobs?: string[];
 };
 
 /** A critic after resolution, ready for dispatch. */
@@ -107,6 +116,8 @@ export type ResolvedCritic = {
   promptFile?: string;
   /** Resolved from `full_context`: `true` = inline the run docs, `false` = review ungrounded. */
   fullContext: boolean;
+  /** Resolved from `applicable_jobs`: decomposition job ids this critic applies to. Empty = all jobs. */
+  applicableJobs: string[];
 };
 
 export const DEFAULT_ROSTER: readonly ResolvedCritic[] = BUILTIN_CRITIC_IDS.map((id) => ({
@@ -116,6 +127,7 @@ export const DEFAULT_ROSTER: readonly ResolvedCritic[] = BUILTIN_CRITIC_IDS.map(
   stage: BUILTIN_STAGE[id],
   jobType: BUILTIN_JOB_TYPE[id],
   fullContext: BUILTIN_DEFAULT_FULL_CONTEXT[id],
+  applicableJobs: [],
 }));
 
 const isBuiltinId = (id: string): id is BuiltinCriticId =>
@@ -123,6 +135,16 @@ const isBuiltinId = (id: string): id is BuiltinCriticId =>
 
 const isJobType = (value: unknown): value is JobType =>
   typeof value === 'string' && (VALID_CUSTOM_JOB_TYPES as readonly string[]).includes(value as JobType);
+
+/**
+ * Resolve `applicable_jobs` for one entry: keep only non-empty string ids. A
+ * non-array (or absent) value and an all-invalid array both resolve to `[]` =
+ * applies to all jobs — invalid entries are ignored, the critic itself is kept.
+ */
+const resolveApplicableJobs = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : [];
 
 /**
  * Resolve a parsed `.tenet/critics.json` payload into an ordered roster.
@@ -137,6 +159,8 @@ const isJobType = (value: unknown): value is JobType =>
  *   a missing `stage` defaults to its `id`. A missing `prompt_file` is kept
  *   (resolved later — the tool skips the critic with a warning if the file
  *   doesn't exist at dispatch time).
+ * - `applicable_jobs` resolves to the non-empty string ids it lists (invalid
+ *   entries dropped, the critic kept); missing/empty = applies to all jobs.
  */
 export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
   if (!raw || typeof raw !== 'object') {
@@ -181,6 +205,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         stage: BUILTIN_STAGE[id],
         jobType: BUILTIN_JOB_TYPE[id],
         fullContext: typeof e.full_context === 'boolean' ? e.full_context : BUILTIN_DEFAULT_FULL_CONTEXT[id],
+        applicableJobs: resolveApplicableJobs(e.applicable_jobs),
       });
       usedIds.add(id);
     } else {
@@ -195,6 +220,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         jobType,
         promptFile,
         fullContext: e.full_context !== false,
+        applicableJobs: resolveApplicableJobs(e.applicable_jobs),
       });
       usedIds.add(id);
     }
@@ -210,6 +236,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         stage: BUILTIN_STAGE[id],
         jobType: BUILTIN_JOB_TYPE[id],
         fullContext: BUILTIN_DEFAULT_FULL_CONTEXT[id],
+        applicableJobs: [],
       });
     }
   }

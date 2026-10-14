@@ -18,7 +18,8 @@ actually plugs into the gate and the fix-routing.
 A critic is a focused prompt that ends by emitting a structured verdict. The
 orchestrator:
 
-- dispatches it (alongside the built-ins) on every job's eval,
+- dispatches it (alongside the built-ins) on every job's eval — or only the
+  jobs it declares applicable, via `applicable_jobs` (see the roster file below),
 - reads its `passed` flag to decide pass/fail, and
 - reads each finding's `category` to route follow-up work (retry the dev job,
   strengthen tests, fix the harness, etc.).
@@ -76,6 +77,20 @@ beats "check for security issues."
     can catch issues the spec itself missed. (The artifact_paths labels still appear in
     its job scope, so it can consult the spec on demand — independent, not blind.)
     Applies to built-ins too; the built-ins default to `true`.
+  - `applicable_jobs` — optional array of decomposition job ids (the `dag_id`s
+    authored in `decomposition.md`, e.g. `["F2", "F3"]`). When the source job's
+    `dag_id` isn't in the list, `tenet_start_eval` skips this critic for that
+    job's eval and reports it under `skipped_inapplicable`; the round's
+    `expected_eval_stages` is stamped from what actually dispatched, so the
+    gate waits on exactly the critics that ran. Omitted or empty = runs for
+    every job. Ad-hoc jobs (no `dag_id`) always get the full roster —
+    non-applicability can't be proven off-DAG, and going off-DAG costs *more*
+    critics, never fewer. Honored on built-ins too (they ship list-less = run
+    everywhere). A declared id no registered job carries surfaces as a
+    non-fatal `stale_dag_id_warnings` entry at dispatch — roster/decomposition
+    drift, machine-checkable. Use it to keep domain critics (migrations, auth,
+    ledgers) off jobs that never touch their surface, so eval cost scales with
+    applicability instead of roster size.
 
 The file is read live on every eval — edit it and the next `tenet_start_eval`
 reflects the change with no restart. Invalid JSON falls back to the 3 built-ins.

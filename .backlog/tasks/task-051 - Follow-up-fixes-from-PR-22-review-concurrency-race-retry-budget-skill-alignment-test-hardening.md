@@ -3,10 +3,10 @@ id: TASK-051
 title: >-
   Follow-up fixes from PR #22 review: concurrency race, retry budget, skill
   alignment, test hardening
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-13 23:01'
-updated_date: '2026-08-24 22:22'
+updated_date: '2026-10-13 00:32'
 labels:
   - bug
   - eval
@@ -68,4 +68,12 @@ DRIFT TRIM (2026-08-25, user review of 31-finding drift audit) — several behav
 - Skill docs trimmed to match (05-execution-loop.md budget sentence + sub-agent bullet + finding-dispatch block, 06-evaluation.md run-now note, SKILL.md retry bullet, tenet-retry-job.ts description).
 - Verified: vitest 372 pass, tsc --noEmit clean, eslint clean.
 - PR #22 now scoped to: retry = run-now (run-now), concurrency race hardening (atomic reset + atomic running-claim), report-only escalation, skill alignment, budget/original semantics. READY for human review.
+
+CLOSED 2026-10-13 (backlog cleanup audit, adversarially verified): All four items done or user-reverted by recorded decision; merged in PR #22 (0b2a2d2) and shipped to npm in 26.9.0. (1) Concurrency race: atomic resetJobForRetry (WHERE status IN completed/failed, src/core/state-store.ts:574-591) plus atomic markJobRunning (pending->running) - two processes cannot double-dispatch. (2) Retry budget: ORIGINAL semantics kept per the 2026-08-25 drift trim - retry_count increments on every retry, completed or failed (the reset-on-completion change was reverted as serious drift); pinned by src/core/job-manager.test.ts:395-406. (3) Skill alignment: run-now guidance verified at HEAD (skills/tenet/phases/05-execution-loop.md, 06-evaluation.md, SKILL.md; tenet-retry-job.ts description); finding-category dispatch consolidates into ONE retry call (option B); the second-dispatch throw restored per drift trim. (4) Test hardening: B3/B4 plus C1b (retried critic pass unblocks blocked_on_finding parent) in src/core/integration.test.ts; the regex-pinning skill-dispatch-contract test was deleted per user decision (it was the drift engine). In Progress status simply predated the PR merge.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+PR #22 follow-ups all landed or were user-reverted by recorded decision (atomic retry/dispatch, original retry-budget semantics, skill run-now alignment, test hardening); shipped to npm in 26.9.0. Status was stale - closed as Done in the 2026-10-13 backlog cleanup.
+<!-- SECTION:FINAL_SUMMARY:END -->

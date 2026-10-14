@@ -1,10 +1,10 @@
 ---
 id: TASK-049
 title: 'Bug: retried eval critics never re-dispatch — pending/retry_reset wedge'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-12 22:04'
-updated_date: '2026-08-12 22:30'
+updated_date: '2026-10-13 00:32'
 labels:
   - bug
   - eval
@@ -43,7 +43,7 @@ WORKAROUND (validated): cancel the wedged critic + all non-running children (the
 - [x] #1 Integration test: fail a critic -> tenet_retry_job -> assert the retried job reaches running (not stuck pending/retry_reset) within a bounded time
 - [x] #2 Dispatch loop (or equivalent) picks up retry_reset pending jobs whose parent is terminal
 - [x] #3 Regression guard: a retried critic that wedges surfaces in tenet_continue or job_wait as actionable instead of silently pending
-- [ ] #4 Integration test: fail a critic -> tenet_retry_job -> assert the retried job reaches running (not stuck pending/retry_reset) within a bounded time; retryJob re-dispatches the retried job immediately (run-now) so a retried job never sits pending/retry_reset awaiting a poller that doesn't exist; Regression guard: B3 integration test asserts a retried critic reaches running and completes within bounded time
+- [x] #4 Integration test: fail a critic -> tenet_retry_job -> assert the retried job reaches running (not stuck pending/retry_reset) within a bounded time; retryJob re-dispatches the retried job immediately (run-now) so a retried job never sits pending/retry_reset awaiting a poller that doesn't exist; Regression guard: B3 integration test asserts a retried critic reaches running and completes within bounded time
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,6 +58,8 @@ WORKAROUND (validated): cancel the wedged critic + all non-running children (the
 Decided with user 2026-08-13: retry = run-now (philosophy 1). The queue-servicer (philosophy 2) is a larger architectural question — filed separately.
 
 FIX IMPLEMENTED + VERIFIED 2026-08-13: retryJob() now calls dispatchJob() after the reset (run-now). Updated tenet_retry_job tool description + response (next_tool: tenet_job_wait), README + CLAUDE.md rows. Unit test updated (retried job status is running, not pending). New B3 integration test in src/core/integration.test.ts: fail interaction_e2e via FakeAdapter (success:false maxUses:1) -> tenet_retry_job -> status running immediately -> completes within 5s. Full suite: 354 tests / 29 files pass; typecheck + eslint clean.
+
+CLOSED 2026-10-13 (backlog cleanup audit, adversarially verified): Fixed by PR #22 (commit 0b2a2d2, merged 2026-08-26) and shipped to npm in 26.9.0. retryJob re-dispatches immediately (retry = run-now) at src/core/job-manager.ts:347; B3/B4 regression tests at src/core/integration.test.ts:242 and :289 pin the wedge closed; pending_reason=retry_reset is surfaced by tenet_job_wait / tenet_get_status for diagnosability. AC#4 ticked as stale bookkeeping: every clause restates ACs #1-#3 with the run-now language and is verified at HEAD. Deferred scope lives in its own tasks: queue-servicer (TASK-050), PR-#22 follow-ups (TASK-051, closed same day), orphan-recovery family (TASK-054/055).
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -73,3 +75,9 @@ created: 2026-08-12 22:30
 Queue-servicer (philosophy 2: one place decides what runs next) deferred to a separate backlog task — needs more design discussion before building. Current fix is run-now (philosophy 1).
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Retry-reset wedge fixed by PR #22 (retry = run-now with atomic resetJobForRetry + immediate dispatchJob), regression-tested (B3/B4), shipped to npm in 26.9.0. Closed as Done in the 2026-10-13 backlog cleanup.
+<!-- SECTION:FINAL_SUMMARY:END -->

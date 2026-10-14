@@ -4,7 +4,7 @@ title: Study and adopt patterns from Claude Code dynamic workflow harness
 status: To Do
 assignee: []
 created_date: '2026-07-13 23:45'
-updated_date: '2026-07-14 00:16'
+updated_date: '2026-10-13 21:51'
 labels:
   - research
   - architecture
@@ -16,6 +16,7 @@ references:
   - 'https://code.claude.com/docs/en/workflows'
 ordinal: 41000
 ---
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
@@ -75,3 +76,9 @@ Related articles:
 - [ ] #2 Identify which patterns apply to Tenet's architecture
 - [ ] #3 Propose concrete adoption plan for at least 2 patterns
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+DECISION (2026-10-13 backlog cleanup): user reviewed and chose to KEEP this open as a live research direction (despite the audit's close-as-not-planned lean) - Tenet should keep absorbing workflow-harness patterns over time. Status of the bullets: per-agent model routing is tracked concretely in TASK-004/TASK-045; resumable-runs adjacency in the TASK-050/055 queue-servicer family; adversarial-verification-as-first-class is already the critic system. What remains uniquely live here: dynamic harness generation (vs static decomposition DAG), tournament pattern, loop-until-done sweeps, and the thin agent()/pipeline() runtime idea. Do not re-flag as stale in future audits without new discussion; per the research-application threshold, individual adoptions still need run-data motivation.
+<!-- SECTION:NOTES:END -->

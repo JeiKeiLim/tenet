@@ -316,6 +316,8 @@ export class JobManager {
       );
     }
 
+    this.assertCriticRetryLegal(job);
+
     const params = { ...job.params };
     if (enhancedPrompt) {
       params.prompt = enhancedPrompt;
@@ -345,6 +347,84 @@ export class JobManager {
     // started the job already fired. resetJobForRetry's atomic guard means the job
     // is pending here, so dispatchJob can claim it.
     return this.dispatchJob(jobId);
+  }
+
+  /**
+   * Safeguard on in-place critic retries (tenet_retry_job). A retry keeps the
+   * job id + params, so the critic's eval_round survives and a patched round
+   * could green without re-running its siblings. Retrying is therefore legal
+   * only for infra-failure retries — the critic's last run produced NO
+   * verdict — and only while nothing has changed the code it evaluated:
+   *
+   * 1. No valid verdict exists. A parsed verdict — red OR green — forbids the
+   *    re-roll: red's only path forward is the fix loop (retry the dev source,
+   *    fresh eval round), green has nothing to re-run.
+   * 2. No code-writing job completed since the round's dispatch. Any
+   *    dev/integration_test completion in (roundDispatch, now] means the round
+   *    would be greened against code that no longer exists — start a fresh
+   *    round instead. Eval-type completions (the round's own siblings) never
+   *    count, or the legal case could never fire.
+   *
+   * Fail-closed: a critic whose eval_round can't be resolved (legacy/unstamped
+   * rows) is refused — never guess. Non-critic jobs are untouched.
+   */
+  private assertCriticRetryLegal(job: Job): void {
+    const stage = typeof job.params.eval_stage === 'string' ? job.params.eval_stage : '';
+    const sourceJobId = typeof job.params.source_job_id === 'string' ? job.params.source_job_id : '';
+    if (!stage || !sourceJobId) {
+      return; // not a critic dispatched by tenet_start_eval
+    }
+
+    const rawOutput = this.extractAdapterRawOutput(this.stateStore.getJobOutput(job.id));
+    const parsed = extractRubricJson(rawOutput);
+    // `passed` must be a boolean: extractRubricJson's object branch returns any
+    // object without validating, and a structured output carrying no `passed` is
+    // "no verdict" by the round gate's own standard — the three-way classifier's
+    // retry-as-is remediation still applies to it.
+    if (parsed && typeof parsed.passed === 'boolean') {
+      throw new Error(
+        `critic job ${job.id} (stage ${stage}) already produced a verdict (passed: ${parsed.passed}) — ` +
+          `retrying in place would re-roll the round gate. ` +
+          (parsed.passed
+            ? 'A green verdict has nothing to re-run.'
+            : 'For a red verdict, fix the source (retry the dev job), then start a fresh eval round via tenet_start_eval.'),
+      );
+    }
+
+    const roundId = typeof job.params.eval_round === 'string' ? job.params.eval_round : '';
+    if (!roundId) {
+      throw new Error(
+        `critic job ${job.id} (stage ${stage}) has no eval_round stamp (legacy or ad-hoc row) — ` +
+          `its round can't be resolved, so patching it in place can't be proven safe. ` +
+          `Start a fresh eval round via tenet_start_eval.`,
+      );
+    }
+
+    // Same round-grouping the resume gate uses: dispatch time = the round's
+    // start (min createdAt of its critics).
+    const siblings = this.stateStore.getEvalsForSource(sourceJobId);
+    const roundDispatch = siblings
+      .filter((s) => s.params.eval_round === roundId)
+      .reduce((m, s) => (s.createdAt < m ? s.createdAt : m), Infinity);
+    if (!Number.isFinite(roundDispatch)) {
+      throw new Error(
+        `critic job ${job.id} (stage ${stage}) declares eval_round ${roundId} but no eval job for source ` +
+          `${sourceJobId} carries it — the round can't be resolved. Start a fresh eval round via tenet_start_eval.`,
+      );
+    }
+
+    const codeChanges = this.stateStore.getCompletedJobsByTypeSince(
+      ['dev', 'integration_test'],
+      roundDispatch,
+    );
+    if (codeChanges.length > 0) {
+      const offender = codeChanges[codeChanges.length - 1]; // newest completion
+      throw new Error(
+        `critic job ${job.id} (stage ${stage}) belongs to eval round ${roundId} dispatched at ` +
+          `${new Date(roundDispatch).toISOString()}, but ${offender.type} job ${offender.id} completed after it — ` +
+          `the code this round evaluated has changed. Start a fresh eval round via tenet_start_eval.`,
+      );
+    }
   }
 
   continue(): ContinuationState {

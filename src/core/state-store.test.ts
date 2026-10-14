@@ -354,6 +354,75 @@ describe('StateStore', () => {
     expect(store.getBlockedJobs()).toHaveLength(1);
   });
 
+  it('getAllDagIds returns distinct non-empty dag_id params across all jobs', () => {
+    const { store } = createStore();
+
+    store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { dag_id: 'F1', name: 'job one' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    store.createJob({
+      type: 'dev',
+      status: 'running',
+      params: { dag_id: 'F1', name: 'job one retry view' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    store.createJob({
+      type: 'dev',
+      status: 'completed',
+      params: { dag_id: 'F2', name: 'job two' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    store.createJob({
+      type: 'critic_eval',
+      status: 'completed',
+      params: { eval_stage: 'code_critic' }, // no dag_id
+      retryCount: 0,
+      maxRetries: 1,
+    });
+    store.createJob({
+      type: 'dev',
+      status: 'pending',
+      params: { dag_id: '', name: 'empty dag id ignored' },
+      retryCount: 0,
+      maxRetries: 1,
+    });
+
+    const ids = store.getAllDagIds();
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids)).toEqual(new Set(['F1', 'F2']));
+  });
+
+  it('getCompletedJobsByTypeSince filters by type, status, and the completion-time window', () => {
+    const { store } = createStore();
+
+    const make = (type: 'dev' | 'eval' | 'integration_test', name: string) =>
+      store.createJob({ type, status: 'pending', params: { name }, retryCount: 0, maxRetries: 1 });
+
+    const devInWindow = make('dev', 'dev in window');
+    const testInWindow = make('integration_test', 'integration_test in window');
+    const evalCompleted = make('eval', 'eval completions never count');
+    const devBeforeWindow = make('dev', 'dev completed before window');
+    const devFailed = make('dev', 'failed dev never counts');
+
+    store.updateJob(devInWindow.id, { status: 'completed', completedAt: 2_000 });
+    store.updateJob(testInWindow.id, { status: 'completed', completedAt: 3_000 });
+    store.updateJob(evalCompleted.id, { status: 'completed', completedAt: 4_000 });
+    store.updateJob(devBeforeWindow.id, { status: 'completed', completedAt: 1_000 });
+    store.updateJob(devFailed.id, { status: 'failed', completedAt: 5_000 });
+
+    const hits = store.getCompletedJobsByTypeSince(['dev', 'integration_test'], 1_500);
+    expect(hits.map((j) => j.params.name)).toEqual(['dev in window', 'integration_test in window']);
+
+    expect(store.getCompletedJobsByTypeSince(['dev'], 1_500).map((j) => j.id)).toEqual([devInWindow.id]);
+    expect(store.getCompletedJobsByTypeSince([], 0)).toEqual([]);
+  });
+
   it('opens read-only without syncing JSON config into SQLite', () => {
     const { tempDir, store } = createStore();
     store.close();
