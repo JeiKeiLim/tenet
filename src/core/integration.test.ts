@@ -172,15 +172,15 @@ describe('integration: readiness verdict persistence', () => {
 
 // ─── B. Sequential critic chain ─────────────────────────────────────────────
 
-describe('integration: sequential critic chain', () => {
-  it('B1: unsafe verdict → 3 critics run sequentially and all complete', async () => {
+describe('integration: unsafe-verdict critic dispatch (hybrid)', () => {
+  it('B1: unsafe verdict → hybrid dispatch (code ∥ test → e2e) and all complete', async () => {
     const { store, manager, startEval } = createHarness([
       { match: matchers.evalStage('code_critic'), fixture: 'critic-passing-clean.json' },
       { match: matchers.evalStage('test_critic'), fixture: 'test-critic-passing.json' },
       { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
 
-    // Mark the feature as unsafe — sequential mode
+    // Mark the feature as unsafe — hybrid mode: parallel_safe critics concurrent, the rest chained
     store.setConfig('eval_parallel_safe:billing', 'false');
 
     const source = store.createJob({
@@ -194,9 +194,10 @@ describe('integration: sequential critic chain', () => {
     const result = await startEval({ job_id: source.id, output: { summary: 'ok' } });
     const parsed = parseResult(result);
 
-    expect(parsed.execution_mode).toBe('sequential');
+    expect(parsed.execution_mode).toBe('hybrid');
 
-    // Sequentially: code critic starts running immediately, others pending with parent
+    // Hybrid: code_critic (parallel_safe by default) runs in the parallel lane;
+    // test_critic heads the sequential chain; interaction_e2e waits on it.
     await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'interaction_e2e'), null, 5_000);
@@ -270,9 +271,9 @@ describe('integration: sequential critic chain', () => {
 
     const result = await startEval({ job_id: source.id, output: { summary: 'ok' } });
     const parsed = parseResult(result);
-    expect(parsed.execution_mode).toBe('sequential');
+    expect(parsed.execution_mode).toBe('hybrid');
 
-    // code + test critics pass; interaction_e2e dispatches and fails.
+    // code + test critics pass (code in the parallel lane, test as sequential head); interaction_e2e dispatches and fails.
     await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'interaction_e2e'), null, 5_000);
@@ -317,9 +318,10 @@ describe('integration: sequential critic chain', () => {
 
     const result = await startEval({ job_id: source.id, output: { summary: 'ok' } });
     const parsed = parseResult(result);
-    expect(parsed.execution_mode).toBe('sequential');
+    expect(parsed.execution_mode).toBe('hybrid');
 
-    // code_critic passes; test_critic dispatches and fails; interaction_e2e stays pending behind it.
+    // code_critic (parallel lane) passes; test_critic (sequential head) dispatches and fails;
+    // interaction_e2e stays pending behind it.
     await manager.waitForJob(jobId(parsed, 'code_critic'), null, 5_000);
     await manager.waitForJob(jobId(parsed, 'test_critic'), null, 5_000);
     expect(store.getJob(jobId(parsed, 'test_critic'))?.status).toBe('failed');
@@ -628,7 +630,7 @@ describe('integration: blocking finding auto-resume', () => {
     expect(store.getJob(parent.id)?.status).toBe('pending');
   });
 
-  it('C6 (round-id, sequential): parent stays blocked until the LAST chained critic of the green round completes', async () => {
+  it('C6 (round-id, hybrid): parent stays blocked until the LAST chained critic of the green round completes', async () => {
     const { store, manager, startEval, reportBlockingFinding } = createHarness([
       { match: matchers.devJob(), fixture: 'dev-with-changes.md' },
       { match: matchers.evalStage('code_critic'), fixture: 'critic-failing-with-findings.json', maxUses: 1 },
@@ -637,8 +639,9 @@ describe('integration: blocking finding auto-resume', () => {
       { match: matchers.evalStage('interaction_e2e'), fixture: 'playwright-layer2-completed.json' },
     ]);
 
-    // Sequential mode (default when no parallel verdict): critics run in roster
-    // order, each chained after its predecessor completes.
+    // Unsafe verdict → hybrid: code_critic (parallel_safe by default) runs in the
+    // parallel lane; test_critic heads the sequential chain with interaction_e2e
+    // chained behind it, in roster order.
     store.setConfig('eval_parallel_safe:credit-fixes', 'false');
 
     const parent = store.createJob({
@@ -675,15 +678,15 @@ describe('integration: blocking finding auto-resume', () => {
     await manager.waitForJob(round1.interaction_e2e, null, 5_000);
     expect(store.getJob(parent.id)?.status).toBe('blocked_on_finding');
 
-    // Round 2: startEval in sequential mode chains test_critic and
-    // interaction_e2e as pending behind code_critic — assert the chaining
-    // (parentJobId set, eval_round stamped, not running yet) deterministically
-    // before any critic completes.
+    // Round 2: startEval in hybrid mode runs code_critic in the parallel lane
+    // and heads the sequential chain with test_critic — assert the chaining
+    // (interaction_e2e pending behind test_critic, eval_round stamped on both)
+    // deterministically before any critic completes.
     const round2 = await ids();
     const t2 = store.getJob(round2.test_critic);
     const p2 = store.getJob(round2.interaction_e2e);
-    expect(t2?.status).toBe('pending');
-    expect(t2?.parentJobId).toBe(round2.code_critic);
+    expect(t2?.status).toBe('running'); // sequential-lane head starts immediately
+    expect(t2?.parentJobId).toBeUndefined();
     expect(typeof t2?.params.eval_round).toBe('string');
     expect(p2?.status).toBe('pending');
     expect(p2?.parentJobId).toBe(round2.test_critic);

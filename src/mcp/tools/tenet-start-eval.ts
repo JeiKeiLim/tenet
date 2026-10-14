@@ -268,6 +268,8 @@ type CriticDispatch = {
   prompt: string;
   /** Whether to inline the run docs into this critic's worker context (resolved full_context). */
   fullContext: boolean;
+  /** Resolved `parallel_safe` — may this critic run concurrently with other critics. */
+  parallelSafe: boolean;
 };
 
 /**
@@ -302,6 +304,7 @@ const buildCriticDispatch = (
           jobType: critic.jobType,
           evalStage: critic.stage,
           fullContext: critic.fullContext,
+          parallelSafe: critic.parallelSafe,
           prompt: refHeader + jobScope + CODE_CRITIC_PREAMBLE + '## Worker Output\n\n' + outputStr,
         };
       case 'test_critic':
@@ -309,6 +312,7 @@ const buildCriticDispatch = (
           jobType: critic.jobType,
           evalStage: critic.stage,
           fullContext: critic.fullContext,
+          parallelSafe: critic.parallelSafe,
           prompt: refHeader + jobScope + TEST_CRITIC_PREAMBLE + '## Worker Output\n\n' + outputStr,
         };
       case 'interaction_e2e':
@@ -316,6 +320,7 @@ const buildCriticDispatch = (
           jobType: critic.jobType,
           evalStage: critic.stage,
           fullContext: critic.fullContext,
+          parallelSafe: critic.parallelSafe,
           prompt: refHeader + jobScope + PLAYWRIGHT_EVAL_PREAMBLE,
         };
       default:
@@ -340,6 +345,7 @@ const buildCriticDispatch = (
     jobType: critic.jobType,
     evalStage: critic.stage,
     fullContext: critic.fullContext,
+    parallelSafe: critic.parallelSafe,
     prompt: refHeader + jobScope + promptBody + '\n## Implementation Output\n\n' + outputStr,
   };
 };
@@ -372,9 +378,11 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         'under .tenet/critics/. Critics may declare applicable_jobs (decomposition job ids) — a critic whose list ' +
         'does not include the source job\'s dag_id is skipped for that eval and reported under skipped_inapplicable ' +
         '(missing/empty list = every job; ad-hoc jobs get the full roster). ' +
-        'Execution mode (parallel vs sequential) is decided by the readiness verdict ' +
-        'stored at eval_parallel_safe:{feature}; when missing or false, critics run sequentially in roster ' +
-        'order to avoid contention on shared state (DB, sessions, rate limits, ports). ' +
+        'Execution mode is decided by the readiness verdict stored at eval_parallel_safe:{feature}: ' +
+        'true → all critics run in parallel (the feature\'s eval shares no state); false or missing → ' +
+        'hybrid — critics flagged parallel_safe: true in the roster run concurrently while the rest chain ' +
+        'sequentially among themselves in roster order, so only critics that exercise the app (run its ' +
+        'tests, drive its surface) wait on each other. ' +
         'Returns a jobs[] list of every dispatched critic (variable length). Wait for all to complete. ALL must pass.',
       inputSchema: z.object({
         job_id: z.string().uuid(),
@@ -391,7 +399,7 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
           .string()
           .optional()
           .describe(
-            'Feature slug used to look up eval_parallel_safe:{feature} in config. If omitted, critics run sequentially (safe fallback).',
+            'Feature slug used to look up eval_parallel_safe:{feature} in config. If omitted, the verdict is treated as not parallel-safe (hybrid dispatch per critic flags).',
           ),
       }),
     },
@@ -502,7 +510,13 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
           : {}),
       });
 
-      type Dispatched = { role: string; id: string; status: Job['status']; parentJobId?: string };
+      type Dispatched = {
+        role: string;
+        id: string;
+        status: Job['status'];
+        parentJobId?: string;
+        lane: 'parallel' | 'sequential';
+      };
       const dispatched: Dispatched[] = [];
 
       if (dispatchList.length === 0) {
@@ -520,60 +534,74 @@ export const registerTenetStartEvalTool = (registerTool: RegisterTool, jobManage
         });
       }
 
-      if (parallelSafe) {
-        for (const d of dispatchList) {
+      // Verdict true → the feature's eval has no shared state: everything
+      // dispatches concurrently, per-critic flags irrelevant. Verdict
+      // false/missing → hybrid: parallel_safe critics dispatch concurrently
+      // while the rest chain among themselves in roster order (the existing
+      // auto-dispatch chain). The two lanes overlap — a parallel_safe critic
+      // contends with nothing, so neither lane waits for the other.
+      let prevId: string | undefined;
+      for (const d of dispatchList) {
+        if (parallelSafe || d.parallelSafe) {
           const job = jobManager.startJob(d.jobType, buildParams(d));
-          dispatched.push({ role: d.evalStage, id: job.id, status: job.status });
-        }
-      } else {
-        // Sequential: start the first critic; register the rest as pending with
-        // auto_dispatch_on_parent_complete so job-manager chains them in roster order.
-        let prevId: string | undefined;
-        for (const d of dispatchList) {
-          if (prevId === undefined) {
-            const job = jobManager.startJob(d.jobType, buildParams(d));
-            dispatched.push({ role: d.evalStage, id: job.id, status: job.status });
-            prevId = job.id;
-          } else {
-            const job = jobManager.createPendingJob(
-              d.jobType,
-              { ...buildParams(d), auto_dispatch_on_parent_complete: true },
-              prevId,
-            );
-            dispatched.push({ role: d.evalStage, id: job.id, status: job.status, parentJobId: job.parentJobId });
-            prevId = job.id;
-          }
+          dispatched.push({ role: d.evalStage, id: job.id, status: job.status, lane: 'parallel' });
+        } else if (prevId === undefined) {
+          // Sequential lane head — starts immediately, overlapping with any parallel lane.
+          const job = jobManager.startJob(d.jobType, buildParams(d));
+          dispatched.push({ role: d.evalStage, id: job.id, status: job.status, lane: 'sequential' });
+          prevId = job.id;
+        } else {
+          const job = jobManager.createPendingJob(
+            d.jobType,
+            { ...buildParams(d), auto_dispatch_on_parent_complete: true },
+            prevId,
+          );
+          dispatched.push({
+            role: d.evalStage,
+            id: job.id,
+            status: job.status,
+            parentJobId: job.parentJobId,
+            lane: 'sequential',
+          });
+          prevId = job.id;
         }
       }
 
+      const parallelCount = dispatched.filter((d) => d.lane === 'parallel').length;
+      const sequentialCount = dispatched.length - parallelCount;
+      const executionMode: 'parallel' | 'sequential' | 'hybrid' =
+        sequentialCount === 0 ? 'parallel' : parallelCount === 0 ? 'sequential' : 'hybrid';
+
       return jsonResult({
-        jobs: dispatched.map(({ role, id, status, parentJobId }, idx) => ({
+        jobs: dispatched.map(({ role, id, status, parentJobId, lane }) => ({
           role,
           job_id: id,
           status,
-          lifecycle: parallelSafe
-            ? status === 'running'
+          lane,
+          lifecycle: parentJobId
+            ? 'queued_after_parent'
+            : status === 'running'
               ? 'running'
-              : status
-            : idx === 0
-              ? status === 'running'
-                ? 'running'
-                : status
-              : 'queued_after_parent',
+              : status,
           ...(parentJobId ? { parent_job_id: parentJobId } : {}),
           next_tool: 'tenet_job_wait',
           next_args: { job_id: id, wait_seconds: 30 },
         })),
         eval_parallel_safe: parallelSafe,
-        execution_mode: parallelSafe ? 'parallel' : 'sequential',
+        execution_mode: executionMode,
         critics_dispatched: dispatched.length,
+        parallel_critics: parallelCount,
+        sequential_critics: sequentialCount,
         ...(rosterWarning ? { roster_warning: rosterWarning } : {}),
         ...(skippedCritics.length ? { skipped_critics: skippedCritics } : {}),
         ...(skippedInapplicable.length ? { skipped_inapplicable: skippedInapplicable } : {}),
         ...(staleDagIdWarnings.length ? { stale_dag_id_warnings: staleDagIdWarnings } : {}),
-        message: parallelSafe
-          ? `${dispatched.length} critic(s) dispatched in parallel. Wait for all via tenet_job_wait + tenet_job_result. ALL must pass.`
-          : `Critics dispatched sequentially in roster order. Wait for each via tenet_job_wait + tenet_job_result. ALL must pass.`,
+        message:
+          executionMode === 'parallel'
+            ? `${dispatched.length} critic(s) dispatched in parallel. Wait for all via tenet_job_wait + tenet_job_result. ALL must pass.`
+            : executionMode === 'hybrid'
+              ? `${parallelCount} critic(s) dispatched in parallel and ${sequentialCount} sequentially (chained in roster order). Wait for all via tenet_job_wait + tenet_job_result. ALL must pass.`
+              : `Critics dispatched sequentially in roster order. Wait for each via tenet_job_wait + tenet_job_result. ALL must pass.`,
       });
     },
   );

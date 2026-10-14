@@ -98,6 +98,7 @@ describe('resolveRoster', () => {
       promptFile: '.tenet/critics/security.md',
       fullContext: true,
       applicableJobs: [],
+      parallelSafe: false, // custom critics default sequential (opt-in)
     });
   });
 
@@ -175,6 +176,32 @@ describe('resolveRoster', () => {
     }
   });
 
+  it('defaults parallel_safe per built-in and honors explicit overrides', () => {
+    // code_critic only reads the spec + diff → parallel by default; test_critic
+    // (runs the suite) and interaction_e2e (drives the surface) → sequential.
+    // Customs default sequential — parallelism is an explicit opt-in.
+    const defaults = resolveRoster({
+      critics: [{ id: 'lint', prompt_file: '.tenet/critics/lint.md' }],
+    });
+    expect(byId(defaults, 'code_critic')?.parallelSafe).toBe(true);
+    expect(byId(defaults, 'test_critic')?.parallelSafe).toBe(false);
+    expect(byId(defaults, 'interaction_e2e')?.parallelSafe).toBe(false);
+    expect(byId(defaults, 'lint')?.parallelSafe).toBe(false);
+
+    const explicit = resolveRoster({
+      critics: [
+        { id: 'code_critic', builtin: true, parallel_safe: false }, // override true → false
+        { id: 'interaction_e2e', builtin: true, parallel_safe: true }, // override false → true
+        { id: 'reader', prompt_file: '.tenet/critics/reader.md', parallel_safe: true }, // opt in
+      ],
+    });
+    expect(byId(explicit, 'code_critic')?.parallelSafe).toBe(false);
+    expect(byId(explicit, 'interaction_e2e')?.parallelSafe).toBe(true);
+    expect(byId(explicit, 'reader')?.parallelSafe).toBe(true);
+    // Omitted built-ins (appended canonically) keep their defaults.
+    expect(byId(explicit, 'test_critic')?.parallelSafe).toBe(false);
+  });
+
   it('drops duplicate ids (first wins) and skips malformed entries', () => {
     const roster = resolveRoster({
       critics: [
@@ -197,6 +224,9 @@ describe('resolveRoster', () => {
     expect(DEFAULT_ROSTER.find((c) => c.id === 'code_critic')?.fullContext).toBe(true);
     expect(DEFAULT_ROSTER.find((c) => c.id === 'test_critic')?.fullContext).toBe(true);
     expect(DEFAULT_ROSTER.find((c) => c.id === 'interaction_e2e')?.fullContext).toBe(false);
+    expect(DEFAULT_ROSTER.find((c) => c.id === 'code_critic')?.parallelSafe).toBe(true);
+    expect(DEFAULT_ROSTER.find((c) => c.id === 'test_critic')?.parallelSafe).toBe(false);
+    expect(DEFAULT_ROSTER.find((c) => c.id === 'interaction_e2e')?.parallelSafe).toBe(false);
   });
 });
 

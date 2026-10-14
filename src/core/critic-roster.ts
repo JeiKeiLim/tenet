@@ -61,6 +61,19 @@ const BUILTIN_DEFAULT_FULL_CONTEXT: Record<BuiltinCriticId, boolean> = {
 };
 
 /**
+ * Default `parallel_safe` per built-in. code_critic only reads the spec + diff
+ * — it contends with nothing, so it can always share a dispatch wave.
+ * test_critic (runs the suite) and interaction_e2e (drives the app's surface)
+ * exercise the app, so on a feature whose eval shares state they chain. An
+ * explicit `parallel_safe` in the roster file always overrides these defaults.
+ */
+const BUILTIN_DEFAULT_PARALLEL_SAFE: Record<BuiltinCriticId, boolean> = {
+  code_critic: true,
+  test_critic: false,
+  interaction_e2e: false,
+};
+
+/**
  * Legacy `.tenet/critics.json` files authored before the rename use the id
  * `playwright_eval`. Map that onto the current built-in so those files keep
  * resolving without a manual edit. This is the only place the legacy string is
@@ -103,6 +116,20 @@ export type CriticRosterEntry = {
    * built-ins too (they ship list-less = run everywhere).
    */
   applicable_jobs?: string[];
+  /**
+   * Whether this critic may run concurrently with other critics. Only consulted
+   * when the feature verdict `eval_parallel_safe:{feature}` is `false` or
+   * missing (the feature's eval shares state): `parallel_safe: true` critics
+   * dispatch concurrently while the rest chain among themselves in roster order
+   * — the two lanes overlap, since a parallel-safe critic contends with nothing.
+   * When the verdict is `true` the whole roster runs in parallel regardless.
+   * Built-in defaults: code_critic `true` (a reader — spec + diff, never
+   * executes the app), test_critic / interaction_e2e `false` (they run the
+   * suite / drive the surface). Custom critics default to `false` — their
+   * resource profile is unknown to Tenet, so they opt into concurrency
+   * explicitly.
+   */
+  parallel_safe?: boolean;
 };
 
 /** A critic after resolution, ready for dispatch. */
@@ -118,6 +145,8 @@ export type ResolvedCritic = {
   fullContext: boolean;
   /** Resolved from `applicable_jobs`: decomposition job ids this critic applies to. Empty = all jobs. */
   applicableJobs: string[];
+  /** Resolved from `parallel_safe`: may this critic run concurrently with other critics. */
+  parallelSafe: boolean;
 };
 
 export const DEFAULT_ROSTER: readonly ResolvedCritic[] = BUILTIN_CRITIC_IDS.map((id) => ({
@@ -128,6 +157,7 @@ export const DEFAULT_ROSTER: readonly ResolvedCritic[] = BUILTIN_CRITIC_IDS.map(
   jobType: BUILTIN_JOB_TYPE[id],
   fullContext: BUILTIN_DEFAULT_FULL_CONTEXT[id],
   applicableJobs: [],
+  parallelSafe: BUILTIN_DEFAULT_PARALLEL_SAFE[id],
 }));
 
 const isBuiltinId = (id: string): id is BuiltinCriticId =>
@@ -161,6 +191,9 @@ const resolveApplicableJobs = (value: unknown): string[] =>
  *   doesn't exist at dispatch time).
  * - `applicable_jobs` resolves to the non-empty string ids it lists (invalid
  *   entries dropped, the critic kept); missing/empty = applies to all jobs.
+ * - `parallel_safe` resolves per built-in defaults (code_critic `true`, the
+ *   others `false`); custom critics default `false` — an explicit boolean
+ *   always wins.
  */
 export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
   if (!raw || typeof raw !== 'object') {
@@ -206,6 +239,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         jobType: BUILTIN_JOB_TYPE[id],
         fullContext: typeof e.full_context === 'boolean' ? e.full_context : BUILTIN_DEFAULT_FULL_CONTEXT[id],
         applicableJobs: resolveApplicableJobs(e.applicable_jobs),
+        parallelSafe: typeof e.parallel_safe === 'boolean' ? e.parallel_safe : BUILTIN_DEFAULT_PARALLEL_SAFE[id],
       });
       usedIds.add(id);
     } else {
@@ -221,6 +255,9 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         promptFile,
         fullContext: e.full_context !== false,
         applicableJobs: resolveApplicableJobs(e.applicable_jobs),
+        // Customs default sequential — their resource profile is unknown to
+        // Tenet, so parallelism is an explicit opt-in.
+        parallelSafe: e.parallel_safe === true,
       });
       usedIds.add(id);
     }
@@ -237,6 +274,7 @@ export const resolveRoster = (raw: unknown): ResolvedCritic[] => {
         jobType: BUILTIN_JOB_TYPE[id],
         fullContext: BUILTIN_DEFAULT_FULL_CONTEXT[id],
         applicableJobs: [],
+        parallelSafe: BUILTIN_DEFAULT_PARALLEL_SAFE[id],
       });
     }
   }
