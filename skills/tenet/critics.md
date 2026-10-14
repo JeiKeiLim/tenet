@@ -52,11 +52,15 @@ beats "check for security issues."
 
 - **Built-ins** (`builtin: true`): `enabled` and order are the usual levers
   (omit one to leave it enabled at its default position; `enabled: false` drops
-  it). `full_context` is honored here too. `code_critic` and `test_critic` default
-  to `true` (conformance — they check against the spec/tests); `interaction_e2e`
-  defaults to `false` (it acts like a user — explore the surface, don't anchor to
-  the declared spec). Set `false` on a conformance built-in, or `true` on
-  `interaction_e2e`, to override either default.
+  it). `full_context` and `parallel_safe` are honored here too. `full_context`:
+  `code_critic` and `test_critic` default to `true` (conformance — they check
+  against the spec/tests); `interaction_e2e` defaults to `false` (it acts like a
+  user — explore the surface, don't anchor to the declared spec). Set `false`
+  on a conformance built-in, or `true` on `interaction_e2e`, to override either
+  default. `parallel_safe`: `code_critic` defaults to `true` (a reader — spec +
+  diff, it never executes the app), `test_critic` / `interaction_e2e` default to
+  `false` (they run the suite / drive the surface, so they chain when the
+  feature's eval shares state).
   Note: the `interaction_e2e` critic handles CLI/API/library surfaces too —
   agent-brain shell e2e, not just browser — so for a CLI-only project you usually
   want it **enabled**. Only disable it if you want no public-surface e2e at all.
@@ -91,6 +95,17 @@ beats "check for security issues."
     drift, machine-checkable. Use it to keep domain critics (migrations, auth,
     ledgers) off jobs that never touch their surface, so eval cost scales with
     applicability instead of roster size.
+  - `parallel_safe` — optional, default `false` on custom critics. `true` =
+    this critic only READS (diff, spec, files) and never executes the app, so
+    it can never contend on shared eval state and may run concurrently with
+    other critics. `false`/omitted = it may exercise the app (run its tests,
+    drive its surface, bind ports), so when the feature's readiness verdict
+    `eval_parallel_safe:{feature}` is `false`/missing it chains in roster order
+    with the other non-parallel critics — while parallel-safe critics run
+    concurrently alongside (the lanes overlap; only critics that exercise the
+    app wait on each other). When the verdict is `true` the whole roster runs
+    in parallel regardless. Mark every read-only custom critic `true` — that
+    is the wall-clock win on stateful features.
 
 The file is read live on every eval — edit it and the next `tenet_start_eval`
 reflects the change with no restart. Invalid JSON falls back to the 3 built-ins.

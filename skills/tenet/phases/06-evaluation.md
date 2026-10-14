@@ -32,14 +32,17 @@ The interaction-e2e critic does agent-driven verification through whatever publi
 
 If the harness/spec requires browser/visual exploration, missing Playwright MCP is a failure. If it is optional or skipped with reason, `skipped_no_mcp` is acceptable. For CLI/API/library surfaces the critic uses the shell — it does not skip, and it does not force a browser.
 
-## Parallel vs Sequential Critics
+## Parallel, Hybrid, or Sequential Critics
 
-The configured critic jobs may run **in parallel** or **sequentially**, decided by the readiness gate verdict (`eval_parallel_safe:{feature}` in the config table). The critic set comes from `.tenet/critics.json` — 3 built-in by default (code critic, test critic, interaction-e2e), plus any project-defined custom critics (see `../critics.md`):
+The configured critic jobs run **in parallel**, **hybrid**, or **sequentially**, decided by the readiness gate verdict (`eval_parallel_safe:{feature}` in the config table) combined with the per-critic `parallel_safe` roster field. The critic set comes from `.tenet/critics.json` — 3 built-in by default (code critic, test critic, interaction-e2e), plus any project-defined custom critics (see `../critics.md`):
 
-- **Parallel** (verdict `true`) — pure libraries, CLIs, data pipelines with no shared mutable state. Critics start concurrently; completion time ≈ slowest single critic.
-- **Sequential** (verdict `false` or missing) — stateful web apps where critics would collide on shared state (DB rows, sessions, rate-limit counters, ports, Playwright lock dirs). Critics run in roster order (code → test → playwright by default). The caller receives every critic's job id up front in `jobs[]`; job-manager auto-dispatches each downstream critic when its predecessor completes.
+- **Parallel** (verdict `true`) — pure libraries, CLIs, data pipelines with no shared mutable state. All critics start concurrently regardless of their flags; completion time ≈ slowest single critic.
+- **Hybrid** (verdict `false` or missing) — stateful features where app-exercising critics would collide on shared state (DB rows, sessions, rate-limit counters, ports, Playwright lock dirs). Critics flagged `parallel_safe: true` (code critic by default — it only reads; customs may opt in) start concurrently, while the rest chain in roster order; the two lanes overlap, so only critics that exercise the app ever wait on each other.
+- **Sequential** (verdict `false`/missing and no critic flagged) — the degenerate hybrid: the full roster chains in order.
 
-`tenet_start_eval` reads the verdict automatically — no orchestrator code change needed. If the verdict is missing, Tenet defaults to sequential (safe fallback). Disabling a built-in or adding a custom critic in `.tenet/critics.json` changes which (and how many) critics run; the blocking-finding resume gate tracks the same configured set, so disabling a critic does not strand a blocked parent.
+The caller receives every critic's job id up front in `jobs[]` (each entry carries its `lane`); job-manager auto-dispatches each chained critic when its predecessor completes.
+
+`tenet_start_eval` reads the verdict automatically — no orchestrator code change needed. If the verdict is missing, Tenet dispatches hybrid — per-critic `parallel_safe`, unflagged critics chain (safe fallback). Disabling a built-in or adding a custom critic in `.tenet/critics.json` changes which (and how many) critics run; the blocking-finding resume gate tracks the same configured set, so disabling a critic does not strand a blocked parent.
 
 ## The 5 Evaluation Stages
 

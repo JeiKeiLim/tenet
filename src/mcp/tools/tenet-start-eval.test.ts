@@ -135,7 +135,7 @@ afterEach(() => {
 });
 
 describe('tenet_start_eval eval mode resolution', () => {
-  it('runs critics sequentially when eval_parallel_safe verdict is missing', async () => {
+  it('dispatches hybrid when eval_parallel_safe verdict is missing — default roster: code ∥ (test → e2e)', async () => {
     const { store, manager, handler } = createHarness();
     const sourceId = createSourceJob(store, 'oauth');
 
@@ -143,8 +143,10 @@ describe('tenet_start_eval eval mode resolution', () => {
     const parsed = parseResult(result);
 
     expect(parsed.eval_parallel_safe).toBe(false);
-    expect(parsed.execution_mode).toBe('sequential');
+    expect(parsed.execution_mode).toBe('hybrid');
     expect(parsed.critics_dispatched).toBe(3);
+    expect(parsed.parallel_critics).toBe(1);
+    expect(parsed.sequential_critics).toBe(2);
 
     const codeCriticId = jobId(parsed, 'code_critic');
     const testCriticId = jobId(parsed, 'test_critic');
@@ -154,10 +156,13 @@ describe('tenet_start_eval eval mode resolution', () => {
     const testCritic = store.getJob(testCriticId);
     const playwright = store.getJob(playwrightId);
 
+    // Parallel lane (code_critic — a read-only conformance critic) and the
+    // sequential lane head both start immediately; the lanes overlap.
     expect(codeCritic?.status).toBe('running');
-    expect(testCritic?.status).toBe('pending');
-    expect(testCritic?.parentJobId).toBe(codeCriticId);
-    expect(testCritic?.params.auto_dispatch_on_parent_complete).toBe(true);
+    expect(codeCritic?.parentJobId).toBeUndefined();
+    expect(testCritic?.status).toBe('running');
+    expect(testCritic?.parentJobId).toBeUndefined();
+    // The rest of the sequential lane chains on its own head, roster order.
     expect(playwright?.status).toBe('pending');
     expect(playwright?.parentJobId).toBe(testCriticId);
     expect(playwright?.params.auto_dispatch_on_parent_complete).toBe(true);
@@ -185,12 +190,49 @@ describe('tenet_start_eval eval mode resolution', () => {
     expect(playwright?.status).toBe('running');
     expect(testCritic?.parentJobId).toBeUndefined();
     expect(playwright?.parentJobId).toBeUndefined();
+    expect((parsed.jobs as Array<Record<string, unknown>>).every((j) => j.lane === 'parallel')).toBe(true);
 
     await waitForAll(manager, parsed);
   });
 
-  it('runs sequentially when verdict is explicitly false', async () => {
+  it('ignores parallel_safe flags when the verdict is true — everything runs in parallel', async () => {
     const { store, manager, handler } = createHarness();
+    // Even with every critic flagged sequential, the feature was proven stateless.
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true, parallel_safe: false },
+        { id: 'test_critic', builtin: true, parallel_safe: false },
+        { id: 'interaction_e2e', builtin: true, parallel_safe: false },
+      ],
+    });
+    store.setConfig('eval_parallel_safe:oauth', 'true');
+    const sourceId = createSourceJob(store, 'oauth');
+
+    const result = await handler({ job_id: sourceId, output: { summary: 'ok' } });
+    const parsed = parseResult(result);
+
+    expect(parsed.execution_mode).toBe('parallel');
+    expect(parsed.parallel_critics).toBe(3);
+    for (const role of ['code_critic', 'test_critic', 'interaction_e2e']) {
+      const job = store.getJob(jobId(parsed, role));
+      expect(job?.status).toBe('running');
+      expect(job?.parentJobId).toBeUndefined();
+    }
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('runs fully sequentially when the verdict is false and every critic is flagged parallel_safe: false', async () => {
+    const { store, manager, handler } = createHarness();
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true, parallel_safe: false },
+        { id: 'test_critic', builtin: true, parallel_safe: false },
+        { id: 'interaction_e2e', builtin: true, parallel_safe: false },
+      ],
+    });
     store.setConfig('eval_parallel_safe:oauth', 'false');
     const sourceId = createSourceJob(store, 'oauth');
 
@@ -199,6 +241,76 @@ describe('tenet_start_eval eval mode resolution', () => {
 
     expect(parsed.eval_parallel_safe).toBe(false);
     expect(parsed.execution_mode).toBe('sequential');
+    expect(parsed.sequential_critics).toBe(3);
+
+    const jobs = parsed.jobs as Array<Record<string, unknown>>;
+    expect(jobs[0].parent_job_id).toBeUndefined();
+    expect(jobs[1].parent_job_id).toBe(jobs[0].job_id);
+    expect(jobs[2].parent_job_id).toBe(jobs[1].job_id);
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('hybrid: parallel_safe critics run concurrently while the rest chain among themselves', async () => {
+    const { store, manager, handler } = createHarness();
+    writeCriticPrompt(store, 'extra.md', '## Extra Critic — reachability.\n');
+    writeCriticPrompt(store, 'lint.md', '## Lint Critic — style.\n');
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true }, // parallel_safe defaults true
+        { id: 'test_critic', builtin: true }, // defaults false
+        { id: 'interaction_e2e', builtin: true }, // defaults false
+        { id: 'extra', builtin: false, stage: 'extra_critic', prompt_file: '.tenet/critics/extra.md', parallel_safe: true },
+        { id: 'lint', builtin: false, stage: 'lint_critic', prompt_file: '.tenet/critics/lint.md' }, // custom default false
+      ],
+    });
+    const sourceId = createSourceJob(store, 'oauth');
+
+    const result = await handler({ job_id: sourceId, output: { summary: 'ok' } });
+    const parsed = parseResult(result);
+
+    expect(parsed.execution_mode).toBe('hybrid');
+    expect(parsed.parallel_critics).toBe(2);
+    expect(parsed.sequential_critics).toBe(3);
+
+    // Parallel lane (roster order preserved): code + extra start immediately.
+    expect(store.getJob(jobId(parsed, 'code_critic'))?.status).toBe('running');
+    expect(store.getJob(jobId(parsed, 'extra_critic'))?.status).toBe('running');
+
+    // Sequential lane chains among itself, interleaved roster order or not:
+    // test (head) → interaction_e2e → lint.
+    const testId = jobId(parsed, 'test_critic');
+    const e2eId = jobId(parsed, 'interaction_e2e');
+    const lintId = jobId(parsed, 'lint_critic');
+    expect(store.getJob(testId)?.status).toBe('running');
+    expect(store.getJob(e2eId)?.status).toBe('pending');
+    expect(store.getJob(e2eId)?.parentJobId).toBe(testId);
+    expect(store.getJob(lintId)?.status).toBe('pending');
+    expect(store.getJob(lintId)?.parentJobId).toBe(e2eId);
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('reports parallel (not hybrid) when every critic is parallel_safe under a false verdict', async () => {
+    const { store, manager, handler } = createHarness();
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true },
+        { id: 'test_critic', builtin: true, parallel_safe: true },
+        { id: 'interaction_e2e', builtin: true, parallel_safe: true },
+      ],
+    });
+    store.setConfig('eval_parallel_safe:oauth', 'false');
+    const sourceId = createSourceJob(store, 'oauth');
+
+    const result = await handler({ job_id: sourceId, output: { summary: 'ok' } });
+    const parsed = parseResult(result);
+
+    expect(parsed.execution_mode).toBe('parallel');
+    expect(parsed.parallel_critics).toBe(3);
+    expect(parsed.sequential_critics).toBe(0);
 
     await waitForAll(manager, parsed);
   });
@@ -541,9 +653,9 @@ describe('tenet_start_eval configurable critic roster', () => {
     writeRoster(store, {
       version: 1,
       critics: [
-        { id: 'code_critic', builtin: true, enabled: true },
-        { id: 'test_critic', builtin: true, enabled: true },
-        { id: 'interaction_e2e', builtin: true, enabled: true },
+        { id: 'code_critic', builtin: true, enabled: true, parallel_safe: false },
+        { id: 'test_critic', builtin: true, enabled: true, parallel_safe: false },
+        { id: 'interaction_e2e', builtin: true, enabled: true, parallel_safe: false },
         {
           id: 'extra',
           builtin: false,
@@ -554,7 +666,7 @@ describe('tenet_start_eval configurable critic roster', () => {
         },
       ],
     });
-    // no eval_parallel_safe verdict → sequential
+    // no eval_parallel_safe verdict + all builtins flagged sequential → full chain
     const sourceId = createSourceJob(store, 'oauth');
 
     const result = await handler({ job_id: sourceId, output: { summary: 'ok' } });
