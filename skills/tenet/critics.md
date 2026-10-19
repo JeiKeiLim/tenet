@@ -174,6 +174,45 @@ default — it acts like a user), and `adversarial` (custom) review from the cod
 alone; `test_critic` stays grounded. Mixing is the point — diversity of grounding,
 not all-or-nothing.
 
+## Shared evidence ledger (automatic)
+
+Every critic dispatched by `tenet_start_eval` — built-in or custom, grounded or
+ungrounded — receives a **Shared Evidence Ledger** block when the source job
+belongs to a run. Critics in one round normally evaluate the same fixed code
+state — the execution loop serializes dev and eval — so the block lets the
+first critic to run a repo-wide mechanical check
+(unit/integration suite, lint, build, typecheck, scripted e2e suites) log it
+and the rest cite the entry instead of re-running the identical command:
+
+- Ledger file: `.tenet/runs/<run-slug>/critics/evidence/eval-<source-job-id>-<eval_round>.jsonl`
+  — one file per `tenet_start_eval` dispatch (the round's `eval_round` UUID),
+  so a source retry or re-fire starts a fresh ledger and can never inherit
+  stale evidence.
+- Entry shape: `{"check", "command", "exit_code", "output_excerpt", "recorded_by"}`
+  — mechanical facts only, never findings or verdicts.
+- Best-effort and coordination-free: no locks, no ordering. A duplicate
+  concurrent run is accepted; a dropped line costs one duplicate run later.
+  Block presence is best-effort too: if the evidence directory cannot be
+  created at dispatch, the round proceeds without the block (exactly the
+  pre-ledger behavior).
+- The orchestrator never reads the ledger — routing stays on findings and
+  categories. The ledger is strictly critic-to-critic.
+
+Nothing to configure — but author prompt files with the rules in mind: a critic
+that wants suite results checks the ledger before running the suite, and a
+critic that runs repo-wide checks logs them. Within-round freshness rests on the
+execution loop's dev-then-eval serialization and the critic-retry safeguard
+(in-place critic retries stay on the same round only while no code-writing job
+completed) — convention, not enforcement, so the block also tells critics to
+re-run instead of citing whenever they observe a mid-round code change (the
+block embeds the evaluated commit SHA as the anchor when the worker output
+carries one). Citations are excerpt-bounded: a report needing more detail than
+an entry's excerpt supports re-runs the command.
+
+One retry caveat: `tenet_retry_job` with an `enhanced_prompt` replaces the
+critic's prompt wholesale, so such a retried critic loses the ledger block; an
+as-is retry keeps it.
+
 ## Output contract (mandatory)
 
 Every custom critic prompt MUST end by instructing the model to emit exactly this

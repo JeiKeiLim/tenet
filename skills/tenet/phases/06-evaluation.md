@@ -44,6 +44,12 @@ The caller receives every critic's job id up front in `jobs[]` (each entry carri
 
 `tenet_start_eval` reads the verdict automatically — no orchestrator code change needed. If the verdict is missing, Tenet dispatches hybrid — per-critic `parallel_safe`, unflagged critics chain (safe fallback). Disabling a built-in or adding a custom critic in `.tenet/critics.json` changes which (and how many) critics run; the blocking-finding resume gate tracks the same configured set, so disabling a critic does not strand a blocked parent.
 
+## Shared Evidence Ledger (per eval round)
+
+When the source job belongs to a run, every critic in a round shares an append-only ledger at `.tenet/runs/<run-slug>/critics/evidence/eval-<source-job-id>-<eval_round>.jsonl` (the round id is the `eval_round` UUID stamped on every critic in the dispatch). All critics in one round normally evaluate the same fixed code state — the execution loop serializes dev and eval — so the first critic to run a repo-wide mechanical check logs it — `{"check", "command", "exit_code", "output_excerpt", "recorded_by"}` — and the rest cite the entry instead of re-running the identical command. The Stage 1 checks (lint, build, typecheck, unit/integration suite) and scripted suites like `npx playwright test` are the dedup wins; per-critic exploratory probing is not.
+
+The rules are baked into each critic's prompt automatically: consult the ledger before running such a check (a missing file is an empty ledger — you may be the first runner), cite only what the entry's excerpt supports and only when it plainly matches its exit code, append after running, and re-run on conflicting entries, doubt, or any observed mid-round code change (the block embeds the evaluated commit SHA as the staleness anchor when the worker output carries one). It is best-effort with zero coordination: parallel-lane critics may duplicate a run, which is accepted, and ledger IO must never fail or stall an eval — if the evidence directory cannot be created at dispatch, the round proceeds without the block (pre-ledger behavior). The orchestrator never reads the ledger — routing stays on findings and categories. A new dispatch (source retry, re-fire, contention re-run) gets a fresh round id and a fresh ledger file, so evidence never leaks across rounds.
+
 ## The 5 Evaluation Stages
 
 ### Stage 1: Mechanical
@@ -52,6 +58,9 @@ Automated checks with no human judgment. Run these commands and verify exit code
 - **Build**: Execute the build command.
 - **Type-check**: Verify types across the changed files.
 - **Tests**: Run the full test suite (unit + acceptance tests if they exist).
+
+Within one eval round, identical mechanical commands are deduplicated via the shared evidence ledger (see above) — consult it before re-running a command a sibling critic already logged.
+
 **PASS**: All exit 0. **FAIL**: Any non-zero exit code.
 
 ### Stage 1.5: Smoke Check (MANDATORY for dev jobs)

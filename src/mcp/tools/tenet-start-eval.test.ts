@@ -806,3 +806,183 @@ describe('tenet_start_eval per-job critic applicability (applicable_jobs)', () =
     await waitForAll(manager, parsed);
   });
 });
+
+describe('tenet_start_eval shared evidence ledger', () => {
+  /** Extracts the backticked ledger path out of a critic prompt. */
+  const ledgerPathOf = (prompt: string): string => {
+    const match = prompt.match(/`([^`]*critics\/evidence\/eval-[^`]*)`/);
+    if (!match) {
+      throw new Error('no ledger path found in prompt');
+    }
+    return match[1];
+  };
+
+  const createRunSourceJob = (store: StateStore): string =>
+    createSourceJob(store, 'oauth', {
+      run_path: '.tenet/runs/2026-10-19-oauth',
+      run_slug: '2026-10-19-oauth',
+    });
+
+  it('bakes the Shared Evidence Ledger block with one shared per-round path into every critic prompt and creates the evidence dir', async () => {
+    const { store, manager, handler } = createHarness();
+    const sourceId = createRunSourceJob(store);
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    const ledgerPaths = new Set<string>();
+    for (const role of ['code_critic', 'test_critic', 'interaction_e2e'] as const) {
+      const prompt = store.getJob(jobId(parsed, role))?.params.prompt as string;
+      expect(prompt).toContain('## Shared Evidence Ledger');
+      ledgerPaths.add(ledgerPathOf(prompt));
+    }
+    // One eval_round per dispatch → one ledger path shared by every critic in the round.
+    expect(ledgerPaths.size).toBe(1);
+    const [ledgerPath] = [...ledgerPaths];
+    expect(ledgerPath.startsWith(`.tenet/runs/2026-10-19-oauth/critics/evidence/eval-${sourceId}-`)).toBe(true);
+    expect(ledgerPath.endsWith('.jsonl')).toBe(true);
+
+    // The evidence directory exists after dispatch, so critics can append frictionlessly.
+    expect(fs.existsSync(path.join(store.projectPath, '.tenet/runs/2026-10-19-oauth/critics/evidence'))).toBe(true);
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('gives each dispatch a fresh ledger path (fresh eval_round)', async () => {
+    const { store, manager, handler } = createHarness();
+    const sourceId = createRunSourceJob(store);
+
+    const first = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+    const second = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    const firstPath = ledgerPathOf(store.getJob(jobId(first, 'code_critic'))?.params.prompt as string);
+    const secondPath = ledgerPathOf(store.getJob(jobId(second, 'code_critic'))?.params.prompt as string);
+    expect(secondPath).not.toBe(firstPath);
+    expect(secondPath.startsWith(`.tenet/runs/2026-10-19-oauth/critics/evidence/eval-${sourceId}-`)).toBe(true);
+
+    await waitForAll(manager, first);
+    await waitForAll(manager, second);
+  });
+
+  it('omits the ledger block when the source job has no run_path (ad-hoc jobs)', async () => {
+    const { store, manager, handler } = createHarness();
+    const sourceId = createSourceJob(store, 'oauth'); // no run_path
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    for (const role of ['code_critic', 'test_critic', 'interaction_e2e'] as const) {
+      const prompt = store.getJob(jobId(parsed, role))?.params.prompt as string;
+      expect(prompt).not.toContain('## Shared Evidence Ledger');
+    }
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('blocks custom critics too — grounded and ungrounded — without displacing their output-contract line', async () => {
+    const { store, manager, handler } = createHarness();
+    writeCriticPrompt(
+      store,
+      'security.md',
+      '## Security Critic\n\nReview the diff.\n\nEnd with: {"passed": true/false, "stage": "security_critic", "findings": []}',
+    );
+    writeCriticPrompt(
+      store,
+      'adversarial.md',
+      '## Adversarial Critic\n\nReview from the code alone.\n\nEnd with: {"passed": true/false, "stage": "adversarial_critic", "findings": []}',
+    );
+    writeRoster(store, {
+      version: 1,
+      critics: [
+        { id: 'code_critic', builtin: true, enabled: true },
+        { id: 'test_critic', builtin: true, enabled: true },
+        { id: 'interaction_e2e', builtin: true, enabled: true },
+        {
+          id: 'security',
+          builtin: false,
+          enabled: true,
+          stage: 'security_critic',
+          job_type: 'critic_eval',
+          prompt_file: '.tenet/critics/security.md',
+        },
+        {
+          id: 'adversarial',
+          builtin: false,
+          enabled: true,
+          stage: 'adversarial_critic',
+          job_type: 'critic_eval',
+          prompt_file: '.tenet/critics/adversarial.md',
+          full_context: false,
+        },
+      ],
+    });
+    const sourceId = createRunSourceJob(store);
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    // Both grounding modes receive the block — the ledger is context-independent.
+    for (const [role, bodyHeading] of [
+      ['security_critic', '## Security Critic'],
+      ['adversarial_critic', '## Adversarial Critic'],
+    ] as const) {
+      const prompt = store.getJob(jobId(parsed, role))?.params.prompt as string;
+      expect(prompt).toContain('## Shared Evidence Ledger');
+      // Procedural scaffolding sits between the job scope and the critic's own mission text.
+      expect(prompt.indexOf('## Job Scope')).toBeLessThan(prompt.indexOf('## Shared Evidence Ledger'));
+      expect(prompt.indexOf('## Shared Evidence Ledger')).toBeLessThan(prompt.indexOf(bodyHeading));
+      // The critic's output-contract line stays inside its body, before the implementation output.
+      expect(prompt.indexOf('End with:')).toBeGreaterThan(prompt.indexOf('## Shared Evidence Ledger'));
+      expect(prompt.indexOf('End with:')).toBeLessThan(prompt.indexOf('## Implementation Output'));
+    }
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('embeds the commit SHA from the worker output as the staleness anchor', async () => {
+    const { store, manager, handler } = createHarness();
+    const sourceId = createRunSourceJob(store);
+    const sha = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok', commit_sha: sha } }));
+
+    const prompt = store.getJob(jobId(parsed, 'code_critic'))?.params.prompt as string;
+    expect(prompt).toContain(`(\`${sha}\`)`);
+    // Without a SHA in the output, the staleness rule still reads coherently.
+    const noSha = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+    const noShaPrompt = store.getJob(jobId(noSha, 'code_critic'))?.params.prompt as string;
+    expect(noShaPrompt).toContain("the commit this job's output describes");
+    expect(noShaPrompt).not.toContain(`(\`${sha}\`)`);
+
+    await waitForAll(manager, parsed);
+    await waitForAll(manager, noSha);
+  });
+
+  it('keeps every critic end-shape byte-identical to pre-ledger prompts — e2e contract line stays terminal', async () => {
+    const { store, manager, handler } = createHarness();
+    const sourceId = createRunSourceJob(store);
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    const e2ePrompt = store.getJob(jobId(parsed, 'interaction_e2e'))?.params.prompt as string;
+    const lastLine = e2ePrompt.split('\n').filter((l) => l.trim().length > 0).pop() as string;
+    expect(lastLine).toContain('End with: {"passed": true/false, "stage": "interaction_e2e"');
+    // Built-in readers keep Worker Output terminal; no ledger text after it.
+    const codePrompt = store.getJob(jobId(parsed, 'code_critic'))?.params.prompt as string;
+    expect(codePrompt.indexOf('## Shared Evidence Ledger')).toBeLessThan(codePrompt.indexOf('## Code Critic'));
+
+    await waitForAll(manager, parsed);
+  });
+
+  it('degrades to no block when the evidence dir cannot be created', async () => {
+    const { store, manager, handler } = createHarness();
+    // .tenet/runs/2026-10-19-oauth exists as a FILE → mkdir of .../critics/evidence throws ENOTDIR.
+    fs.mkdirSync(path.join(store.projectPath, '.tenet', 'runs'), { recursive: true });
+    fs.writeFileSync(path.join(store.projectPath, '.tenet', 'runs', '2026-10-19-oauth'), 'not a dir');
+    const sourceId = createRunSourceJob(store);
+
+    const parsed = parseResult(await handler({ job_id: sourceId, output: { summary: 'ok' } }));
+
+    const prompt = store.getJob(jobId(parsed, 'code_critic'))?.params.prompt as string;
+    expect(prompt).not.toContain('## Shared Evidence Ledger');
+
+    await waitForAll(manager, parsed);
+  });
+});
