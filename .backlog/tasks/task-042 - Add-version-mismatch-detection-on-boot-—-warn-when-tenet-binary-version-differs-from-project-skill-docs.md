@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-14 01:05'
-updated_date: '2026-07-14 04:34'
+updated_date: '2026-11-08 22:36'
 labels:
   - boot
   - reliability
@@ -14,6 +14,7 @@ labels:
 dependencies: []
 ordinal: 42000
 ---
+
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
@@ -35,3 +36,9 @@ Fix: On boot sequence (when tenet init runs or when the orchestrator starts), co
 - [ ] #3 Suggests running 'tenet init --upgrade' to sync
 - [ ] #4 Does not block execution — warning only
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+DESIGN NOTE (2026-11-09, user decision): tenet_health_check / tenet_get_status should unconditionally return BOTH the installed binary version (current_version) and the latest npm registry version (latest) — not gated on update_available. With the binary version always visible, the skill boot step can compare its Generated-by stamp against it and warn on mismatch. This absorbs TASK-008's 'unconditional current_version' fragment (TASK-008 keeps the kill/restart guardrail prose); pin that split at implementation. Not yet implemented.
+<!-- SECTION:NOTES:END -->
