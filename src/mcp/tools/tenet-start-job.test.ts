@@ -25,7 +25,7 @@ class SlowAdapter implements AgentAdapter {
 
 type Handler = (args: {
   job_id?: string;
-  job_type?: 'dev' | 'eval' | 'critic_eval' | 'interaction_e2e' | 'mechanical_eval' | 'compile_context' | 'health_check';
+  job_type?: 'dev' | 'eval' | 'critic_eval' | 'interaction_e2e' | 'mechanical_eval' | 'integration_test' | 'compile_context' | 'health_check' | 'adviser';
   params?: Record<string, unknown>;
 }) => Promise<CallToolResult>;
 
@@ -93,5 +93,17 @@ describe('tenet_start_job', () => {
     expect(parsed.next_tool).toBe('tenet_job_wait');
     expect(parsed.next_args).toEqual({ job_id: job.id, wait_seconds: 30 });
     expect(store.getJob(job.id)?.status).toBe('running');
+  });
+
+  it('rejects ad-hoc adviser jobs — only tenet_ask_adviser dispatches them', async () => {
+    const { store, handler } = createHarness();
+    const before = store.getJobsByStatus('running').length;
+
+    await expect(
+      handler({ job_type: 'adviser', params: { name: 'escalation', prompt: 'Which option?' } }),
+    ).rejects.toThrow(/tenet_ask_adviser/);
+
+    // Rejected before dispatch: nothing new is running.
+    expect(store.getJobsByStatus('running')).toHaveLength(before);
   });
 });

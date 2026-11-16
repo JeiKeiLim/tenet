@@ -12,6 +12,7 @@ export const TENET_MCP_TOOL_NAMES = [
   'tenet_continue',
   'tenet_compile_context',
   'tenet_start_job',
+  'tenet_ask_adviser',
   'tenet_register_jobs',
   'tenet_job_wait',
   'tenet_job_result',

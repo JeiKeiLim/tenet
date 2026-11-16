@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { vi } from 'vitest';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
+import { mergeExtraArgs, stripModelFlags } from './base.js';
 import { AdapterRegistry, parseAdapterExtraArgs } from './index.js';
 
 const spawnMock = vi.fn();
@@ -128,6 +129,13 @@ describe('parseAdapterExtraArgs', () => {
     const parsed = parseAdapterExtraArgs({ opencode_args: '  --model    foo   ' });
     expect(parsed.opencode).toEqual(['--model', 'foo']);
   });
+
+  it('reads job-scoped args for the adviser job type (JOB_TYPES enumeration surface)', () => {
+    // A missing JOB_TYPES member silently disables the *_args_adviser key (no type
+    // error), so pin the enumeration through the real config parser.
+    const parsed = parseAdapterExtraArgs({ claude_args_adviser: '--allowedTools Read' });
+    expect(parsed.byJobType?.claude?.adviser).toEqual(['--allowedTools', 'Read']);
+  });
 });
 
 type FakeChild = EventEmitter & {
@@ -207,6 +215,67 @@ describe('adapter extraArgs passthrough', () => {
     const argv = spawnMock.mock.calls[0][1] as string[];
     expect(argv).not.toContain('--sandbox');
     expect(argv[1]).toBe('--dangerously-bypass-approvals-and-sandbox');
+  });
+});
+
+describe('pinned model flag handling', () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+  });
+
+  it('stripModelFlags removes every model flag form and keeps the rest in order', () => {
+    expect(
+      stripModelFlags(['--model', 'a', '--verbose', '--model=b', '-m', 'c', '-m=d', '--flag']),
+    ).toEqual(['--verbose', '--flag']);
+  });
+
+  it('mergeExtraArgs replaces a manual --model with the pinned one', () => {
+    expect(mergeExtraArgs(['--model', 'manual'], ['--verbose'], 'pinned')).toEqual([
+      '--verbose',
+      '--model',
+      'pinned',
+    ]);
+  });
+
+  it('mergeExtraArgs leaves manual model flags untouched without a pin', () => {
+    expect(mergeExtraArgs(['--model', 'manual'], ['--verbose'])).toEqual(['--model', 'manual', '--verbose']);
+  });
+
+  it('a pinned model replaces the manual --model in adapter argv (codex rejects duplicates)', async () => {
+    spawnMock.mockImplementation(() => makeFakeChild(0, 'codex output'));
+
+    const adapter = new CodexAdapter(undefined, ['--model', 'manual-model']);
+    await adapter.invoke({ prompt: 'hi', extraArgs: ['--verbose'], model: 'pinned-model' });
+
+    const argv = spawnMock.mock.calls[0][1] as string[];
+    expect(argv.filter((arg) => arg === '--model')).toHaveLength(1);
+    expect(argv[argv.indexOf('--model') + 1]).toBe('pinned-model');
+    expect(argv).not.toContain('manual-model');
+    expect(argv).toContain('--verbose');
+  });
+
+  it('ClaudeAdapter places the pinned model before --print and strips the manual one', async () => {
+    spawnMock.mockImplementation(() => makeFakeChild(0, JSON.stringify({ result: 'ok' })));
+
+    const adapter = new ClaudeAdapter(undefined, ['--model', 'manual']);
+    await adapter.invoke({ prompt: 'hi', model: 'pinned' });
+
+    const argv = spawnMock.mock.calls[0][1] as string[];
+    expect(argv.slice(0, 2)).toEqual(['--model', 'pinned']);
+    expect(argv.indexOf('--model')).toBeLessThan(argv.indexOf('--print'));
+    expect(argv).not.toContain('manual');
+  });
+
+  it('OpenCodeAdapter places the pinned model before the run subcommand', async () => {
+    spawnMock.mockImplementation(() => makeFakeChild(0, 'opencode output'));
+
+    const adapter = new OpenCodeAdapter(undefined, []);
+    await adapter.invoke({ prompt: 'hi', model: 'pinned' });
+
+    const argv = spawnMock.mock.calls[0][1] as string[];
+    expect(argv[0]).toBe('--model');
+    expect(argv[1]).toBe('pinned');
+    expect(argv[2]).toBe('run');
   });
 });
 

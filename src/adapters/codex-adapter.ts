@@ -1,6 +1,6 @@
 import spawn from 'cross-spawn';
 import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
-import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
+import { mergeExtraArgs, type AgentAdapter, type AgentInvocation, type AgentResponse } from './base.js';
 
 export class CodexAdapter implements AgentAdapter {
   public readonly name = 'codex';
@@ -18,7 +18,9 @@ export class CodexAdapter implements AgentAdapter {
 
     return new Promise((resolve) => {
       const jobExtraArgs = invocation.extraArgs ?? [];
-      const extraArgs = [...this.extraArgs, ...jobExtraArgs];
+      // A pinned model replaces any manual --model from *_args — codex hard-errors
+      // on duplicate model flags ("cannot be used multiple times").
+      const extraArgs = mergeExtraArgs(this.extraArgs, jobExtraArgs, invocation.model);
       const hasSandboxOverride = extraArgs.some((arg) =>
         arg === '--sandbox' ||
         arg === '-s' ||

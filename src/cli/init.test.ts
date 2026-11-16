@@ -7,16 +7,30 @@ import {
   addPlaywrightAgentConfigs,
   addPlaywrightToCodexConfig,
   addPlaywrightToOpenCodeConfig,
+  adviserConfigWarning,
+  applyAgentModelFlags,
+  configDisplayLines,
+  defaultAgentModelArgsWarning,
   detectTrackedStateFiles,
   ensureRootGitignore,
   initProject,
+  isAdviserConfigured,
   mergeClaudePlaywrightSettings,
   mergeClaudeLocalSettings,
   mergeCodexProjectTrust,
   mergeOpenCodePermission,
   mergeOpenCodePlaywrightPermission,
   previewLegacyMigration,
+  readStateConfig,
+  writeStateConfig,
 } from './init.js';
+import type { StateConfig } from './init.js';
+import {
+  CLAUDE_MODEL_ALIASES,
+  openCodeProviders,
+  parseCodexModelCatalog,
+  parseOpenCodeModelLines,
+} from './model-picker.js';
 import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 
 const tempDirs: string[] = [];
@@ -878,5 +892,281 @@ describe('mergeCodexProjectTrust', () => {
     const content = fs.readFileSync(configPath, 'utf8');
     expect(content).toContain('trust_level = "untrusted"');
     expect(content).not.toContain('trust_level = "trusted"');
+  });
+});
+
+describe('agent/model config', () => {
+  it('initProject writes agent model and adviser keys when provided', () => {
+    const projectPath = createTempDir();
+    initProject(projectPath, {
+      agent: 'claude-code',
+      agentModel: 'sonnet',
+      adviserAgent: 'codex',
+      adviserModel: 'gpt-6-astra',
+    });
+
+    const config = readStateConfig(path.join(projectPath, '.tenet'));
+    expect(config).toEqual({
+      default_agent: 'claude-code',
+      default_agent_model: 'sonnet',
+      adviser_agent: 'codex',
+      adviser_model: 'gpt-6-astra',
+    });
+  });
+
+  it('initProject leaves the config file absent when nothing is provided', () => {
+    const projectPath = createTempDir();
+    initProject(projectPath);
+
+    const tenetRoot = path.join(projectPath, '.tenet');
+    expect(fs.existsSync(path.join(tenetRoot, '.state', 'config.json'))).toBe(false);
+    expect(readStateConfig(tenetRoot)).toEqual({});
+  });
+
+  it('initProject ignores empty model/adviser values (unset stays unset)', () => {
+    const projectPath = createTempDir();
+    initProject(projectPath, {
+      agent: 'claude-code',
+      agentModel: '',
+      adviserAgent: '',
+      adviserModel: '',
+    });
+
+    const config = readStateConfig(path.join(projectPath, '.tenet'));
+    expect(config).toEqual({ default_agent: 'claude-code' });
+  });
+
+  it('writeStateConfig/readStateConfig round-trip the new keys', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+
+    writeStateConfig(tenetRoot, {
+      default_agent: 'opencode',
+      default_agent_model: 'github-copilot/claude-opus-4-5',
+      adviser_agent: 'claude-code',
+      adviser_model: 'opus[1m]',
+    });
+
+    expect(readStateConfig(tenetRoot)).toEqual({
+      default_agent: 'opencode',
+      default_agent_model: 'github-copilot/claude-opus-4-5',
+      adviser_agent: 'claude-code',
+      adviser_model: 'opus[1m]',
+    });
+  });
+
+  it('isAdviserConfigured requires BOTH keys (partial config is inactive)', () => {
+    expect(isAdviserConfigured({})).toBe(false);
+    expect(isAdviserConfigured({ adviser_agent: 'claude-code' })).toBe(false);
+    expect(isAdviserConfigured({ adviser_model: 'opus' })).toBe(false);
+    expect(isAdviserConfigured({ adviser_agent: '', adviser_model: '' })).toBe(false);
+    expect(isAdviserConfigured({ adviser_agent: 'claude-code', adviser_model: 'opus' })).toBe(true);
+  });
+
+  it('adviserConfigWarning fires only for a partially configured adviser', () => {
+    expect(adviserConfigWarning({})).toBeNull();
+    expect(
+      adviserConfigWarning({ adviser_agent: 'claude-code', adviser_model: 'opus' }),
+    ).toBeNull();
+
+    const missingModel = adviserConfigWarning({ adviser_agent: 'claude-code' });
+    expect(missingModel).toContain('adviser_model');
+    expect(missingModel).toContain('inactive');
+
+    const missingAgent = adviserConfigWarning({ adviser_model: 'opus' });
+    expect(missingAgent).toContain('adviser_agent');
+    expect(missingAgent).toContain('inactive');
+  });
+
+  it('defaultAgentModelArgsWarning flags a --model in the default agent args', () => {
+    const warning = defaultAgentModelArgsWarning({
+      default_agent: 'claude-code',
+      default_agent_model: 'sonnet',
+      claude_args: '--allowedTools Bash,Read --model opus',
+    });
+    expect(warning).toContain('default_agent_model');
+    expect(warning).toContain('claude_args');
+  });
+
+  it('defaultAgentModelArgsWarning also checks job-scoped interaction-e2e args', () => {
+    const warning = defaultAgentModelArgsWarning({
+      default_agent: 'claude-code',
+      default_agent_model: 'sonnet',
+      claude_args_interaction_e2e: '--model=opus',
+    });
+    expect(warning).toContain('claude_args_interaction_e2e');
+  });
+
+  it('defaultAgentModelArgsWarning stays silent when there is no conflict', () => {
+    expect(
+      defaultAgentModelArgsWarning({
+        default_agent: 'claude-code',
+        claude_args: '--model opus',
+      }),
+    ).toBeNull();
+    expect(
+      defaultAgentModelArgsWarning({
+        default_agent: 'claude-code',
+        default_agent_model: 'sonnet',
+        claude_args: '--allowedTools Bash',
+      }),
+    ).toBeNull();
+    // No default agent configured = no jobs on "the default agent" to warn about.
+    expect(defaultAgentModelArgsWarning({ default_agent_model: 'sonnet' })).toBeNull();
+    // The args key must belong to the default agent.
+    expect(
+      defaultAgentModelArgsWarning({
+        default_agent: 'codex',
+        default_agent_model: 'gpt-6-astra',
+        claude_args: '--model opus',
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('model picker catalogs', () => {
+  it('parseCodexModelCatalog keeps only visibility="list" entries', () => {
+    const raw = JSON.stringify({
+      models: [
+        { slug: 'gpt-5.5', display_name: 'GPT-5.5', visibility: 'list' },
+        { slug: 'gpt-5.5-hidden', display_name: 'Hidden', visibility: 'hidden' },
+        { slug: '   ', visibility: 'list' },
+        { slug: 'gpt-6-astra', visibility: 'list' },
+        { slug: 'gpt-5.5', visibility: 'list' },
+      ],
+    });
+
+    expect(parseCodexModelCatalog(raw)).toEqual([
+      { slug: 'gpt-5.5', displayName: 'GPT-5.5' },
+      { slug: 'gpt-6-astra', displayName: undefined },
+    ]);
+  });
+
+  it('parseCodexModelCatalog tolerates invalid JSON and empty catalogs', () => {
+    expect(parseCodexModelCatalog('not json')).toEqual([]);
+    expect(parseCodexModelCatalog('{}')).toEqual([]);
+    expect(parseCodexModelCatalog('{"models": []}')).toEqual([]);
+  });
+
+  it('parseOpenCodeModelLines keeps provider/model lines and dedupes', () => {
+    expect(
+      parseOpenCodeModelLines(
+        'opencode/alpha\n\ngithub-copilot/claude-opus-4-5\nopencode/alpha\nnot-a-model\n',
+      ),
+    ).toEqual(['opencode/alpha', 'github-copilot/claude-opus-4-5']);
+  });
+
+  it('openCodeProviders lists unique providers sorted', () => {
+    expect(
+      openCodeProviders([
+        'opencode/alpha',
+        'github-copilot/claude-opus-4-5',
+        'opencode/beta',
+      ]),
+    ).toEqual(['github-copilot', 'opencode']);
+  });
+
+  it('claude alias menu carries the supported aliases', () => {
+    expect(CLAUDE_MODEL_ALIASES).toContain('sonnet');
+    expect(CLAUDE_MODEL_ALIASES).toContain('opusplan[1m]');
+  });
+});
+
+describe('tenet config flag semantics', () => {
+  it('applyAgentModelFlags sets agent-model and both adviser keys', () => {
+    const config: StateConfig = {};
+    const result = applyAgentModelFlags(config, {
+      agentModel: 'sonnet',
+      adviserAgent: 'codex',
+      adviserModel: 'gpt-6-astra',
+    });
+
+    expect(result).toEqual({ changed: true, restartNeeded: true });
+    expect(config).toEqual({
+      default_agent_model: 'sonnet',
+      adviser_agent: 'codex',
+      adviser_model: 'gpt-6-astra',
+    });
+    // Both adviser keys written together is exactly what makes the adviser active.
+    expect(isAdviserConfigured(config)).toBe(true);
+  });
+
+  it('an empty string clears that key and leaves the others intact', () => {
+    const config: StateConfig = {
+      default_agent_model: 'sonnet',
+      adviser_agent: 'claude-code',
+      adviser_model: 'opus',
+    };
+    const result = applyAgentModelFlags(config, { adviserAgent: '' });
+
+    expect(result.changed).toBe(true);
+    expect(config).toEqual({ default_agent_model: 'sonnet', adviser_model: 'opus' });
+    // Clearing one adviser key leaves the adviser inactive (both-keys contract).
+    expect(isAdviserConfigured(config)).toBe(false);
+    expect(adviserConfigWarning(config)).toContain('adviser_agent');
+
+    applyAgentModelFlags(config, { adviserModel: '  ' });
+    expect(config).toEqual({ default_agent_model: 'sonnet' });
+  });
+
+  it('undefined flags are left untouched', () => {
+    const config: StateConfig = { adviser_agent: 'claude-code', adviser_model: 'opus' };
+    const result = applyAgentModelFlags(config, {});
+
+    expect(result).toEqual({ changed: false, restartNeeded: false });
+    expect(config).toEqual({ adviser_agent: 'claude-code', adviser_model: 'opus' });
+  });
+
+  it('rejects an invalid adviser agent before mutating anything', () => {
+    const config: StateConfig = { default_agent_model: 'sonnet' };
+    const result = applyAgentModelFlags(config, {
+      agentModel: 'opus',
+      adviserAgent: 'claude', // registry key is claude-code, not claude
+      adviserModel: 'opus',
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.error).toContain('--adviser-agent must be one of: claude-code, opencode, codex');
+    expect(config).toEqual({ default_agent_model: 'sonnet' });
+  });
+
+  it('trims values before writing them', () => {
+    const config: StateConfig = {};
+    applyAgentModelFlags(config, { agentModel: '  sonnet  ', adviserAgent: ' opencode ' });
+
+    expect(config.default_agent_model).toBe('sonnet');
+    expect(config.adviser_agent).toBe('opencode');
+  });
+});
+
+describe('tenet config --show display', () => {
+  it('shows the new agent/model keys and their current values', () => {
+    const lines = configDisplayLines({
+      default_agent: 'claude-code',
+      default_agent_model: 'sonnet',
+      adviser_agent: 'codex',
+      adviser_model: 'gpt-6-astra',
+      max_retries: 'unlimited',
+      timeout_minutes: 90,
+    });
+
+    expect(lines).toContain('  default_agent_model: sonnet');
+    expect(lines).toContain('  adviser_agent: codex');
+    expect(lines).toContain('  adviser_model: gpt-6-astra');
+    expect(lines).toContain('  max_retries: unlimited (default: unlimited)');
+    expect(lines).toContain('  timeout: 90 minutes (default: 120)');
+    expect(lines.some((line) => line.startsWith('  claude_args_interaction_e2e:'))).toBe(true);
+  });
+
+  it('marks unset values without inventing defaults for the model keys', () => {
+    const lines = configDisplayLines({});
+
+    expect(lines).toContain('  default_agent: (not set)');
+    expect(lines).toContain('  default_agent_model: (not set — adapter CLI default)');
+    expect(lines).toContain('  adviser_agent: (not set)');
+    expect(lines).toContain('  adviser_model: (not set)');
+    expect(lines).toContain('  max_retries: unlimited (default: unlimited)');
+    expect(lines).toContain('  timeout: 120 minutes (default: 120)');
   });
 });

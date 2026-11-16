@@ -3,7 +3,7 @@ import { JobManager } from '../../core/job-manager.js';
 import type { Job } from '../../types/index.js';
 import { jsonResult, jobTypeSchema, type RegisterTool } from './utils.js';
 
-const startJobResponse = (job: Job): Record<string, unknown> => {
+export const startJobResponse = (job: Job): Record<string, unknown> => {
   const jobName = typeof job.params.name === 'string' ? job.params.name : undefined;
   return {
     job_id: job.id,
@@ -40,6 +40,12 @@ export const registerTenetStartJobTool = (registerTool: RegisterTool, jobManager
 
       if (!job_type) {
         throw new Error('Either job_id (for registered jobs) or job_type (for ad-hoc jobs) is required');
+      }
+
+      // Adviser jobs carry the adviser preamble, the adviser agent/model, and the
+      // not-configured gate — only tenet_ask_adviser can dispatch them correctly.
+      if (job_type === 'adviser') {
+        throw new Error('adviser jobs are dispatched via tenet_ask_adviser, not tenet_start_job');
       }
 
       const job = jobManager.startJob(job_type, params ?? {});

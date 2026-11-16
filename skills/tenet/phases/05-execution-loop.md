@@ -277,6 +277,54 @@ if findings:
 
 Plain "just retry" wastes cycles on test/harness/evidence bugs — route by category and include the category-specific context in the enhanced prompt. Use `tenet_report_blocking_finding` only for report-only jobs that must not edit files directly.
 
+## Escalation to adviser
+
+Escalation is orchestrator judgment, not detection. Tenet does not inspect output, watch retry counts, or parse failures — **you** decide when a question is a real decision point. The rule: at any moment you would otherwise halt and wait for the user, first route the question to the configured adviser. When no adviser is configured the tool says so and you ask the user exactly as today (see **Not configured** below).
+
+Concrete trigger shapes:
+
+- A worker fails repeatedly with the same approach and no new evidence.
+- A worker report offers mutually exclusive options with no clear pick.
+- The correct fix needs a change the harness forbids.
+- The spec is ambiguous between frozen tests.
+
+Workers never get a question channel — the dev preamble stays as-is ("make reasonable assumptions and implement"). This is the orchestrator's move.
+
+### Compose the question
+
+- When the worker surfaced options, include its report **verbatim** plus the retry history. The worker's own option list may itself be the bug — the adviser needs the raw framing to catch it.
+- Otherwise synthesize the question from the failure/repetition evidence: what was attempted, what failed, and what decision the next attempt needs.
+
+### Dispatch
+
+Call `tenet_ask_adviser` with the composed question and `source_job_ids` — the jobs this escalation is about (1..N). The array says **which** jobs; the question text says **what** each one hit. The ids also anchor the adviser's run-artifact pointers (run path, spec, harness, scenarios, decomposition); if no job anchors the decision, pass `context_pointers` with the relevant paths instead.
+
+- Related parallel failures at the same decision point share ONE call with all their ids.
+- Unrelated failures are separate calls — one adviser dispatch per decision point, never the same question re-asked per job.
+
+### Wait
+
+The adviser job is an in-flight job like any other: the tracked sub-agent owns its wait span via `tenet_job_wait` (see **Tracked Sub-Agent Delegation**), and you stay responsive to steering. No new waiting machinery.
+
+**Eval gate exemption:** a completed adviser job does NOT go through `tenet_start_eval`. Consume it directly with `tenet_job_result` — critics on a recommendation text would be pure waste. This is the only exception to "after every completed job, run `tenet_start_eval`"; the jobs the adviser's answer *unblocks* still pass their eval gates normally.
+
+### Act on the answer
+
+Journal first, then act. Record the question, the adviser's evidence, and the decision you are about to take via `tenet_update_knowledge(type="journal")` — retrospectives use this to measure how often the adviser overturns the worker's own recommendation.
+
+Then branch:
+
+- **Recommendation** — typically `tenet_retry_job` on the source job with an enhanced prompt = the recommendation + its evidence + what prior attempts got wrong. This satisfies the new-evidence/changed-approach retry rule, and eval gates still apply: the adviser informs the next attempt, never bypasses a gate. If the recommendation exposes a run-level issue, amend the run docs (`spec` and `decomposition` are run artifacts, orchestrator-owned during the run — **not** doctrine) and re-register or steer the affected jobs.
+- **Genuinely the user's call** — the only interrupt. Present the distilled decision frame to the user and wait; the answer re-enters as an authoritative user decision and drives the same retry/steer mechanics.
+
+The answer format is prompt-enforced, not parsed — treat a non-conforming adviser answer as text to interpret with judgment, like any worker report.
+
+### Not configured
+
+Always call `tenet_ask_adviser` at the escalation moment, regardless of what boot-time status told you. When it returns `adviser_configured: false`, surface the question to the user exactly as today — including idling when the user is absent; the adviser is the fix for that case, not the fallback.
+
+If the adviser job itself fails (timeout, adapter unavailable, auth error), degrade to the same surface-to-user path. Adviser failure never blocks or cancels worker jobs; re-calling for a fresh adviser attempt is ordinary retry judgment.
+
 ## Eval-mode decision (reminder)
 
 The critics dispatched by `tenet_start_eval` (the configured set from `.tenet/critics.json`) run **in parallel**, **hybrid**, or **sequentially** based on the readiness gate's `eval_parallel_safe:{feature}` verdict combined with each critic's `parallel_safe` roster flag (see `phases/02-spec-and-harness.md`). Verdict `true` → all critics concurrent. Verdict `false`/missing → `parallel_safe` critics (code critic by default) run concurrently while the rest chain in roster order (hybrid; missing verdict is this same safe fallback). The orchestrator doesn't need a separate step for the normal eval — just call `tenet_start_eval` and wait for every job id in the `jobs[]` list it returns. The one exception is the contention steer above: when a `contention` finding appears, the dispatch block adds a context steer noting it — read it back via `tenet_process_steer` and follow the contention action in the finding-categories table (`phases/06-evaluation.md`).

@@ -16,7 +16,7 @@ export const asToolError = (error: unknown): CallToolResult => {
   };
 };
 
-export const jobTypeSchema = z.enum(['dev', 'eval', 'critic_eval', 'interaction_e2e', 'mechanical_eval', 'compile_context', 'health_check']);
+export const jobTypeSchema = z.enum(['dev', 'eval', 'critic_eval', 'interaction_e2e', 'mechanical_eval', 'integration_test', 'compile_context', 'health_check', 'adviser']);
 
 export const parseJobType = (value: string): JobType => {
   const parsed = jobTypeSchema.safeParse(value);

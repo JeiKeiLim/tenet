@@ -10,6 +10,7 @@ import { registerTenetInitTool } from './tenet-init.js';
 import { registerTenetJobResultTool } from './tenet-job-result.js';
 import { registerTenetJobWaitTool } from './tenet-job-wait.js';
 import { registerTenetAddSteerTool } from './tenet-add-steer.js';
+import { registerTenetAskAdviserTool } from './tenet-ask-adviser.js';
 import { registerTenetProcessSteerTool } from './tenet-process-steer.js';
 import { registerTenetUpdateSteerTool } from './tenet-update-steer.js';
 import { registerTenetRegisterJobsTool } from './tenet-register-jobs.js';
@@ -45,6 +46,7 @@ export const registerAllTools = (server: McpServer, jobManager: JobManager, stat
   safeRegister(() => registerTenetContinueTool(registerTool, jobManager));
   safeRegister(() => registerTenetCompileContextTool(registerTool, stateStore));
   safeRegister(() => registerTenetStartJobTool(registerTool, jobManager));
+  safeRegister(() => registerTenetAskAdviserTool(registerTool, jobManager, stateStore));
   safeRegister(() => registerTenetJobWaitTool(registerTool, jobManager));
   safeRegister(() => registerTenetJobResultTool(registerTool, jobManager));
   safeRegister(() => registerTenetCancelJobTool(registerTool, jobManager));

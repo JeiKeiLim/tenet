@@ -1,8 +1,9 @@
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from '../adapters/base.js';
-import { AdapterRegistry } from '../adapters/index.js';
+import { AdapterRegistry, type AdapterExtraArgs } from '../adapters/index.js';
 import { JobManager } from './job-manager.js';
 import { UNLIMITED_RETRIES } from './runtime-config.js';
 import { StateStore } from './state-store.js';
@@ -83,6 +84,63 @@ const createRegistry = (...adapters: AgentAdapter[]): AdapterRegistry => {
 
 const getServerId = (manager: JobManager): string =>
   (manager as unknown as { serverId: string }).serverId;
+
+/**
+ * Adviser/worker-model harness: lets each test pick the adapters, the JobManager
+ * config (adviser / defaultAgentModel) and the SQLite config values explicitly.
+ */
+const createModelHarness = (
+  adapters: MockAdapter[],
+  managerConfig: {
+    adviser?: { agent: string; model: string };
+    defaultAgentModel?: string;
+  } = {},
+  storeConfig: Record<string, string> = {},
+  extraArgs?: AdapterExtraArgs,
+): { projectPath: string; store: StateStore; manager: JobManager } => {
+  const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-adviser-test-'));
+  tempDirs.push(projectPath);
+
+  const store = new StateStore(projectPath);
+  stores.push(store);
+  for (const [key, value] of Object.entries(storeConfig)) {
+    store.setConfig(key, value);
+  }
+
+  const registry = extraArgs ? new AdapterRegistry(extraArgs) : new AdapterRegistry();
+  (registry as unknown as { adapters: Map<string, AgentAdapter> }).adapters.clear();
+  for (const adapter of adapters) {
+    registry.register(adapter);
+  }
+
+  const manager = new JobManager(store, registry, {
+    heartbeatTimeoutMs: 1_000,
+    defaultJobTimeoutMs: 2_000,
+    ...managerConfig,
+  });
+
+  return { projectPath, store, manager };
+};
+
+const writeRunDocs = (projectPath: string, runPath: string): void => {
+  const abs = path.join(projectPath, runPath);
+  fs.mkdirSync(abs, { recursive: true });
+  fs.writeFileSync(path.join(abs, 'spec.md'), '# Worker Spec\n\nSpec body.');
+  fs.writeFileSync(path.join(abs, 'harness.md'), '# Worker Harness\n\nHarness body.');
+  fs.writeFileSync(path.join(abs, 'scenarios.md'), '# Worker Scenarios\n\nScenarios body.');
+  fs.writeFileSync(path.join(abs, 'decomposition.md'), '# Worker Decomposition\n\nDAG body.');
+};
+
+const runDocParams = (runPath: string): Record<string, unknown> => ({
+  feature: 'adviser-demo',
+  run_path: runPath,
+  artifact_paths: {
+    spec: `${runPath}/spec.md`,
+    harness: `${runPath}/harness.md`,
+    scenarios: `${runPath}/scenarios.md`,
+    decomposition: `${runPath}/decomposition.md`,
+  },
+});
 
 afterEach(() => {
   while (stores.length > 0) {
@@ -724,5 +782,165 @@ describe('JobManager', () => {
     });
 
     expect(manager.getActiveConcurrency()).toBe(2);
+  });
+
+  describe('adviser dispatch and model injection', () => {
+    it('gives adviser jobs no worker run-context while an equivalent dev job gets one', async () => {
+      const worker = new MockAdapter('mock-worker');
+      const adviser = new MockAdapter('claude-code');
+      const { projectPath, manager } = createModelHarness(
+        [worker, adviser],
+        { adviser: { agent: 'claude-code', model: 'opus' } },
+        { default_agent: 'mock-worker' },
+      );
+      const runPath = '.tenet/runs/2026-11-16-adviser-ctx';
+      writeRunDocs(projectPath, runPath);
+      const params = { name: 'impl-core', prompt: 'Implement the core feature.', ...runDocParams(runPath) };
+
+      const devJob = manager.startJob('dev', params);
+      await manager.waitForJob(devJob.id, null, 5_000);
+      const devContext = worker.lastInvocation?.context ?? '';
+      expect(devContext).toContain('<tenet_run_context>');
+      expect(devContext).toContain('# Worker Spec');
+
+      const adviserJob = manager.startAdviserJob({ ...params, name: 'escalation' });
+      await manager.waitForJob(adviserJob.id, null, 5_000);
+
+      // The adviser's edge is full-repo access + explicit path pointers in the prompt,
+      // not the worker's narrowed (and inlined) compiled context.
+      expect(adviser.lastInvocation?.context).toBeUndefined();
+      expect(adviser.lastInvocation?.prompt).not.toContain('<tenet_run_context>');
+      expect(adviser.lastInvocation?.prompt).toContain('Implement the core feature.');
+    });
+
+    it('pins the adviser model and the default-agent model via invocation.model without accumulating', async () => {
+      const worker = new MockAdapter('mock-worker');
+      const adviser = new MockAdapter('claude-code');
+      const { manager } = createModelHarness(
+        [worker, adviser],
+        { adviser: { agent: 'claude-code', model: 'opus[1m]' }, defaultAgentModel: 'sonnet' },
+        { default_agent: 'mock-worker' },
+        { byJobType: { claude: { adviser: ['--allowedTools', 'Read'] } } },
+      );
+
+      const adviserJob = manager.startAdviserJob({ name: 'escalation', prompt: 'Which option?' });
+      await manager.waitForJob(adviserJob.id, null, 5_000);
+      // Job-scoped args ride extraArgs; the model rides invocation.model (adapters
+      // place it and strip any manual --model) — the adviser's own model is used,
+      // never the worker's default_agent_model.
+      expect(adviser.lastInvocation?.extraArgs).toEqual(['--allowedTools', 'Read']);
+      expect(adviser.lastInvocation?.model).toBe('opus[1m]');
+
+      const first = manager.startJob('dev', { name: 'worker-1', prompt: 'implement' });
+      await manager.waitForJob(first.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('sonnet');
+
+      // Re-dispatch must not accumulate the model pin across dispatches.
+      const second = manager.startJob('dev', { name: 'worker-2', prompt: 'implement again' });
+      await manager.waitForJob(second.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('sonnet');
+      expect(worker.lastInvocation?.extraArgs).toEqual([]);
+    });
+
+    it('does not inject default_agent_model for jobs running on a per-type override agent', async () => {
+      const defaultAdapter = new MockAdapter('mock-default');
+      const overrideAdapter = new MockAdapter('mock-override');
+      const { manager } = createModelHarness(
+        [defaultAdapter, overrideAdapter],
+        { defaultAgentModel: 'sonnet' },
+        { default_agent: 'mock-default', agent_override_eval: 'mock-override' },
+      );
+
+      const evalJob = manager.startJob('eval', { name: 'code-critic', prompt: 'evaluate' });
+      await manager.waitForJob(evalJob.id, null, 5_000);
+      expect(overrideAdapter.lastInvocation?.extraArgs).toEqual([]);
+      expect(overrideAdapter.lastInvocation?.model).toBeUndefined();
+
+      const devJob = manager.startJob('dev', { name: 'worker', prompt: 'implement' });
+      await manager.waitForJob(devJob.id, null, 5_000);
+      expect(defaultAdapter.lastInvocation?.model).toBe('sonnet');
+    });
+
+    it('never applies the dev deliverables check to adviser jobs', async () => {
+      const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-adviser-deliverables-'));
+      tempDirs.push(projectPath);
+      // A clean git repo makes checkDeliverables fail for a dev job that changed
+      // nothing (the exact reason 'adviser' must not be a dev-type job).
+      fs.writeFileSync(path.join(projectPath, '.gitignore'), '.tenet/\n');
+      execSync('git init', { cwd: projectPath, stdio: 'ignore' });
+      execSync('git add .gitignore', { cwd: projectPath, stdio: 'ignore' });
+      execSync(
+        'git -c user.email=test@example.com -c user.name=TenetTest -c commit.gpgsign=false commit -m init',
+        { cwd: projectPath, stdio: 'ignore' },
+      );
+
+      const worker = new MockAdapter('mock-worker');
+      const adviser = new MockAdapter('claude-code');
+      const store = new StateStore(projectPath);
+      stores.push(store);
+      store.setConfig('default_agent', 'mock-worker');
+      const registry = new AdapterRegistry();
+      (registry as unknown as { adapters: Map<string, AgentAdapter> }).adapters.clear();
+      registry.register(worker);
+      registry.register(adviser);
+      const manager = new JobManager(store, registry, {
+        heartbeatTimeoutMs: 1_000,
+        defaultJobTimeoutMs: 2_000,
+        adviser: { agent: 'claude-code', model: 'opus' },
+      });
+
+      // Sanity: the deliverables check is active — a text-only dev job fails.
+      const devJob = manager.startJob('dev', { name: 'no-changes', prompt: 'just think about it' });
+      const devWait = await manager.waitForJob(devJob.id, null, 5_000);
+      expect(devWait.status).toBe('failed');
+      expect(store.getJob(devJob.id)?.error).toContain('produced no file changes');
+
+      // The same text-only output from an adviser job is a valid deliverable.
+      const adviserJob = manager.startAdviserJob({ name: 'escalation', prompt: 'Which option?' });
+      const adviserWait = await manager.waitForJob(adviserJob.id, null, 5_000);
+      expect(adviserWait.status).toBe('completed');
+      expect(store.getJob(adviserJob.id)?.error).toBeUndefined();
+    });
+
+    it('startJob with an explicit agentName dispatches on that agent', async () => {
+      const defaultAdapter = new MockAdapter('mock-default');
+      const explicitAdapter = new MockAdapter('mock-explicit');
+      const { store, manager } = createModelHarness(
+        [defaultAdapter, explicitAdapter],
+        {},
+        { default_agent: 'mock-default' },
+      );
+
+      const job = manager.startJob('dev', { name: 'explicit-agent', prompt: 'implement' }, {
+        agentName: 'mock-explicit',
+      });
+      expect(job.agentName).toBe('mock-explicit');
+
+      await manager.waitForJob(job.id, null, 5_000);
+      expect(store.getJob(job.id)?.agentName).toBe('mock-explicit');
+      expect(explicitAdapter.calls).toBe(1);
+      expect(defaultAdapter.calls).toBe(0);
+    });
+
+    it('keeps the adviser agent and model across a retry', async () => {
+      const adviser = new MockAdapter('claude-code');
+      const { store, manager } = createModelHarness(
+        [adviser],
+        { adviser: { agent: 'claude-code', model: 'opus' } },
+        { default_agent: 'some-other-agent' },
+      );
+
+      const job = manager.startAdviserJob({ name: 'escalation', prompt: 'Which option?' });
+      await manager.waitForJob(job.id, null, 5_000);
+
+      const retried = manager.retryJob(job.id);
+      expect(retried.agentName).toBe('claude-code');
+      expect(retried.status).toBe('running');
+
+      await manager.waitForJob(job.id, null, 5_000);
+      expect(adviser.calls).toBe(2);
+      expect(adviser.lastInvocation?.model).toBe('opus');
+      expect(store.getJob(job.id)?.agentName).toBe('claude-code');
+    });
   });
 });

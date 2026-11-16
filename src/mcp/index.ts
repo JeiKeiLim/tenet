@@ -10,20 +10,20 @@ import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrati
 import { DbHealthError } from '../core/state-store.js';
 import { StateStore } from '../core/state-store.js';
 import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
+import { parseAgentModelConfig } from '../core/runtime-config.js';
 import { getPackageVersion } from '../cli/version.js';
 
 const PROJECT_PATH = process.env.TENET_PROJECT_PATH || process.cwd();
 
-const loadAdapterExtraArgs = (projectPath: string): ReturnType<typeof parseAdapterExtraArgs> => {
+const loadRawStateConfig = (projectPath: string): Record<string, unknown> => {
   const configPath = path.join(projectPath, '.tenet', '.state', 'config.json');
   if (!fs.existsSync(configPath)) {
-    return parseAdapterExtraArgs({});
+    return {};
   }
   try {
-    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-    return parseAdapterExtraArgs(raw);
+    return JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
   } catch {
-    return parseAdapterExtraArgs({});
+    return {};
   }
 };
 
@@ -53,8 +53,12 @@ try {
   }
   throw error;
 }
-const adapterRegistry = new AdapterRegistry(loadAdapterExtraArgs(PROJECT_PATH));
-const jobManager = new JobManager(stateStore, adapterRegistry, { serverId });
+const rawStateConfig = loadRawStateConfig(PROJECT_PATH);
+const adapterRegistry = new AdapterRegistry(parseAdapterExtraArgs(rawStateConfig));
+const jobManager = new JobManager(stateStore, adapterRegistry, {
+  serverId,
+  ...parseAgentModelConfig(rawStateConfig),
+});
 
 registerAllTools(server, jobManager, stateStore);
 

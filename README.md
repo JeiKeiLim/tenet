@@ -141,7 +141,7 @@ Prefer not to hand-write the prompt? In Claude Code, ask *"tenet, create a secur
                          MCP Protocol
                              |
                     +--------v--------+
-                    |   MCP Server    |  19 tools (start_job, eval, steer, ...)
+                    |   MCP Server    |  20 tools (start_job, eval, steer, ...)
                     +--------+--------+
                              |
               +--------------+--------------+
@@ -153,7 +153,7 @@ Prefer not to hand-write the prompt? In Claude Code, ask *"tenet, create a secur
      +------------+  +-------------+  +-------------+
 ```
 
-Four layers: **Core** (DAG execution, heartbeat stall detection, retry, server-ID crash recovery) · **Adapters** (pluggable agent subprocess spawners, 120-min default timeout) · **MCP Server** (19 tools, Zod-validated) · **CLI** (`init`, `serve`, `status`, `config`, `db`).
+Four layers: **Core** (DAG execution, heartbeat stall detection, retry, server-ID crash recovery) · **Adapters** (pluggable agent subprocess spawners, 120-min default timeout) · **MCP Server** (20 tools, Zod-validated) · **CLI** (`init`, `serve`, `status`, `config`, `db`).
 
 ## CLI Reference
 
@@ -228,6 +228,7 @@ suppress it entirely.
 | `tenet_validate_readiness` | Score implementation readiness before decomposition |
 | `tenet_register_jobs` | Load a job DAG with dependencies |
 | `tenet_start_job` | Execute a single job via agent adapter |
+| `tenet_ask_adviser` | Consult the configured adviser model at a decision point before asking the user |
 | `tenet_continue` | Get the next actionable job from the DAG |
 | `tenet_job_wait` | Check or long-poll job status |
 | `tenet_job_result` | Retrieve job output and status |

@@ -18,6 +18,7 @@ allowed-tools:
   - tenet_job_result
   - tenet_cancel_job
   - tenet_start_eval
+  - tenet_ask_adviser
   - tenet_validate_clarity
   - tenet_validate_readiness
   - tenet_update_knowledge
@@ -188,6 +189,7 @@ Read `phases/05-execution-loop.md` before starting execution.
 - `tenet_start_eval` dispatches the configured critics and returns them as a variable-length `jobs[]` list (plus `execution_mode`). Wait on every job in that list; do not assume a fixed count or that all critics are already running.
 - Treat all eval failures as blocking for the current job or report-only parent.
 - Prefer `tenet_retry_job(job_id, enhanced_prompt)` for failed implementation jobs — it dispatches the retry immediately (retry = run-now, status `running`), so apply any backoff BEFORE calling it, then wait with `tenet_job_wait`; the retried job will not be returned by `tenet_continue()` as `next_job`.
+- Before halting to ask the user at a real decision point, escalate the question to the configured adviser first (see `phases/05-execution-loop.md` → *Escalation to adviser*).
 - Use `tenet_report_blocking_finding` only for report-only jobs that discover blocking findings they must not fix directly.
 - If a finite retry budget is exhausted, mark/report the job as blocked and continue only to independent jobs. If retries are unlimited, continue only while each retry uses new evidence or a changed approach.
 - In agile mode, the normal execution loop is scoped to the current slice; the outer slice/checkpoint loop is defined in `phases/07-agile-checkpoints.md`.
