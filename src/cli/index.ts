@@ -7,9 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { getPackageVersion } from './version.js';
 import {
+  ADAPTER_ARGS_CONFIG_KEYS,
   addPlaywrightAgentConfigs,
+  adviserConfigWarning,
+  applyAgentModelFlags,
+  configDisplayLines,
+  defaultAgentModelArgsWarning,
   initProject,
   installPlaywrightMcp,
+  isAdapterArgsConfigKey,
+  isAdviserConfigured,
   isPlaywrightMcpInstalled,
   mergeClaudeLocalSettings,
   mergeCodexProjectTrust,
@@ -20,7 +27,15 @@ import {
   readStateConfig,
   writeStateConfig,
 } from './init.js';
-import type { LegacyMigrationPreview } from './init.js';
+import type { LegacyMigrationPreview, StateConfig } from './init.js';
+import {
+  ADAPTER_KEYS,
+  isAdapterKey,
+  pickAdviserConfig,
+  pickModelForAgent,
+} from './model-picker.js';
+import { promptText, selectFromList } from './select.js';
+import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
 import { maybeStarNudge } from './star-nudge.js';
 import {
   DEFAULT_JOB_TIMEOUT_MINUTES,
@@ -51,7 +66,9 @@ const runMcpPreApprovalFlow = async (
   };
 
   console.log('\nPre-approve Tenet MCP tools?');
-  console.log('Each Tenet MCP tool normally triggers an approval prompt on first use (18 tools × agents).');
+  console.log(
+    `Each Tenet MCP tool normally triggers an approval prompt on first use (${TENET_MCP_TOOL_NAMES.length} tools × agents).`,
+  );
 
   const doClaude = await ask(
     '\nClaude Code: add Tenet tool allowlist to .claude/settings.local.json (gitignored)?',
@@ -197,6 +214,232 @@ const startBackgroundServer = (projectPath: string): void => {
   console.log(`Tenet MCP server started in background (pid ${child.pid}).`);
 };
 
+// --- `tenet config` display + interactive menu --------------------------
+
+const currentMaxRetries = (config: StateConfig): number =>
+  config.max_retries === undefined ? UNLIMITED_RETRIES : parseMaxRetries(config.max_retries);
+
+const currentTimeoutMinutes = (config: StateConfig): number =>
+  config.timeout_minutes ?? DEFAULT_JOB_TIMEOUT_MINUTES;
+
+const describeAdviserChoice = (config: StateConfig): string => {
+  if (isAdviserConfigured(config)) {
+    return `${config.adviser_agent} / ${config.adviser_model}`;
+  }
+  if (config.adviser_agent || config.adviser_model) {
+    return 'incomplete — both agent and model required';
+  }
+  return '(not set)';
+};
+
+const printConfigWarnings = (config: StateConfig): void => {
+  const adviserWarning = adviserConfigWarning(config);
+  if (adviserWarning) {
+    console.warn(`\nWarning: ${adviserWarning}`);
+  }
+  const conflictWarning = defaultAgentModelArgsWarning(config);
+  if (conflictWarning) {
+    console.warn(`\nWarning: ${conflictWarning}`);
+  }
+};
+
+const printConfigDisplay = (config: StateConfig): void => {
+  for (const line of configDisplayLines(config)) {
+    console.log(line);
+  }
+  console.log(
+    '\nTo change: tenet config --agent <name> --agent-model <model> --max-retries <n|unlimited> --timeout <minutes> \\',
+  );
+  console.log(
+    '                         --adviser-agent <claude-code|opencode|codex> --adviser-model <model> \\',
+  );
+  console.log(
+    '                         --claude-args "..." --opencode-args "..." --codex-args "..." \\',
+  );
+  console.log('                         --codex-args-interaction-e2e "..."');
+  console.log(
+    '\nRun `tenet config` in a terminal for the interactive menu, or `tenet config --show` to display only.',
+  );
+  printConfigWarnings(config);
+};
+
+const restartHint = (): void => {
+  console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
+};
+
+/**
+ * Default-agent entry: agent picker -> model picker (same widget chain as init).
+ * Cancel at either step cancels the whole edit — nothing is written.
+ */
+const runDefaultAgentMenu = async (config: StateConfig): Promise<boolean> => {
+  const agent = await promptAgent('Default agent');
+  if (agent === null || !isAdapterKey(agent)) {
+    return false;
+  }
+
+  const model = await pickModelForAgent(agent, {
+    allowUnset: true,
+    initialModel: config.default_agent === agent ? config.default_agent_model : undefined,
+    title: `Model for ${agent}?`,
+  });
+  if (model === null) {
+    return false;
+  }
+
+  config.default_agent = agent;
+  if (model.length === 0) {
+    delete config.default_agent_model;
+  } else {
+    config.default_agent_model = model;
+  }
+  console.log(`Default agent set to: ${agent} (model: ${model.length > 0 ? model : 'CLI default'})`);
+  restartHint();
+  return true;
+};
+
+/** Adviser entry: one chained flow — agent picker then model picker, written together. */
+const runAdviserMenu = async (config: StateConfig): Promise<boolean> => {
+  const selection = await pickAdviserConfig({
+    agent: config.adviser_agent,
+    model: config.adviser_model,
+  });
+  if (selection === null) {
+    return false;
+  }
+
+  config.adviser_agent = selection.agent;
+  config.adviser_model = selection.model;
+  console.log(`Adviser set to: ${selection.agent} / ${selection.model}`);
+  restartHint();
+  return true;
+};
+
+const runMaxRetriesMenu = async (config: StateConfig): Promise<boolean> => {
+  const current = formatMaxRetries(currentMaxRetries(config));
+  const answer = await promptText(
+    `Max retries per job [${current}] (number or "unlimited", empty keeps current): `,
+  );
+  if (answer === null) {
+    return false;
+  }
+  const raw = answer.trim();
+  if (raw.length === 0) {
+    return false;
+  }
+  const isUnlimited = ['unlimited', 'infinite', 'inf'].includes(raw.toLowerCase());
+  if (!isUnlimited && !/^\d+$/.test(raw)) {
+    console.error('Max retries must be a non-negative integer or "unlimited".');
+    return false;
+  }
+  const n = isUnlimited ? UNLIMITED_RETRIES : Number.parseInt(raw, 10);
+  config.max_retries = isUnlimited ? 'unlimited' : n;
+  console.log(`Max retries set to: ${formatMaxRetries(n)}`);
+  return true;
+};
+
+const runTimeoutMenu = async (config: StateConfig): Promise<boolean> => {
+  const current = currentTimeoutMinutes(config);
+  const answer = await promptText(
+    `Job timeout in minutes [${current}] (empty keeps current): `,
+  );
+  if (answer === null) {
+    return false;
+  }
+  const raw = answer.trim();
+  if (raw.length === 0) {
+    return false;
+  }
+  const minutes = parseTimeoutMinutes(raw);
+  if (minutes === null) {
+    console.error('Timeout must be a positive integer (minutes).');
+    return false;
+  }
+  config.timeout_minutes = minutes;
+  console.log(`Job timeout set to: ${minutes} minutes`);
+  return true;
+};
+
+const runAdapterArgsMenu = async (config: StateConfig): Promise<boolean> => {
+  const choice = await selectFromList('Adapter args', [
+    ...ADAPTER_ARGS_CONFIG_KEYS.map((key) => ({
+      label: `${key}: ${config[key] ?? '(none)'}`,
+      value: key,
+    })),
+    { label: 'Back', value: '__back__' },
+  ]);
+  if (choice === null || !isAdapterArgsConfigKey(choice)) {
+    return false;
+  }
+
+  const answer = await promptText(`${choice} [${config[choice] ?? '(none)'}] (empty clears): `);
+  if (answer === null) {
+    return false;
+  }
+  const trimmed = answer.trim();
+  if (trimmed.length === 0) {
+    delete config[choice];
+    console.log(`Cleared ${choice}.`);
+  } else {
+    config[choice] = trimmed;
+    console.log(`${choice} set to: ${trimmed}`);
+  }
+  restartHint();
+  return true;
+};
+
+/**
+ * Interactive config menu. Each completed edit is written immediately and the
+ * menu loops so several settings can be changed in one session; Esc/q (or Done)
+ * exits.
+ */
+const runInteractiveConfigMenu = async (
+  tenetRoot: string,
+  config: StateConfig,
+): Promise<void> => {
+  for (;;) {
+    const choice = await selectFromList('Tenet configuration', [
+      {
+        label: `Default agent: ${config.default_agent ?? '(not set)'} / ${config.default_agent_model ?? 'CLI default'}`,
+        value: 'default_agent',
+      },
+      { label: `Adviser: ${describeAdviserChoice(config)}`, value: 'adviser' },
+      { label: `Max retries: ${formatMaxRetries(currentMaxRetries(config))}`, value: 'max_retries' },
+      { label: `Timeout: ${currentTimeoutMinutes(config)} minutes`, value: 'timeout' },
+      { label: 'Adapter args', value: 'adapter_args' },
+      { label: 'Done', value: 'done' },
+    ]);
+    if (choice === null || choice === 'done') {
+      return;
+    }
+
+    let changed = false;
+    switch (choice) {
+      case 'default_agent':
+        changed = await runDefaultAgentMenu(config);
+        break;
+      case 'adviser':
+        changed = await runAdviserMenu(config);
+        break;
+      case 'max_retries':
+        changed = await runMaxRetriesMenu(config);
+        break;
+      case 'timeout':
+        changed = await runTimeoutMenu(config);
+        break;
+      case 'adapter_args':
+        changed = await runAdapterArgsMenu(config);
+        break;
+      default:
+        break;
+    }
+
+    if (changed) {
+      writeStateConfig(tenetRoot, config);
+      printConfigWarnings(config);
+    }
+  }
+};
+
 const run = async (): Promise<void> => {
   const program = new Command();
 
@@ -209,6 +452,18 @@ const run = async (): Promise<void> => {
     .command('init')
     .argument('[path]', 'Project path', '.')
     .option('--agent <name>', 'Default agent adapter (claude-code, opencode, codex)')
+    .option(
+      '--agent-model <model>',
+      'Default model for jobs dispatched on the default agent (unset = the adapter CLI default; an empty value leaves it unset)',
+    )
+    .option(
+      '--adviser-agent <key>',
+      'Adviser agent for blocking-question escalation (claude-code, opencode, codex); requires --adviser-model',
+    )
+    .option(
+      '--adviser-model <model>',
+      'Adviser model; the adviser is active only when --adviser-agent and --adviser-model are both set',
+    )
     .option('--upgrade', 'Upgrade existing project: migrate DB, overwrite skills and MCP configs, preserve user docs')
     .option(
       '--migrate-legacy',
@@ -218,8 +473,25 @@ const run = async (): Promise<void> => {
     .option('--skip-pre-approval', 'Skip the MCP tool pre-approval flow (do not touch .claude/settings.local.json, opencode.json permissions, .codex/config.toml trust)')
     .option('-y, --yes', 'Assume yes for all interactive prompts (non-interactive init, useful for CI). Does NOT auto-run the destructive --migrate-legacy move.')
     .description('Initialize Tenet project scaffold')
+    .addHelpText(
+      'after',
+      `
+Interactive init asks for the coding agent, then that agent's model, then
+optionally an adviser (agent + model, written together). Pass
+--agent/--agent-model/--adviser-agent/--adviser-model for a fully
+non-interactive setup; with -y all prompts are skipped and missing flags fall
+back to safe defaults (agent unset, adapter CLI default model, no adviser).
+An empty value (e.g. --agent-model "") leaves that setting unset here; to clear
+an existing key later use tenet config --agent-model "".
+Valid adviser agent keys: claude-code, opencode, codex. The adviser is active
+only when both --adviser-agent and --adviser-model are set.
+`,
+    )
     .action(async (targetPath: string, options: {
       agent?: string;
+      agentModel?: string;
+      adviserAgent?: string;
+      adviserModel?: string;
       upgrade?: boolean;
       migrateLegacy?: boolean;
       skipPlaywrightCheck?: boolean;
@@ -277,13 +549,70 @@ const run = async (): Promise<void> => {
         return;
       }
 
+      if (options.adviserAgent !== undefined) {
+        const trimmedAdviserAgent = options.adviserAgent.trim();
+        if (trimmedAdviserAgent.length > 0 && !isAdapterKey(trimmedAdviserAgent)) {
+          console.error(
+            `--adviser-agent must be one of: ${ADAPTER_KEYS.join(', ')} (got "${options.adviserAgent}")`,
+          );
+          process.exit(1);
+        }
+      }
+
       let agent = options.agent;
-      if (!agent && !options.yes) {
-        agent = await promptAgent();
+      let agentModel = options.agentModel;
+      let adviserAgent = options.adviserAgent;
+      let adviserModel = options.adviserModel;
+
+      // Interactive setup needs a terminal; non-TTY stdin (CI, pipes) falls back to
+      // flag-only setup with safe defaults — never prompt on a dead stdin.
+      if (!options.yes && process.stdin.isTTY) {
+        if (!agent) {
+          agent = (await promptAgent()) ?? undefined;
+        }
+
+        // The model menu depends on the adapter, so it chains immediately after
+        // the agent choice. Cancel leaves the model at the CLI default.
+        if (agent !== undefined && agentModel === undefined && isAdapterKey(agent)) {
+          const pickedModel = await pickModelForAgent(agent, {
+            allowUnset: true,
+            title: `Model for ${agent}?`,
+          });
+          if (pickedModel !== null) {
+            agentModel = pickedModel;
+          }
+        }
+
+        // Flags that already provide BOTH adviser keys bypass the offer.
+        const adviserFlagsComplete =
+          options.adviserAgent !== undefined && options.adviserModel !== undefined;
+        if (!adviserFlagsComplete) {
+          const wantsAdviser = await promptYesNo(
+            '\nConfigure an adviser for escalations?',
+            false,
+          );
+          if (wantsAdviser) {
+            const selection = await pickAdviserConfig({
+              agent: adviserAgent,
+              model: adviserModel,
+            });
+            if (selection !== null) {
+              adviserAgent = selection.agent;
+              adviserModel = selection.model;
+            } else {
+              // Esc/q at any step cancels the whole adviser flow: write nothing.
+              adviserAgent = undefined;
+              adviserModel = undefined;
+            }
+          } else {
+            adviserAgent = undefined;
+            adviserModel = undefined;
+          }
+        }
       }
 
       try {
-        initProject(projectPath, { agent });
+        initProject(projectPath, { agent, agentModel, adviserAgent, adviserModel });
       } catch (error) {
         if (error instanceof Error && error.message.includes('.tenet already exists')) {
           console.warn(error.message);
@@ -303,10 +632,17 @@ const run = async (): Promise<void> => {
 
       console.log(`\nInitialized Tenet scaffold at ${path.join(projectPath, '.tenet')}`);
       console.log(`Default agent: ${agent ?? '(unset — run `tenet config --agent <name>`)'}`);
+      if (agentModel !== undefined && agentModel.trim().length > 0) {
+        console.log(`Default agent model: ${agentModel.trim()}`);
+      }
+      if (adviserAgent !== undefined && adviserModel !== undefined) {
+        console.log(`Adviser: ${adviserAgent} / ${adviserModel}`);
+      }
+      printConfigWarnings(readStateConfig(path.join(projectPath, '.tenet')));
       console.log('\nNext steps:');
       console.log('- Run Tenet context bootstrap to replace .tenet/project/*.md placeholders with current project doctrine');
       console.log(`- Start ${agent ?? 'your agent'} in this directory`);
-      console.log('- To change agent later: tenet config --agent <name>');
+      console.log('- To change agent or models later: tenet config');
 
       if (process.stdin.isTTY && !options.yes) {
         await maybeStarNudge(projectPath);
@@ -464,6 +800,19 @@ const run = async (): Promise<void> => {
     .description('View or update Tenet project configuration')
     .option('--project <path>', 'Project path', '.')
     .option('--agent <name>', 'Set default agent (claude-code, opencode, codex)')
+    .option(
+      '--agent-model <model>',
+      'Set the model for jobs dispatched on the default agent (unset = the adapter CLI default). Use "" to clear.',
+    )
+    .option(
+      '--adviser-agent <key>',
+      'Set the adviser agent for blocking-question escalation (claude-code, opencode, codex). Requires --adviser-model. Use "" to clear.',
+    )
+    .option(
+      '--adviser-model <model>',
+      'Set the adviser model (required with --adviser-agent; the adviser is active only when both are set). Use "" to clear.',
+    )
+    .option('--show', 'Display the current configuration and exit (display-only form; value flags are ignored)')
     .option('--max-retries <n|unlimited>', 'Set max retries per job (default: unlimited)')
     .option('--timeout <minutes>', `Set job timeout in minutes (default: ${DEFAULT_JOB_TIMEOUT_MINUTES})`)
     .option(
@@ -490,9 +839,39 @@ const run = async (): Promise<void> => {
       '--codex-args-interaction-e2e <args>',
       'Extra CLI args to pass only to codex interaction-e2e critic subprocesses (e.g. "--dangerously-bypass-approvals-and-sandbox"). Use "" to clear.',
     )
+    .addHelpText(
+      'after',
+      `
+Interactive menu:
+  Running \`tenet config\` with no value flags in a terminal opens the interactive
+  configuration menu. In the selector widget arrows move the highlight, number
+  keys jump the highlight WITHOUT committing, Enter commits, and Esc/q cancels.
+  Outside a terminal the same command prints the current configuration.
+
+Display-only form:
+  tenet config --show
+
+Clearing a value:
+  Pass an empty string, e.g. tenet config --agent-model "" (also --adviser-agent "",
+  --adviser-model "", and every --*-args flag).
+
+Adviser:
+  Valid adviser agent keys: claude-code, opencode, codex. The adviser is active
+  only when BOTH adviser_agent and adviser_model are set; a partial configuration
+  is treated as unset and reported with a warning.
+
+Model precedence:
+  default_agent_model overrides a manual "--model" written into the default
+  agent's *_args; tenet config warns when both are present.
+`,
+    )
     .action(async (options: {
       project: string;
       agent?: string;
+      agentModel?: string;
+      adviserAgent?: string;
+      adviserModel?: string;
+      show?: boolean;
       maxRetries?: string;
       timeout?: string;
       claudeArgs?: string;
@@ -511,13 +890,80 @@ const run = async (): Promise<void> => {
       }
 
       const config = readStateConfig(tenetRoot);
+
+      // --show is the display-only form; value flags are ignored when it is present.
+      if (options.show) {
+        printConfigDisplay(config);
+        return;
+      }
+
+      const hasValueFlag =
+        options.agent !== undefined ||
+        options.agentModel !== undefined ||
+        options.adviserAgent !== undefined ||
+        options.adviserModel !== undefined ||
+        options.maxRetries !== undefined ||
+        options.timeout !== undefined ||
+        options.claudeArgs !== undefined ||
+        options.opencodeArgs !== undefined ||
+        options.codexArgs !== undefined ||
+        options.claudeArgsInteractionE2e !== undefined ||
+        options.opencodeArgsInteractionE2e !== undefined ||
+        options.codexArgsInteractionE2e !== undefined;
+
+      // No value flags: interactive menu in a terminal (both streams — the widget
+      // renders to stdout, so a piped stdout must fall back to the display),
+      // today's display otherwise.
+      if (!hasValueFlag) {
+        if (process.stdin.isTTY && process.stdout.isTTY) {
+          await runInteractiveConfigMenu(tenetRoot, config);
+        } else {
+          printConfigDisplay(config);
+        }
+        return;
+      }
+
       let changed = false;
+      let restartNeeded = false;
 
       if (options.agent) {
         config.default_agent = options.agent;
         changed = true;
         console.log(`Default agent set to: ${options.agent}`);
       }
+
+      const modelFlags = applyAgentModelFlags(config, {
+        agentModel: options.agentModel,
+        adviserAgent: options.adviserAgent,
+        adviserModel: options.adviserModel,
+      });
+      if (modelFlags.error) {
+        console.error(modelFlags.error);
+        process.exit(1);
+      }
+      if (options.agentModel !== undefined) {
+        console.log(
+          config.default_agent_model === undefined
+            ? 'Cleared default_agent_model.'
+            : `default_agent_model set to: ${config.default_agent_model}`,
+        );
+      }
+      if (options.adviserAgent !== undefined) {
+        console.log(
+          config.adviser_agent === undefined
+            ? 'Cleared adviser_agent.'
+            : `adviser_agent set to: ${config.adviser_agent}`,
+        );
+      }
+      if (options.adviserModel !== undefined) {
+        console.log(
+          config.adviser_model === undefined
+            ? 'Cleared adviser_model.'
+            : `adviser_model set to: ${config.adviser_model}`,
+        );
+      }
+      changed = changed || modelFlags.changed;
+      restartNeeded = restartNeeded || modelFlags.restartNeeded;
 
       if (options.maxRetries) {
         const raw = options.maxRetries.trim();
@@ -553,6 +999,7 @@ const run = async (): Promise<void> => {
           console.log(`claude_args set to: ${trimmed}`);
         }
         changed = true;
+        restartNeeded = true;
       }
 
       if (options.opencodeArgs !== undefined) {
@@ -565,6 +1012,7 @@ const run = async (): Promise<void> => {
           console.log(`opencode_args set to: ${trimmed}`);
         }
         changed = true;
+        restartNeeded = true;
       }
 
       if (options.codexArgs !== undefined) {
@@ -577,6 +1025,7 @@ const run = async (): Promise<void> => {
           console.log(`codex_args set to: ${trimmed}`);
         }
         changed = true;
+        restartNeeded = true;
       }
 
       const setScopedArgs = (
@@ -596,6 +1045,7 @@ const run = async (): Promise<void> => {
           console.log(`${key} set to: ${trimmed}`);
         }
         changed = true;
+        restartNeeded = true;
       };
 
       setScopedArgs(options.claudeArgsInteractionE2e, 'claude_args_interaction_e2e');
@@ -604,43 +1054,14 @@ const run = async (): Promise<void> => {
 
       if (changed) {
         writeStateConfig(tenetRoot, config);
-        if (
-          options.claudeArgs !== undefined ||
-          options.opencodeArgs !== undefined ||
-          options.codexArgs !== undefined ||
-          options.claudeArgsInteractionE2e !== undefined ||
-          options.opencodeArgsInteractionE2e !== undefined ||
-          options.codexArgsInteractionE2e !== undefined
-        ) {
+        if (restartNeeded) {
           console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
         }
+        printConfigWarnings(config);
         return;
       }
 
-      const configuredMaxRetries = config.max_retries === undefined
-        ? UNLIMITED_RETRIES
-        : parseMaxRetries(config.max_retries);
-      const configuredTimeout = config.timeout_minutes ?? DEFAULT_JOB_TIMEOUT_MINUTES;
-
-      console.log('Tenet configuration:');
-      console.log(`  default_agent: ${config.default_agent ?? '(not set)'}`);
-      console.log(`  max_retries: ${formatMaxRetries(configuredMaxRetries)} (default: unlimited)`);
-      console.log(`  timeout: ${configuredTimeout} minutes (default: ${DEFAULT_JOB_TIMEOUT_MINUTES})`);
-      console.log(`  claude_args: ${config.claude_args ?? '(none)'}`);
-      console.log(`  opencode_args: ${config.opencode_args ?? '(none)'}`);
-      console.log(`  codex_args: ${config.codex_args ?? '(none)'}`);
-      console.log(`  claude_args_interaction_e2e: ${config.claude_args_interaction_e2e ?? '(none)'}`);
-      console.log(`  opencode_args_interaction_e2e: ${config.opencode_args_interaction_e2e ?? '(none)'}`);
-      console.log(`  codex_args_interaction_e2e: ${config.codex_args_interaction_e2e ?? '(none)'}`);
-      console.log(
-        '\nTo change: tenet config --agent <name> --max-retries <n|unlimited> --timeout <minutes> \\',
-      );
-      console.log(
-        '                         --claude-args "..." --opencode-args "..." --codex-args "..." \\',
-      );
-      console.log(
-        '                         --codex-args-interaction-e2e "..."',
-      );
+      printConfigDisplay(config);
     });
 
   await program.parseAsync(process.argv);

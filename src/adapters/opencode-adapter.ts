@@ -1,6 +1,6 @@
 import spawn from 'cross-spawn';
 import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
-import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
+import { mergeExtraArgs, type AgentAdapter, type AgentInvocation, type AgentResponse } from './base.js';
 
 /**
  * opencode --format json emits a stream of NDJSON events (step_start, tool_use,
@@ -66,8 +66,9 @@ export class OpenCodeAdapter implements AgentAdapter {
     const prompt = invocation.context ? `${invocation.context}\n\n${invocation.prompt}` : invocation.prompt;
 
     const jobExtraArgs = invocation.extraArgs ?? [];
-    // Opencode's global flags (e.g. --model) must come BEFORE the `run` subcommand.
-    const args = [...this.extraArgs, ...jobExtraArgs, 'run', prompt, '--format', 'json'];
+    // Opencode's global flags (e.g. --model) must come BEFORE the `run` subcommand;
+    // a pinned model replaces any manual --model from *_args (mergeExtraArgs).
+    const args = [...mergeExtraArgs(this.extraArgs, jobExtraArgs, invocation.model), 'run', prompt, '--format', 'json'];
     if (invocation.workdir) {
       args.push('--dir', invocation.workdir);
     }

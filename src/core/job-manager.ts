@@ -8,6 +8,7 @@ import {
   hasRetryBudgetRemaining,
   parseMaxRetries,
   parseTimeoutMinutes,
+  type AdviserConfig,
 } from './runtime-config.js';
 import { StateStore } from './state-store.js';
 import { DEFAULT_EVAL_STAGES } from './critic-roster.js';
@@ -65,6 +66,10 @@ type JobManagerConfig = {
   heartbeatTimeoutMs?: number;
   defaultJobTimeoutMs?: number;
   serverId?: string;
+  /** Adviser escalation target — present only when both adviser keys are configured. */
+  adviser?: AdviserConfig;
+  /** Model injected for jobs running on the configured default_agent (unset = CLI default). */
+  defaultAgentModel?: string;
 };
 
 const TERMINAL_STATUSES = new Set<Job['status']>(['completed', 'failed', 'cancelled']);
@@ -94,6 +99,8 @@ export class JobManager {
   private readonly heartbeatTimeoutMs: number;
   private readonly defaultJobTimeoutMs: number;
   private readonly serverId: string;
+  private readonly adviser?: AdviserConfig;
+  private readonly defaultAgentModel?: string;
 
   constructor(stateStore: StateStore, adapterRegistry: AdapterRegistry, config?: JobManagerConfig) {
     this.stateStore = stateStore;
@@ -102,6 +109,8 @@ export class JobManager {
     this.heartbeatTimeoutMs = config?.heartbeatTimeoutMs ?? 30 * 60 * 1000;
     this.defaultJobTimeoutMs = config?.defaultJobTimeoutMs ?? 30_000;
     this.serverId = config?.serverId ?? crypto.randomUUID();
+    this.adviser = config?.adviser;
+    this.defaultAgentModel = config?.defaultAgentModel;
 
     // Reset only stale jobs left "running" by a previous server instance.
     // A different server_id alone is not enough: nested MCP clients can start
@@ -126,10 +135,17 @@ export class JobManager {
     }
 
     const now = Date.now();
+    // Adviser jobs are created with an explicit adviser agent; re-resolving here would
+    // overwrite it with default_agent and silently run the adviser on a different CLI
+    // than its --model was chosen for. Ordinary jobs keep today's resolve-at-dispatch.
+    const dispatchAgentName =
+      job.type === 'adviser'
+        ? job.agentName ?? this.adviser?.agent ?? this.resolveAgentName(job.type)
+        : this.resolveAgentName(job.type);
     // Atomic pending -> running: only one process can win. If another process
     // dispatched it between our read and this update, return the current job
     // instead of double-executing.
-    if (!this.stateStore.markJobRunning(jobId, now, this.resolveAgentName(job.type))) {
+    if (!this.stateStore.markJobRunning(jobId, now, dispatchAgentName)) {
       const current = this.stateStore.getJob(jobId);
       if (!current) {
         throw new Error(`failed to load dispatched job: ${jobId}`);
@@ -176,7 +192,7 @@ export class JobManager {
     return job;
   }
 
-  startJob(type: JobType, params: Record<string, unknown>): Job {
+  startJob(type: JobType, params: Record<string, unknown>, opts?: { agentName?: string }): Job {
     // Ensure every job has a human-readable name
     if (!params.name || typeof params.name !== 'string') {
       const sourceJobId = typeof params.source_job_id === 'string' ? params.source_job_id : undefined;
@@ -195,7 +211,9 @@ export class JobManager {
       type,
       status: 'pending',
       params,
-      agentName: this.resolveAgentName(type),
+      // The explicit agent is only used by adviser dispatch; every other caller
+      // (ad-hoc jobs, critics, retries) keeps resolveAgentName's behavior.
+      agentName: opts?.agentName ?? this.resolveAgentName(type),
       retryCount: 0,
       maxRetries: this.getMaxRetries(),
     });
@@ -221,6 +239,28 @@ export class JobManager {
     }
 
     return created;
+  }
+
+  /** True iff both adviser keys were configured at server startup. */
+  isAdviserConfigured(): boolean {
+    return this.adviser !== undefined;
+  }
+
+  /**
+   * Dispatch an adviser escalation job on the explicitly configured adviser agent
+   * (never resolved from default_agent / agent_override_adviser). The tool layer
+   * checks isAdviserConfigured() first; the throw here is a fail-closed guard.
+   */
+  startAdviserJob(params: Record<string, unknown>): Job {
+    if (!this.adviser) {
+      throw new Error('adviser is not configured (both adviser_agent and adviser_model must be set)');
+    }
+
+    const namedParams = typeof params.name === 'string' && params.name.length > 0
+      ? params
+      : { ...params, name: `adviser-${Date.now().toString(36)}` };
+
+    return this.startJob('adviser', namedParams, { agentName: this.adviser.agent });
   }
 
   checkJobStatus(jobId: string, cursor: string | null): JobWaitResponse {
@@ -739,7 +779,10 @@ export class JobManager {
       : job.type === 'integration_test'
         ? this.withIntegrationTestPreamble(rawPrompt, job)
         : rawPrompt;
-    const context = this.buildWorkerContext(job);
+    // Adviser jobs deliberately get no worker run-context: their edge is full-repo access
+    // plus the explicit path pointers composed into the prompt by tenet_ask_adviser, not
+    // the worker's narrowed (and inlined) compiled context.
+    const context = job.type === 'adviser' ? undefined : this.buildWorkerContext(job);
 
     const maxTurnsRaw = job.params.maxTurns;
     const maxTurns =
@@ -782,6 +825,24 @@ export class JobManager {
         ]
       : undefined;
 
+    // Copy the job-scoped args: getJobExtraArgs returns the parsed config arrays
+    // themselves, so pass a copy rather than the stored values.
+    const extraArgs = [...this.adapterRegistry.getJobExtraArgs(adapterName, job.type)];
+    // A pinned model rides invocation.model (adapters strip any manual --model from
+    // *_args and place theirs — codex rejects duplicate model flags). The adviser
+    // model binds to the configured adviser agent only, so a stray adviser job
+    // dispatched by any other path never re-targets the model at a different CLI.
+    let model: string | undefined;
+    if (job.type === 'adviser') {
+      if (this.adviser && adapterName === this.adviser.agent) {
+        model = this.adviser.model;
+      }
+    } else if (this.defaultAgentModel && adapterName === this.stateStore.getConfig('default_agent')) {
+      // Worker model applies only to jobs actually running on the default agent —
+      // per-type override agents keep their own CLI default unless *_args say otherwise.
+      model = this.defaultAgentModel;
+    }
+
     return {
       prompt,
       context,
@@ -789,7 +850,8 @@ export class JobManager {
       workdir,
       timeoutMs,
       allowedTools,
-      extraArgs: this.adapterRegistry.getJobExtraArgs(adapterName, job.type),
+      extraArgs,
+      model,
     };
   }
 

@@ -3,8 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import {
+  DEFAULT_JOB_TIMEOUT_MINUTES,
+  UNLIMITED_RETRIES,
+  formatMaxRetries,
+  parseMaxRetries,
+} from '../core/runtime-config.js';
 import { StateStore, statePaths } from '../core/state-store.js';
 import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
+import { ADAPTER_KEYS, isAdapterKey, type AdapterKey } from './model-picker.js';
+import { selectFromList } from './select.js';
 import { getPackageVersion } from './version.js';
 
 const REQUIRED_DIRS = [
@@ -41,10 +49,13 @@ const LEGACY_FILES = ['DESIGN.md'];
 
 const ARCHIVE_LEGACY_ROOT = path.join('archive', 'legacy-v1');
 
-const VALID_AGENTS = ['claude-code', 'opencode', 'codex'] as const;
-
 type InitOptions = {
   agent?: string;
+  /** Model passed to jobs dispatched on the default agent (unset = CLI default). */
+  agentModel?: string;
+  /** Adviser agent adapter key; active only together with adviserModel. */
+  adviserAgent?: string;
+  adviserModel?: string;
   upgrade?: boolean;
   /**
    * Opt in to the one-time destructive legacy-document migration on upgrade.
@@ -288,8 +299,18 @@ const ensureTemplateFiles = (tenetRoot: string): void => {
   }
 };
 
-type StateConfig = {
+export type StateConfig = {
   default_agent?: string;
+  /**
+   * Model for jobs dispatched on the default agent. Read at MCP server startup
+   * (not via StateStore's loadFileConfig whitelist) and injected as
+   * ['--model', <value>] in the adapter invocation. Unset = adapter CLI default.
+   */
+  default_agent_model?: string;
+  /** Adviser adapter key (claude-code | opencode | codex). Active only with adviser_model. */
+  adviser_agent?: string;
+  /** Adviser model; both adviser keys are required for the adviser to be active. */
+  adviser_model?: string;
   max_retries?: number | 'unlimited';
   timeout_minutes?: number;
   opencode_args?: string;
@@ -300,6 +321,173 @@ type StateConfig = {
   claude_args_interaction_e2e?: string;
   /** Per-project star-nudge state (see src/cli/star-nudge.ts). */
   star_nudge?: { starredAt?: string };
+};
+
+const ADAPTER_ARGS_KEY: Record<AdapterKey, 'claude_args' | 'opencode_args' | 'codex_args'> = {
+  'claude-code': 'claude_args',
+  opencode: 'opencode_args',
+  codex: 'codex_args',
+};
+
+export type AdapterArgsConfigKey =
+  | 'claude_args'
+  | 'opencode_args'
+  | 'codex_args'
+  | 'claude_args_interaction_e2e'
+  | 'opencode_args_interaction_e2e'
+  | 'codex_args_interaction_e2e';
+
+export const ADAPTER_ARGS_CONFIG_KEYS: AdapterArgsConfigKey[] = [
+  'claude_args',
+  'opencode_args',
+  'codex_args',
+  'claude_args_interaction_e2e',
+  'opencode_args_interaction_e2e',
+  'codex_args_interaction_e2e',
+];
+
+export const isAdapterArgsConfigKey = (value: string): value is AdapterArgsConfigKey =>
+  (ADAPTER_ARGS_CONFIG_KEYS as string[]).includes(value);
+
+const hasNonEmptyValue = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
+
+/**
+ * The adviser is active only when BOTH keys are set — a partially configured
+ * adviser behaves exactly like an unset one (see tenet_ask_adviser).
+ */
+export const isAdviserConfigured = (config: StateConfig): boolean =>
+  hasNonEmptyValue(config.adviser_agent) && hasNonEmptyValue(config.adviser_model);
+
+/**
+ * Warn about a half-configured adviser: one key set means escalation silently
+ * falls back to asking the user, so the user should know why.
+ */
+export const adviserConfigWarning = (config: StateConfig): string | null => {
+  const hasAgent = hasNonEmptyValue(config.adviser_agent);
+  const hasModel = hasNonEmptyValue(config.adviser_model);
+  if (hasAgent === hasModel) {
+    return null;
+  }
+  const present = hasAgent ? 'adviser_agent' : 'adviser_model';
+  const missing = hasAgent ? 'adviser_model' : 'adviser_agent';
+  return `Adviser is inactive: ${present} is set but ${missing} is not. Both keys are required.`;
+};
+
+/**
+ * default_agent_model wins over a hand-written "--model" in the default agent's
+ * *_args (the injection lives in core); surface the conflict instead of silently
+ * running with the model the user did not expect.
+ */
+export const defaultAgentModelArgsWarning = (config: StateConfig): string | null => {
+  if (!hasNonEmptyValue(config.default_agent_model)) {
+    return null;
+  }
+  const agent = config.default_agent?.trim();
+  if (agent === undefined || !isAdapterKey(agent)) {
+    return null;
+  }
+
+  const baseKey = ADAPTER_ARGS_KEY[agent];
+  const scopedKey = `${baseKey}_interaction_e2e` as const;
+  for (const key of [baseKey, scopedKey] as const) {
+    const raw = config[key];
+    if (typeof raw !== 'string') {
+      continue;
+    }
+    const mentionsModel = raw
+      .trim()
+      .split(/\s+/)
+      .some((token) => token === '--model' || token.startsWith('--model='));
+    if (mentionsModel) {
+      return `default_agent_model ("${config.default_agent_model.trim()}") overrides the "--model" set in ${key}; the default_agent_model value wins.`;
+    }
+  }
+  return null;
+};
+
+export type AgentModelFlagUpdates = {
+  agentModel?: string;
+  adviserAgent?: string;
+  adviserModel?: string;
+};
+
+export type AgentModelFlagResult = {
+  changed: boolean;
+  restartNeeded: boolean;
+  /** Set when --adviser-agent was invalid; nothing is applied in that case. */
+  error?: string;
+};
+
+/**
+ * Apply --agent-model / --adviser-agent / --adviser-model to a StateConfig.
+ * Empty string clears the key (the documented convention for every value flag);
+ * an invalid adviser agent key is rejected BEFORE any mutation, so a mixed flag
+ * set never leaves a half-written config behind.
+ *
+ * Pure on purpose: src/cli/index.ts executes the CLI at import time and cannot
+ * be imported by a test, so the flag semantics live here where they are testable.
+ */
+export const applyAgentModelFlags = (
+  config: StateConfig,
+  updates: AgentModelFlagUpdates,
+): AgentModelFlagResult => {
+  const entries = [
+    { flag: '--agent-model', key: 'default_agent_model', value: updates.agentModel },
+    { flag: '--adviser-agent', key: 'adviser_agent', value: updates.adviserAgent },
+    { flag: '--adviser-model', key: 'adviser_model', value: updates.adviserModel },
+  ] as const;
+
+  for (const entry of entries) {
+    if (entry.key === 'adviser_agent' && entry.value !== undefined) {
+      const trimmed = entry.value.trim();
+      if (trimmed.length > 0 && !isAdapterKey(trimmed)) {
+        return {
+          changed: false,
+          restartNeeded: false,
+          error: `${entry.flag} must be one of: ${ADAPTER_KEYS.join(', ')} (got "${entry.value}")`,
+        };
+      }
+    }
+  }
+
+  let changed = false;
+  for (const entry of entries) {
+    if (entry.value === undefined) {
+      continue;
+    }
+    const trimmed = entry.value.trim();
+    if (trimmed.length === 0) {
+      delete config[entry.key];
+    } else {
+      config[entry.key] = trimmed;
+    }
+    changed = true;
+  }
+
+  return { changed, restartNeeded: changed };
+};
+
+/**
+ * Value lines for `tenet config` / `tenet config --show`. Pure data so the
+ * display-only form is unit-testable without a TTY.
+ */
+export const configDisplayLines = (config: StateConfig): string[] => {
+  const maxRetries = config.max_retries === undefined
+    ? UNLIMITED_RETRIES
+    : parseMaxRetries(config.max_retries);
+  const timeoutMinutes = config.timeout_minutes ?? DEFAULT_JOB_TIMEOUT_MINUTES;
+
+  return [
+    'Tenet configuration:',
+    `  default_agent: ${config.default_agent ?? '(not set)'}`,
+    `  default_agent_model: ${config.default_agent_model ?? '(not set — adapter CLI default)'}`,
+    `  adviser_agent: ${config.adviser_agent ?? '(not set)'}`,
+    `  adviser_model: ${config.adviser_model ?? '(not set)'}`,
+    `  max_retries: ${formatMaxRetries(maxRetries)} (default: unlimited)`,
+    `  timeout: ${timeoutMinutes} minutes (default: ${DEFAULT_JOB_TIMEOUT_MINUTES})`,
+    ...ADAPTER_ARGS_CONFIG_KEYS.map((key) => `  ${key}: ${config[key] ?? '(none)'}`),
+  ];
 };
 
 export const writeStateConfig = (tenetRoot: string, config: StateConfig): void => {
@@ -327,52 +515,32 @@ export const promptYesNo = (question: string, defaultYes = true): Promise<boolea
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
     const suffix = defaultYes ? ' [Y/n]: ' : ' [y/N]: ';
+    let settled = false;
+    const settle = (value: boolean): void => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    // A closed/EOF stdin (non-TTY edge) resolves the default instead of hanging forever.
+    rl.on('close', () => settle(defaultYes));
     rl.question(question + suffix, (answer) => {
       rl.close();
       const trimmed = answer.trim().toLowerCase();
       if (trimmed === '') {
-        resolve(defaultYes);
+        settle(defaultYes);
         return;
       }
-      resolve(trimmed === 'y' || trimmed === 'yes');
+      settle(trimmed === 'y' || trimmed === 'yes');
     });
   });
 };
 
-export const promptAgent = (): Promise<string> => {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-
-  return new Promise((resolve) => {
-    console.log('\nWhich coding agent will you use?');
-    VALID_AGENTS.forEach((name, i) => {
-      console.log(`  ${i + 1}) ${name}`);
-    });
-
-    const ask = (): void => {
-      rl.question('\nSelect [1-3]: ', (answer) => {
-        const num = Number.parseInt(answer.trim(), 10);
-        if (num >= 1 && num <= VALID_AGENTS.length) {
-          rl.close();
-          resolve(VALID_AGENTS[num - 1]);
-          return;
-        }
-
-        const byName = answer.trim().toLowerCase();
-        const match = VALID_AGENTS.find((a) => a === byName);
-        if (match) {
-          rl.close();
-          resolve(match);
-          return;
-        }
-
-        console.log('Invalid selection. Enter 1, 2, 3, or the agent name.');
-        ask();
-      });
-    };
-
-    ask();
-  });
-};
+export const promptAgent = (title = 'Which coding agent will you use?'): Promise<string | null> =>
+  selectFromList(
+    title,
+    ADAPTER_KEYS.map((key) => ({ label: key, value: key })),
+  );
 
 const generatedSkillMetadata = (relativeSourcePath: string): string =>
   `<!-- Generated by Tenet ${getPackageVersion()} from ${relativeSourcePath}. ` +
@@ -489,8 +657,21 @@ export function initProject(projectPath: string, options?: InitOptions): void {
   ensurePortableStateFiles(tenetRoot);
   ensureStateDbGitSafety(projectPath);
 
-  if (options?.agent) {
-    writeStateConfig(tenetRoot, { default_agent: options.agent });
+  const stateConfig: StateConfig = {};
+  if (hasNonEmptyValue(options?.agent)) {
+    stateConfig.default_agent = options.agent.trim();
+  }
+  if (hasNonEmptyValue(options?.agentModel)) {
+    stateConfig.default_agent_model = options.agentModel.trim();
+  }
+  if (hasNonEmptyValue(options?.adviserAgent)) {
+    stateConfig.adviser_agent = options.adviserAgent.trim();
+  }
+  if (hasNonEmptyValue(options?.adviserModel)) {
+    stateConfig.adviser_model = options.adviserModel.trim();
+  }
+  if (Object.keys(stateConfig).length > 0) {
+    writeStateConfig(tenetRoot, stateConfig);
   }
 
   copySkillDirs(projectPath);

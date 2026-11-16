@@ -24,6 +24,7 @@ const JOB_TYPES: JobType[] = [
   'integration_test',
   'compile_context',
   'health_check',
+  'adviser',
 ];
 
 const ADAPTER_NAME_TO_KEY = {

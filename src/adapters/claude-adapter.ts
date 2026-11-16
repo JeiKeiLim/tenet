@@ -1,6 +1,6 @@
 import spawn from 'cross-spawn';
 import { DEFAULT_JOB_TIMEOUT_MS } from '../core/runtime-config.js';
-import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
+import { mergeExtraArgs, type AgentAdapter, type AgentInvocation, type AgentResponse } from './base.js';
 
 type ClaudeJsonOutput = {
   result?: unknown;
@@ -50,9 +50,9 @@ export class ClaudeAdapter implements AgentAdapter {
     return new Promise((resolve) => {
       const tools = invocation.allowedTools ?? DEFAULT_ALLOWED_TOOLS;
       // Pass prompt via stdin because --allowedTools is variadic and swallows positional args.
-      const jobExtraArgs = invocation.extraArgs ?? [];
+      const mergedArgs = mergeExtraArgs(this.extraArgs, invocation.extraArgs ?? [], invocation.model);
       // Extra args come first so they can influence mode/model before flags that consume tokens.
-      const args = [...this.extraArgs, ...jobExtraArgs, '--print', '--output-format', 'json', '--allowedTools', ...tools];
+      const args = [...mergedArgs, '--print', '--output-format', 'json', '--allowedTools', ...tools];
 
       const child = spawn(
         'claude',

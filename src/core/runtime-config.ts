@@ -3,6 +3,17 @@ export const DEFAULT_MAX_RETRIES = UNLIMITED_RETRIES;
 export const DEFAULT_JOB_TIMEOUT_MINUTES = 120;
 export const DEFAULT_JOB_TIMEOUT_MS = DEFAULT_JOB_TIMEOUT_MINUTES * 60 * 1000;
 
+/** Resolved adviser settings — present only when both config keys are set. */
+export type AdviserConfig = {
+  agent: string;
+  model: string;
+};
+
+export type AgentModelConfig = {
+  adviser?: AdviserConfig;
+  defaultAgentModel?: string;
+};
+
 const UNLIMITED_RETRY_VALUES = new Set(['unlimited', 'infinite', 'inf']);
 
 export const parseMaxRetries = (value: string | number | null | undefined): number => {
@@ -40,4 +51,34 @@ export const parseTimeoutMinutes = (value: string | number | null | undefined): 
   }
 
   return Math.floor(parsed);
+};
+
+const nonEmptyString = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+/**
+ * Resolve adviser / worker-model settings from the raw `.tenet/.state/config.json`
+ * object at server startup. This deliberately bypasses StateStore's loadFileConfig
+ * whitelist (it only syncs default_agent/max_retries/timeout_minutes, silently
+ * ignoring new keys) — the same server-startup read that supplies the per-adapter
+ * *_args values is the one path that sees these keys.
+ *
+ * The adviser is active only when BOTH keys are set: a partially configured
+ * adviser (one key written via flag) must behave exactly like an unset one.
+ */
+export const parseAgentModelConfig = (
+  config: Record<string, unknown> | null | undefined,
+): AgentModelConfig => {
+  const adviserAgent = nonEmptyString(config?.adviser_agent);
+  const adviserModel = nonEmptyString(config?.adviser_model);
+
+  return {
+    adviser: adviserAgent && adviserModel ? { agent: adviserAgent, model: adviserModel } : undefined,
+    defaultAgentModel: nonEmptyString(config?.default_agent_model),
+  };
 };
