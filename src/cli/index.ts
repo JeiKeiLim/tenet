@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
-import { getPackageVersion } from './version.js';
+import { getPackageVersion, formatVersionReport } from './version.js';
 import {
   ADAPTER_ARGS_CONFIG_KEYS,
   addPlaywrightAgentConfigs,
@@ -443,10 +443,24 @@ const runInteractiveConfigMenu = async (
 const run = async (): Promise<void> => {
   const program = new Command();
 
+  // Custom --version output: after the CLI version, report the installed skill
+  // versions when run inside a Tenet project (cwd only, no parent walk-up).
+  // Must be registered before .version() below — commander emits option events
+  // in registration order, and the listener .version() installs prints the
+  // bare version and exits. Ours runs first and exits before that one.
+  program.on('option:version', () => {
+    process.stdout.write(formatVersionReport());
+    process.exit(0);
+  });
+
   program
     .name('tenet')
     .description('Tenet CLI')
-    .version(getPackageVersion());
+    .version(
+      getPackageVersion(),
+      '-V, --version',
+      'output the CLI version; inside a Tenet project, also the installed skill versions',
+    );
 
   program
     .command('init')
