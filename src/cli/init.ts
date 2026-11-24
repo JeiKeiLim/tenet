@@ -7,7 +7,10 @@ import {
   DEFAULT_JOB_TIMEOUT_MINUTES,
   UNLIMITED_RETRIES,
   formatMaxRetries,
+  parseAgentModelConfig,
   parseMaxRetries,
+  resolveGatePair,
+  type GateKey,
 } from '../core/runtime-config.js';
 import { StateStore, statePaths } from '../core/state-store.js';
 import { TENET_MCP_TOOL_NAMES } from '../mcp/tools/tool-names.js';
@@ -311,6 +314,16 @@ export type StateConfig = {
   adviser_agent?: string;
   /** Adviser model; both adviser keys are required for the adviser to be active. */
   adviser_model?: string;
+  /**
+   * Clarity-validator pair (interview gate). Active only when both keys are set;
+   * read at MCP server startup via parseAgentModelConfig, never via StateStore's
+   * loadFileConfig whitelist. Falls back: readiness pair -> adviser -> default path.
+   */
+  clarity_agent?: string;
+  clarity_model?: string;
+  /** Readiness-validator pair (implementation readiness gate); same contract as clarity. */
+  readiness_agent?: string;
+  readiness_model?: string;
   max_retries?: number | 'unlimited';
   timeout_minutes?: number;
   opencode_args?: string;
@@ -351,6 +364,9 @@ export const isAdapterArgsConfigKey = (value: string): value is AdapterArgsConfi
 
 const hasNonEmptyValue = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
+
+/** The two validator gates, for display/warning iteration. */
+const GATE_KEYS: GateKey[] = ['clarity', 'readiness'];
 
 /**
  * The adviser is active only when BOTH keys are set — a partially configured
@@ -406,24 +422,126 @@ export const defaultAgentModelArgsWarning = (config: StateConfig): string | null
   return null;
 };
 
+/** A validator gate pair is active only when BOTH of its keys are set (adviser contract). */
+export const isGateConfigured = (config: StateConfig, gate: GateKey): boolean =>
+  hasNonEmptyValue(config[`${gate}_agent`]) && hasNonEmptyValue(config[`${gate}_model`]);
+
+/**
+ * The effective gate pair in the live config file: the gate's own pair, the
+ * sibling gate's pair, then the adviser pair — the same chain JobManager walks
+ * at dispatch (both resolve through resolveGatePair). Undefined = the gate
+ * falls through to today's eval path (default agent / adapter CLI default).
+ */
+export const effectiveGatePair = (
+  config: StateConfig,
+  gate: GateKey,
+): { agent: string; model: string } | undefined => {
+  const parsed = parseAgentModelConfig(config);
+  return resolveGatePair(parsed.gateValidators, parsed.adviser, gate);
+};
+
+/**
+ * Warn about a half-configured gate: one key set means the pair is inactive and
+ * the gate silently falls through to the sibling/adviser/default tiers.
+ */
+export const gateConfigWarning = (config: StateConfig, gate: GateKey): string | null => {
+  const hasAgent = hasNonEmptyValue(config[`${gate}_agent`]);
+  const hasModel = hasNonEmptyValue(config[`${gate}_model`]);
+  if (hasAgent === hasModel) {
+    return null;
+  }
+  const present = hasAgent ? `${gate}_agent` : `${gate}_model`;
+  const missing = hasAgent ? `${gate}_model` : `${gate}_agent`;
+  return `${gate} validator is inactive: ${present} is set but ${missing} is not. Both keys are required.`;
+};
+
+/**
+ * True when an args string carries a manual model flag in ANY of the forms the
+ * dispatch layer strips (stripModelFlags: `--model X`, `--model=X`, `-m X`,
+ * `-m=X`) — the warning must fire for every form that would be replaced.
+ */
+const mentionsModelFlag = (raw: string): boolean =>
+  raw
+    .trim()
+    .split(/\s+/)
+    .some(
+      (token) =>
+        token === '--model' ||
+        token.startsWith('--model=') ||
+        token === '-m' ||
+        token.startsWith('-m='),
+    );
+
+/**
+ * A resolved gate pair's model wins over a hand-written model flag in the pair
+ * agent's *_args (the pin replaces manual flags — see stripModelFlags); surface
+ * the conflict instead of silently running with an unexpected model. Only the
+ * pair agent's global args matter here: the only CLI-exposed job-scoped args
+ * are the interaction-e2e ones, and gate jobs are 'eval' jobs.
+ */
+export const gateModelArgsWarning = (config: StateConfig, gate: GateKey): string | null => {
+  const pair = effectiveGatePair(config, gate);
+  if (!pair || !isAdapterKey(pair.agent)) {
+    return null;
+  }
+  const key = ADAPTER_ARGS_KEY[pair.agent];
+  const raw = config[key];
+  if (typeof raw !== 'string' || !mentionsModelFlag(raw)) {
+    return null;
+  }
+  return `${gate} validator model ("${pair.model}") overrides the model flag set in ${key}; the validator's model wins.`;
+};
+
+/**
+ * Menu label for a validator gate: the own pair, a partial pair, the inherited
+ * tier (sibling gate / adviser), or unset. Lives here — not in the interactive
+ * menu — so the sibling-vs-adviser source logic is unit-testable (index.ts
+ * executes the CLI at import time and cannot be imported by a test).
+ */
+export const describeGateChoice = (config: StateConfig, gate: GateKey): string => {
+  if (isGateConfigured(config, gate)) {
+    return `${config[`${gate}_agent`]} / ${config[`${gate}_model`]}`;
+  }
+  if (config[`${gate}_agent`] || config[`${gate}_model`]) {
+    return 'incomplete — both agent and model required';
+  }
+  const pair = effectiveGatePair(config, gate);
+  if (pair) {
+    const sibling = gate === 'clarity' ? 'readiness' : 'clarity';
+    const source = isGateConfigured(config, sibling) ? `${sibling} validator` : 'adviser';
+    return `inherits ${source}: ${pair.agent} / ${pair.model}`;
+  }
+  return '(not set — falls back to the adviser, then the default agent)';
+};
+
+/** Remove both of a gate's keys — the menu's clear path, extracted for the same testability reason. */
+export const clearGatePair = (config: StateConfig, gate: GateKey): void => {
+  delete config[`${gate}_agent`];
+  delete config[`${gate}_model`];
+};
+
 export type AgentModelFlagUpdates = {
   agentModel?: string;
   adviserAgent?: string;
   adviserModel?: string;
+  clarityAgent?: string;
+  clarityModel?: string;
+  readinessAgent?: string;
+  readinessModel?: string;
 };
 
 export type AgentModelFlagResult = {
   changed: boolean;
   restartNeeded: boolean;
-  /** Set when --adviser-agent was invalid; nothing is applied in that case. */
+  /** Set when an agent flag was invalid; nothing is applied in that case. */
   error?: string;
 };
 
 /**
- * Apply --agent-model / --adviser-agent / --adviser-model to a StateConfig.
- * Empty string clears the key (the documented convention for every value flag);
- * an invalid adviser agent key is rejected BEFORE any mutation, so a mixed flag
- * set never leaves a half-written config behind.
+ * Apply the agent/model value flags to a StateConfig. Empty string clears the
+ * key (the documented convention for every value flag); an invalid agent key
+ * (--adviser-agent / --clarity-agent / --readiness-agent) is rejected BEFORE
+ * any mutation, so a mixed flag set never leaves a half-written config behind.
  *
  * Pure on purpose: src/cli/index.ts executes the CLI at import time and cannot
  * be imported by a test, so the flag semantics live here where they are testable.
@@ -436,10 +554,15 @@ export const applyAgentModelFlags = (
     { flag: '--agent-model', key: 'default_agent_model', value: updates.agentModel },
     { flag: '--adviser-agent', key: 'adviser_agent', value: updates.adviserAgent },
     { flag: '--adviser-model', key: 'adviser_model', value: updates.adviserModel },
+    { flag: '--clarity-agent', key: 'clarity_agent', value: updates.clarityAgent },
+    { flag: '--clarity-model', key: 'clarity_model', value: updates.clarityModel },
+    { flag: '--readiness-agent', key: 'readiness_agent', value: updates.readinessAgent },
+    { flag: '--readiness-model', key: 'readiness_model', value: updates.readinessModel },
   ] as const;
 
+  const agentKeys = new Set(['adviser_agent', 'clarity_agent', 'readiness_agent']);
   for (const entry of entries) {
-    if (entry.key === 'adviser_agent' && entry.value !== undefined) {
+    if (agentKeys.has(entry.key) && entry.value !== undefined) {
       const trimmed = entry.value.trim();
       if (trimmed.length > 0 && !isAdapterKey(trimmed)) {
         return {
@@ -469,6 +592,30 @@ export const applyAgentModelFlags = (
 };
 
 /**
+ * Gate-pair lines for `tenet config` / `tenet config --show`: the four raw keys
+ * (same shape as the adviser lines), plus one effective-pair line per gate when
+ * it inherits from the sibling gate or the adviser — the fallback chain is
+ * invisible in the raw keys, so this is where it becomes visible. A gate with
+ * nothing configured anywhere adds no note: it takes today's eval path.
+ */
+const gateDisplayLines = (config: StateConfig): string[] => {
+  const lines: string[] = [];
+  for (const gate of GATE_KEYS) {
+    lines.push(`  ${gate}_agent: ${config[`${gate}_agent`] ?? '(not set)'}`);
+    lines.push(`  ${gate}_model: ${config[`${gate}_model`] ?? '(not set)'}`);
+    if (!isGateConfigured(config, gate)) {
+      const pair = effectiveGatePair(config, gate);
+      if (pair) {
+        const sibling = gate === 'clarity' ? 'readiness' : 'clarity';
+        const source = isGateConfigured(config, sibling) ? `${sibling} validator` : 'adviser';
+        lines.push(`  ${gate} validator: ${pair.agent} / ${pair.model} (inherited from ${source})`);
+      }
+    }
+  }
+  return lines;
+};
+
+/**
  * Value lines for `tenet config` / `tenet config --show`. Pure data so the
  * display-only form is unit-testable without a TTY.
  */
@@ -484,6 +631,7 @@ export const configDisplayLines = (config: StateConfig): string[] => {
     `  default_agent_model: ${config.default_agent_model ?? '(not set — adapter CLI default)'}`,
     `  adviser_agent: ${config.adviser_agent ?? '(not set)'}`,
     `  adviser_model: ${config.adviser_model ?? '(not set)'}`,
+    ...gateDisplayLines(config),
     `  max_retries: ${formatMaxRetries(maxRetries)} (default: unlimited)`,
     `  timeout: ${timeoutMinutes} minutes (default: ${DEFAULT_JOB_TIMEOUT_MINUTES})`,
     ...ADAPTER_ARGS_CONFIG_KEYS.map((key) => `  ${key}: ${config[key] ?? '(none)'}`),

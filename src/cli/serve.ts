@@ -1,8 +1,7 @@
 import crypto from 'node:crypto';
 import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server';
 import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
-import { JobManager } from '../core/job-manager.js';
-import { parseAgentModelConfig } from '../core/runtime-config.js';
+import { JobManager, jobManagerConfigFromStateConfig } from '../core/job-manager.js';
 import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { DbHealthError } from '../core/state-store.js';
 import { StateStore } from '../core/state-store.js';
@@ -42,10 +41,11 @@ export async function startServer(projectPath: string): Promise<void> {
   }
   const stateConfig = readStateConfig(path.join(projectPath, '.tenet'));
   const adapterRegistry = new AdapterRegistry(parseAdapterExtraArgs(stateConfig));
-  const jobManager = new JobManager(stateStore, adapterRegistry, {
-    serverId,
-    ...parseAgentModelConfig(stateConfig),
-  });
+  const jobManager = new JobManager(
+    stateStore,
+    adapterRegistry,
+    jobManagerConfigFromStateConfig(stateConfig, serverId),
+  );
 
   registerAllTools(server, jobManager, stateStore);
 

@@ -4,18 +4,23 @@ import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from '../../adapters/base.js';
 import { AdapterRegistry } from '../../adapters/index.js';
-import { JobManager } from '../../core/job-manager.js';
+import { JobManager, jobManagerConfigFromStateConfig } from '../../core/job-manager.js';
+import type { GateValidatorsConfig } from '../../core/runtime-config.js';
 import { StateStore } from '../../core/state-store.js';
 import { registerTenetValidateReadinessTool } from './tenet-validate-readiness.js';
 
 class MockAdapter implements AgentAdapter {
   public readonly name: string;
+  public calls = 0;
+  public lastInvocation?: AgentInvocation;
 
   constructor(name: string) {
     this.name = name;
   }
 
   async invoke(invocation: AgentInvocation): Promise<AgentResponse> {
+    this.calls += 1;
+    this.lastInvocation = invocation;
     return { success: true, output: `ok:${invocation.prompt.slice(0, 32)}`, durationMs: 0 };
   }
 
@@ -37,26 +42,55 @@ type ReadinessHandler = (args: CapturedHandlerArgs) => Promise<CallToolResult>;
 const tempDirs: string[] = [];
 const stores: StateStore[] = [];
 
-const createHarness = (): {
+type HarnessOptions = {
+  /** JobManager config spread, as both server entry points derive it via jobManagerConfigFromStateConfig. */
+  managerConfig?: {
+    adviser?: { agent: string; model: string };
+    defaultAgentModel?: string;
+    gateValidators?: GateValidatorsConfig;
+    serverId?: string;
+  };
+  /** Extra adapter names to register beyond the default mock-adapter. */
+  extraAdapters?: string[];
+  /** Written to .tenet/.state/config.json before StateStore starts (server-startup shape). */
+  configFile?: Record<string, unknown>;
+};
+
+const createHarness = (
+  options: HarnessOptions = {},
+): {
   store: StateStore;
   manager: JobManager;
   projectPath: string;
   handler: ReadinessHandler;
+  adapters: Map<string, MockAdapter>;
 } => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-readiness-test-'));
   tempDirs.push(tempDir);
+
+  if (options.configFile) {
+    const stateDir = path.join(tempDir, '.tenet', '.state');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'config.json'), JSON.stringify(options.configFile));
+  }
 
   const store = new StateStore(tempDir);
   stores.push(store);
   store.setConfig('agent_override_eval', 'mock-adapter');
 
   const registry = new AdapterRegistry();
-  registry.register(new MockAdapter('mock-adapter'));
+  const adapters = new Map<string, MockAdapter>();
+  for (const name of ['mock-adapter', ...(options.extraAdapters ?? [])]) {
+    const adapter = new MockAdapter(name);
+    adapters.set(name, adapter);
+    registry.register(adapter);
+  }
 
   const manager = new JobManager(store, registry, {
     heartbeatTimeoutMs: 100,
     defaultJobTimeoutMs: 2_000,
     maxParallelAgents: 2,
+    ...(options.managerConfig ?? {}),
   });
 
   let captured: ReadinessHandler | undefined;
@@ -71,7 +105,7 @@ const createHarness = (): {
     throw new Error('handler not captured');
   }
 
-  return { store, manager, projectPath: tempDir, handler: captured };
+  return { store, manager, projectPath: tempDir, handler: captured, adapters };
 };
 
 const writeFile = (projectPath: string, relPath: string, content: string): void => {
@@ -559,5 +593,140 @@ describe('tenet_validate_readiness', () => {
     // readiness model (rubric embedded in the prompt), not deterministically blocked.
     expect(job?.params.prompt).toContain('IMPLEMENTATION READINESS');
     await manager.waitForJob(parsed.job_id as string, null, 5_000);
+  });
+});
+
+describe('tenet_validate_readiness gate model config', () => {
+  const writeDispatchableArtifacts = (projectPath: string): void => {
+    writeFile(projectPath, '.tenet/spec/2026-04-16-oauth.md', '# Spec body for oauth');
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness body');
+  };
+
+  it('dispatches on the readiness pair and reports the effective agent+model (tier 1)', async () => {
+    const { handler, projectPath, store, manager, adapters } = createHarness({
+      managerConfig: { gateValidators: { readiness: { agent: 'mock-gate-readiness', model: 'gpt-6-astra' } } },
+      extraAdapters: ['mock-gate-readiness'],
+    });
+    writeDispatchableArtifacts(projectPath);
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+
+    expect(parsed.validator_agent).toBe('mock-gate-readiness');
+    expect(parsed.validator_model).toBe('gpt-6-astra');
+    const job = store.getJob(parsed.job_id as string);
+    expect(job?.agentName).toBe('mock-gate-readiness');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+    const gate = adapters.get('mock-gate-readiness');
+    expect(gate?.calls).toBe(1);
+    expect(gate?.lastInvocation?.model).toBe('gpt-6-astra');
+    expect(adapters.get('mock-adapter')?.calls).toBe(0);
+  });
+
+  it('inherits the clarity pair when readiness is unset (tier 2)', async () => {
+    const { handler, projectPath, store, manager, adapters } = createHarness({
+      managerConfig: { gateValidators: { clarity: { agent: 'mock-gate-clarity', model: 'opus' } } },
+      extraAdapters: ['mock-gate-clarity'],
+    });
+    writeDispatchableArtifacts(projectPath);
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+
+    expect(parsed.validator_agent).toBe('mock-gate-clarity');
+    expect(parsed.validator_model).toBe('opus');
+    expect(store.getJob(parsed.job_id as string)?.agentName).toBe('mock-gate-clarity');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+    expect(adapters.get('mock-gate-clarity')?.lastInvocation?.model).toBe('opus');
+  });
+
+  it('reports the default tier when no pair resolves anywhere (tiers 4-5)', async () => {
+    const { handler, projectPath, manager, adapters } = createHarness();
+    writeDispatchableArtifacts(projectPath);
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+
+    // The harness's agent_override_eval='mock-adapter' is the resolved tier-4 agent;
+    // no default_agent_model is configured, so the judging model is the CLI default.
+    expect(parsed.validator_agent).toBe('mock-adapter');
+    expect(parsed.validator_model).toBe('CLI default');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+    expect(adapters.get('mock-adapter')?.lastInvocation?.model).toBeUndefined();
+  });
+
+  it('reads the gate pair from .tenet/.state/config.json, not StateStore config (server-startup wiring)', async () => {
+    // Exactly what src/mcp/index.ts / src/cli/serve.ts do at startup: write the
+    // raw JSON file, then derive the JobManager config with the shared helper
+    // both entry points consume (jobManagerConfigFromStateConfig).
+    const configFile = {
+      default_agent: 'mock-adapter',
+      readiness_agent: 'mock-gate-readiness',
+      readiness_model: 'gpt-6-astra',
+    };
+    const { handler, projectPath, store, manager, adapters } = createHarness({
+      configFile,
+      managerConfig: jobManagerConfigFromStateConfig(configFile, 'test-server'),
+      extraAdapters: ['mock-gate-readiness'],
+    });
+    writeDispatchableArtifacts(projectPath);
+
+    // The trap this test pins: StateStore's loadFileConfig whitelist does NOT
+    // carry the gate keys, so seeding via setConfig would prove nothing.
+    expect(store.getConfig('readiness_agent')).toBeNull();
+    expect(store.getConfig('readiness_model')).toBeNull();
+    expect(store.getConfig('default_agent')).toBe('mock-adapter');
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    expect(parsed.validator_agent).toBe('mock-gate-readiness');
+    expect(parsed.validator_model).toBe('gpt-6-astra');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+    expect(adapters.get('mock-gate-readiness')?.lastInvocation?.model).toBe('gpt-6-astra');
+  });
+
+  it('reports its OWN pair when both gates are configured to distinct pairs (tier-1 reporting)', async () => {
+    // With sibling-symmetric configs a swapped getGateDispatchInfo key in the
+    // tool resolves to the same pair and passes every other test — only distinct
+    // pairs pin that the readiness tool reports the readiness pair.
+    const { handler, projectPath, manager, adapters } = createHarness({
+      managerConfig: {
+        gateValidators: {
+          clarity: { agent: 'mock-gate-clarity', model: 'opus' },
+          readiness: { agent: 'mock-gate-readiness', model: 'gpt-6-astra' },
+        },
+      },
+      extraAdapters: ['mock-gate-clarity', 'mock-gate-readiness'],
+    });
+    writeDispatchableArtifacts(projectPath);
+
+    const parsed = parseResult(await handler({ feature: 'oauth' }));
+    expect(parsed.validator_agent).toBe('mock-gate-readiness');
+    expect(parsed.validator_model).toBe('gpt-6-astra');
+
+    await manager.waitForJob(parsed.job_id as string, null, 5_000);
+    expect(adapters.get('mock-gate-readiness')?.calls).toBe(1);
+    expect(adapters.get('mock-gate-clarity')?.calls).toBe(0);
+  });
+
+  it('keeps the deterministic preflight response unchanged (no validator fields)', async () => {
+    const { handler, projectPath } = createHarness();
+    // Agile spec front matter without the Slice plan section: fails before dispatch.
+    writeFile(
+      projectPath,
+      '.tenet/spec/2026-04-16-oauth.md',
+      ['---', 'delivery_mode: agile', '---', '', '# Spec'].join('\n'),
+    );
+    writeFile(projectPath, '.tenet/harness/current.md', '# Harness');
+
+    const result = await handler({ feature: 'oauth' });
+    const parsed = parseResult(result);
+    expect(parsed.message).toContain('failed before dispatch');
+    expect(parsed.validator_agent).toBeUndefined();
+    expect(parsed.validator_model).toBeUndefined();
   });
 });

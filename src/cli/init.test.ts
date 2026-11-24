@@ -9,12 +9,18 @@ import {
   addPlaywrightToOpenCodeConfig,
   adviserConfigWarning,
   applyAgentModelFlags,
+  clearGatePair,
   configDisplayLines,
   defaultAgentModelArgsWarning,
+  describeGateChoice,
   detectTrackedStateFiles,
+  effectiveGatePair,
   ensureRootGitignore,
+  gateConfigWarning,
+  gateModelArgsWarning,
   initProject,
   isAdviserConfigured,
+  isGateConfigured,
   mergeClaudePlaywrightSettings,
   mergeClaudeLocalSettings,
   mergeCodexProjectTrust,
@@ -1025,6 +1031,226 @@ describe('agent/model config', () => {
   });
 });
 
+describe('validator gate config', () => {
+  it('isGateConfigured requires BOTH keys per gate (partial config is inactive)', () => {
+    expect(isGateConfigured({}, 'clarity')).toBe(false);
+    expect(isGateConfigured({ clarity_agent: 'claude-code' }, 'clarity')).toBe(false);
+    expect(isGateConfigured({ clarity_model: 'opus' }, 'clarity')).toBe(false);
+    expect(isGateConfigured({ clarity_agent: 'claude-code', clarity_model: 'opus' }, 'clarity')).toBe(true);
+    // Gates collapse independently.
+    expect(
+      isGateConfigured({ readiness_agent: 'codex', readiness_model: 'gpt-6-astra' }, 'clarity'),
+    ).toBe(false);
+  });
+
+  it('gateConfigWarning fires only for a partially configured gate', () => {
+    expect(gateConfigWarning({}, 'clarity')).toBeNull();
+    expect(
+      gateConfigWarning({ clarity_agent: 'claude-code', clarity_model: 'opus' }, 'clarity'),
+    ).toBeNull();
+
+    const missingModel = gateConfigWarning({ clarity_agent: 'claude-code' }, 'clarity');
+    expect(missingModel).toContain('clarity_model');
+    expect(missingModel).toContain('inactive');
+
+    const missingAgent = gateConfigWarning({ readiness_model: 'opus' }, 'readiness');
+    expect(missingAgent).toContain('readiness_agent');
+    expect(missingAgent).toContain('inactive');
+  });
+
+  it('effectiveGatePair walks own pair -> sibling pair -> adviser pair -> undefined', () => {
+    // Own pair.
+    expect(
+      effectiveGatePair({ clarity_agent: 'claude-code', clarity_model: 'opus' }, 'clarity'),
+    ).toEqual({ agent: 'claude-code', model: 'opus' });
+
+    // Sibling pair.
+    expect(
+      effectiveGatePair({ readiness_agent: 'codex', readiness_model: 'gpt-6-astra' }, 'clarity'),
+    ).toEqual({ agent: 'codex', model: 'gpt-6-astra' });
+    expect(
+      effectiveGatePair({ clarity_agent: 'claude-code', clarity_model: 'opus' }, 'readiness'),
+    ).toEqual({ agent: 'claude-code', model: 'opus' });
+
+    // Adviser pair.
+    expect(
+      effectiveGatePair({ adviser_agent: 'codex', adviser_model: 'gpt-6-astra' }, 'clarity'),
+    ).toEqual({ agent: 'codex', model: 'gpt-6-astra' });
+
+    // A partial pair is unset at its own tier — falls through to the adviser.
+    expect(
+      effectiveGatePair(
+        { clarity_agent: 'claude-code', adviser_agent: 'codex', adviser_model: 'gpt-6-astra' },
+        'clarity',
+      ),
+    ).toEqual({ agent: 'codex', model: 'gpt-6-astra' });
+
+    // Nothing configured anywhere.
+    expect(effectiveGatePair({}, 'readiness')).toBeUndefined();
+  });
+
+  it('gateModelArgsWarning flags a --model in the resolved pair agent args', () => {
+    // Own pair.
+    const own = gateModelArgsWarning(
+      {
+        clarity_agent: 'claude-code',
+        clarity_model: 'opus',
+        claude_args: '--allowedTools Bash --model sonnet',
+      },
+      'clarity',
+    );
+    expect(own).toContain('clarity validator model');
+    expect(own).toContain('claude_args');
+
+    // Inherited tier (adviser) resolves the pair, so the adviser agent args are checked.
+    const inherited = gateModelArgsWarning(
+      {
+        adviser_agent: 'codex',
+        adviser_model: 'gpt-6-astra',
+        codex_args: '--model manual',
+      },
+      'readiness',
+    );
+    expect(inherited).toContain('codex_args');
+
+    // No conflict / no pair / wrong agent args: silent.
+    expect(
+      gateModelArgsWarning({ clarity_agent: 'claude-code', clarity_model: 'opus' }, 'clarity'),
+    ).toBeNull();
+    expect(gateModelArgsWarning({ claude_args: '--model opus' }, 'clarity')).toBeNull();
+    expect(
+      gateModelArgsWarning(
+        { clarity_agent: 'claude-code', clarity_model: 'opus', codex_args: '--model manual' },
+        'clarity',
+      ),
+    ).toBeNull();
+  });
+
+  it('writeStateConfig/readStateConfig round-trip the gate keys', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(tenetRoot, { recursive: true });
+
+    writeStateConfig(tenetRoot, {
+      clarity_agent: 'claude-code',
+      clarity_model: 'opus',
+      readiness_agent: 'codex',
+      readiness_model: 'gpt-6-astra',
+    });
+
+    expect(readStateConfig(tenetRoot)).toEqual({
+      clarity_agent: 'claude-code',
+      clarity_model: 'opus',
+      readiness_agent: 'codex',
+      readiness_model: 'gpt-6-astra',
+    });
+  });
+
+  it('gateModelArgsWarning catches every manual model form dispatch strips (--model, --model=, -m, -m=)', () => {
+    // AC #5 names "--model/-m": stripModelFlags removes all four forms, so the
+    // warning must fire for all four ('-m' is a real `codex exec` model flag).
+    const pair = { clarity_agent: 'codex', clarity_model: 'gpt-6-astra' } as StateConfig;
+    expect(gateModelArgsWarning({ ...pair, codex_args: '--model gpt-5.1-codex' }, 'clarity')).toContain('codex_args');
+    expect(gateModelArgsWarning({ ...pair, codex_args: '--model=gpt-5.1-codex' }, 'clarity')).toContain('codex_args');
+    expect(gateModelArgsWarning({ ...pair, codex_args: '-m gpt-5.1-codex' }, 'clarity')).toContain('codex_args');
+    expect(gateModelArgsWarning({ ...pair, codex_args: '-m=gpt-5.1-codex' }, 'clarity')).toContain('codex_args');
+    expect(gateModelArgsWarning({ ...pair, codex_args: '--verbose' }, 'clarity')).toBeNull();
+    // A "-m" substring inside an unrelated flag is not a model flag.
+    expect(gateModelArgsWarning({ ...pair, codex_args: '--profile-mini' }, 'clarity')).toBeNull();
+  });
+
+  it('describeGateChoice labels own pair, partial, inherited, and unset states', () => {
+    expect(describeGateChoice({ clarity_agent: 'claude-code', clarity_model: 'opus' }, 'clarity')).toBe(
+      'claude-code / opus',
+    );
+    expect(describeGateChoice({ clarity_agent: 'claude-code' }, 'clarity')).toBe(
+      'incomplete — both agent and model required',
+    );
+    expect(
+      describeGateChoice({ readiness_agent: 'codex', readiness_model: 'gpt-6-astra' }, 'clarity'),
+    ).toBe('inherits readiness validator: codex / gpt-6-astra');
+    expect(describeGateChoice({ adviser_agent: 'codex', adviser_model: 'gpt-6-astra' }, 'readiness')).toBe(
+      'inherits adviser: codex / gpt-6-astra',
+    );
+    expect(describeGateChoice({}, 'readiness')).toBe(
+      '(not set — falls back to the adviser, then the default agent)',
+    );
+  });
+
+  it('clearGatePair removes both keys of the gate and nothing else', () => {
+    const config: StateConfig = {
+      clarity_agent: 'claude-code',
+      clarity_model: 'opus',
+      readiness_agent: 'codex',
+      adviser_model: 'gpt-6-astra',
+    };
+    clearGatePair(config, 'clarity');
+    expect(config).toEqual({ readiness_agent: 'codex', adviser_model: 'gpt-6-astra' });
+
+    // Clearing an already-unset pair is a no-op, not a crash.
+    clearGatePair(config, 'readiness');
+    expect(config).toEqual({ adviser_model: 'gpt-6-astra' });
+  });
+});
+
+describe('tenet config gate flag semantics', () => {
+  it('applyAgentModelFlags sets both gate pairs and clears with empty strings', () => {
+    const config: StateConfig = {};
+    const result = applyAgentModelFlags(config, {
+      clarityAgent: 'claude-code',
+      clarityModel: 'opus',
+      readinessAgent: 'codex',
+      readinessModel: 'gpt-6-astra',
+    });
+
+    expect(result).toEqual({ changed: true, restartNeeded: true });
+    expect(config).toEqual({
+      clarity_agent: 'claude-code',
+      clarity_model: 'opus',
+      readiness_agent: 'codex',
+      readiness_model: 'gpt-6-astra',
+    });
+    expect(isGateConfigured(config, 'clarity')).toBe(true);
+    expect(isGateConfigured(config, 'readiness')).toBe(true);
+
+    // Clearing one key of a pair leaves it inactive (both-keys contract).
+    applyAgentModelFlags(config, { clarityModel: '' });
+    expect(config.clarity_model).toBeUndefined();
+    expect(isGateConfigured(config, 'clarity')).toBe(false);
+    expect(gateConfigWarning(config, 'clarity')).toContain('clarity_model');
+
+    applyAgentModelFlags(config, { readinessAgent: '  ' });
+    expect(config.readiness_agent).toBeUndefined();
+  });
+
+  it('rejects an invalid gate agent before mutating anything', () => {
+    const config: StateConfig = { default_agent_model: 'sonnet' };
+    const result = applyAgentModelFlags(config, {
+      clarityAgent: 'claude', // registry key is claude-code, not claude
+      clarityModel: 'opus',
+      readinessModel: 'gpt-6-astra',
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.error).toContain('--clarity-agent must be one of: claude-code, opencode, codex');
+    expect(config).toEqual({ default_agent_model: 'sonnet' });
+
+    const readinessResult = applyAgentModelFlags(config, { readinessAgent: 'claude' });
+    expect(readinessResult.error).toContain(
+      '--readiness-agent must be one of: claude-code, opencode, codex',
+    );
+    expect(config).toEqual({ default_agent_model: 'sonnet' });
+  });
+
+  it('trims gate flag values before writing them', () => {
+    const config: StateConfig = {};
+    applyAgentModelFlags(config, { clarityAgent: ' opencode ', clarityModel: '  alpha  ' });
+
+    expect(config.clarity_agent).toBe('opencode');
+    expect(config.clarity_model).toBe('alpha');
+  });
+});
+
 describe('model picker catalogs', () => {
   it('parseCodexModelCatalog keeps only visibility="list" entries', () => {
     const raw = JSON.stringify({
@@ -1168,5 +1394,49 @@ describe('tenet config --show display', () => {
     expect(lines).toContain('  adviser_model: (not set)');
     expect(lines).toContain('  max_retries: unlimited (default: unlimited)');
     expect(lines).toContain('  timeout: 120 minutes (default: 120)');
+  });
+
+  it('shows the gate keys and their raw pair values', () => {
+    const lines = configDisplayLines({
+      clarity_agent: 'claude-code',
+      clarity_model: 'opus',
+    });
+
+    expect(lines).toContain('  clarity_agent: claude-code');
+    expect(lines).toContain('  clarity_model: opus');
+    expect(lines).toContain('  readiness_agent: (not set)');
+    expect(lines).toContain('  readiness_model: (not set)');
+  });
+
+  it('surfaces the inherited fallback tier when the gate own pair is unset', () => {
+    // Sibling inheritance.
+    const siblingLines = configDisplayLines({
+      readiness_agent: 'codex',
+      readiness_model: 'gpt-6-astra',
+    });
+    expect(siblingLines).toContain(
+      '  clarity validator: codex / gpt-6-astra (inherited from readiness validator)',
+    );
+    // Readiness itself shows its own pair: no effective note for it.
+    expect(siblingLines.some((line) => line.startsWith('  readiness validator:'))).toBe(false);
+
+    // Adviser inheritance (both gates).
+    const adviserLines = configDisplayLines({
+      adviser_agent: 'codex',
+      adviser_model: 'gpt-6-astra',
+    });
+    expect(adviserLines).toContain(
+      '  clarity validator: codex / gpt-6-astra (inherited from adviser)',
+    );
+    expect(adviserLines).toContain(
+      '  readiness validator: codex / gpt-6-astra (inherited from adviser)',
+    );
+  });
+
+  it('adds no inherited note when nothing is configured anywhere', () => {
+    const lines = configDisplayLines({});
+    expect(lines).toContain('  clarity_agent: (not set)');
+    expect(lines).toContain('  readiness_model: (not set)');
+    expect(lines.some((line) => line.includes('inherited'))).toBe(false);
   });
 });

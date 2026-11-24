@@ -5,12 +5,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server';
 import { registerAllTools } from './tools/index.js';
-import { JobManager } from '../core/job-manager.js';
 import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { DbHealthError } from '../core/state-store.js';
 import { StateStore } from '../core/state-store.js';
 import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
-import { parseAgentModelConfig } from '../core/runtime-config.js';
+import { JobManager, jobManagerConfigFromStateConfig } from '../core/job-manager.js';
 import { getPackageVersion } from '../cli/version.js';
 
 const PROJECT_PATH = process.env.TENET_PROJECT_PATH || process.cwd();
@@ -55,10 +54,11 @@ try {
 }
 const rawStateConfig = loadRawStateConfig(PROJECT_PATH);
 const adapterRegistry = new AdapterRegistry(parseAdapterExtraArgs(rawStateConfig));
-const jobManager = new JobManager(stateStore, adapterRegistry, {
-  serverId,
-  ...parseAgentModelConfig(rawStateConfig),
-});
+const jobManager = new JobManager(
+  stateStore,
+  adapterRegistry,
+  jobManagerConfigFromStateConfig(rawStateConfig, serverId),
+);
 
 registerAllTools(server, jobManager, stateStore);
 

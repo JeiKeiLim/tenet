@@ -6,9 +6,13 @@ import type { AgentAdapter, AgentInvocation } from '../adapters/base.js';
 import {
   formatMaxRetries,
   hasRetryBudgetRemaining,
+  parseAgentModelConfig,
   parseMaxRetries,
   parseTimeoutMinutes,
+  resolveGatePair,
   type AdviserConfig,
+  type GateKey,
+  type GateValidatorsConfig,
 } from './runtime-config.js';
 import { StateStore } from './state-store.js';
 import { DEFAULT_EVAL_STAGES } from './critic-roster.js';
@@ -61,7 +65,7 @@ const reportOnlyScopeLines = (jobId: string): string[] => [
   'Do NOT edit files yourself. Do NOT silently work around the bug. Do NOT abandon the report.',
 ];
 
-type JobManagerConfig = {
+export type JobManagerConfig = {
   maxParallelAgents?: number;
   heartbeatTimeoutMs?: number;
   defaultJobTimeoutMs?: number;
@@ -70,6 +74,43 @@ type JobManagerConfig = {
   adviser?: AdviserConfig;
   /** Model injected for jobs running on the configured default_agent (unset = CLI default). */
   defaultAgentModel?: string;
+  /**
+   * Per-gate validator pairs (interview clarity / implementation readiness),
+   * resolved from config.json at server startup — see parseAgentModelConfig.
+   * Gates fall through own pair -> sibling pair -> adviser pair, then today's
+   * eval path; see resolveGatePair and GATE_EVAL_TYPES.
+   */
+  gateValidators?: GateValidatorsConfig;
+};
+
+/**
+ * The JobManager config both server entry points (src/mcp/index.ts and
+ * src/cli/serve.ts) build at startup: the server id plus every agent/model
+ * surface parsed from the raw config.json (file-read — never the StateStore
+ * loadFileConfig whitelist, which silently drops all of these keys).
+ *
+ * One factory so the two entry points cannot drift: a field added to
+ * parseAgentModelConfig's return type flows here without an entry-point edit,
+ * and an entry point that stops consuming the helper is a loud refactor
+ * instead of a silently dropped spread. Unit-tested directly — no test can
+ * import either entry point (both boot the MCP server at module scope).
+ */
+export const jobManagerConfigFromStateConfig = (
+  rawStateConfig: Record<string, unknown> | null | undefined,
+  serverId: string,
+): JobManagerConfig => ({ serverId, ...parseAgentModelConfig(rawStateConfig) });
+
+/** Which agent+model will judge a validation gate, and which tier resolved it. */
+export type GateDispatchInfo = {
+  /** Executing agent — tiers 1-3 force this agent at every dispatch point. */
+  agent: string;
+  /** Pinned model (undefined = the adapter's CLI default). */
+  model?: string;
+  /**
+   * The tier that resolved: the gate's own pair, the sibling gate's pair, the
+   * adviser pair, or today's default eval path.
+   */
+  tier: 'gate' | 'sibling' | 'adviser' | 'default';
 };
 
 const TERMINAL_STATUSES = new Set<Job['status']>(['completed', 'failed', 'cancelled']);
@@ -101,6 +142,7 @@ export class JobManager {
   private readonly serverId: string;
   private readonly adviser?: AdviserConfig;
   private readonly defaultAgentModel?: string;
+  private readonly gateValidators?: GateValidatorsConfig;
 
   constructor(stateStore: StateStore, adapterRegistry: AdapterRegistry, config?: JobManagerConfig) {
     this.stateStore = stateStore;
@@ -111,6 +153,7 @@ export class JobManager {
     this.serverId = config?.serverId ?? crypto.randomUUID();
     this.adviser = config?.adviser;
     this.defaultAgentModel = config?.defaultAgentModel;
+    this.gateValidators = config?.gateValidators;
 
     // Reset only stale jobs left "running" by a previous server instance.
     // A different server_id alone is not enough: nested MCP clients can start
@@ -137,11 +180,15 @@ export class JobManager {
     const now = Date.now();
     // Adviser jobs are created with an explicit adviser agent; re-resolving here would
     // overwrite it with default_agent and silently run the adviser on a different CLI
-    // than its --model was chosen for. Ordinary jobs keep today's resolve-at-dispatch.
+    // than its --model was chosen for. Validator gates share job type 'eval' with
+    // critics, so their chain must be re-checked here too — without this, a retry
+    // (retryJob -> dispatchJob) would overwrite the stored gate agent with
+    // resolveAgentName('eval') and silently drop the gate pair. Ordinary jobs keep
+    // today's resolve-at-dispatch.
     const dispatchAgentName =
       job.type === 'adviser'
         ? job.agentName ?? this.adviser?.agent ?? this.resolveAgentName(job.type)
-        : this.resolveAgentName(job.type);
+        : this.effectiveGateAgent(job.type, job.params) ?? this.resolveAgentName(job.type);
     // Atomic pending -> running: only one process can win. If another process
     // dispatched it between our read and this update, return the current job
     // instead of double-executing.
@@ -183,7 +230,10 @@ export class JobManager {
       type,
       status: 'pending',
       params,
-      agentName: this.resolveAgentName(type),
+      // Validator gate jobs (the tools' deterministic preflight creations) stamp
+      // the effective gate agent for display consistency even though they never
+      // dispatch; every other type keeps resolveAgentName's behavior.
+      agentName: this.effectiveGateAgent(type, params) ?? this.resolveAgentName(type),
       retryCount: 0,
       maxRetries: this.getMaxRetries(),
       parentJobId,
@@ -211,9 +261,11 @@ export class JobManager {
       type,
       status: 'pending',
       params,
-      // The explicit agent is only used by adviser dispatch; every other caller
-      // (ad-hoc jobs, critics, retries) keeps resolveAgentName's behavior.
-      agentName: opts?.agentName ?? this.resolveAgentName(type),
+      // The explicit agent is only used by adviser dispatch; validator gates
+      // resolve their pair from params.eval_type (see effectiveGateAgent); every
+      // other caller (ad-hoc jobs, critics, retries) keeps resolveAgentName.
+      agentName:
+        opts?.agentName ?? this.effectiveGateAgent(type, params) ?? this.resolveAgentName(type),
       retryCount: 0,
       maxRetries: this.getMaxRetries(),
     });
@@ -244,6 +296,47 @@ export class JobManager {
   /** True iff both adviser keys were configured at server startup. */
   isAdviserConfigured(): boolean {
     return this.adviser !== undefined;
+  }
+
+  /**
+   * Resolve which agent+model will judge a validation gate, and which tier
+   * resolved it: the gate's own pair, the sibling gate's pair, the adviser
+   * pair, or today's default eval path (agent_override_eval ?? default_agent,
+   * with default_agent_model pinned when that path lands on the default agent).
+   * The validator tools report this in their dispatch responses — nothing else
+   * records the judging model anywhere.
+   *
+   * Returns undefined only when no agent resolves at all (the dispatch itself
+   * would fail with the no-agent stub).
+   */
+  getGateDispatchInfo(evalType: unknown): GateDispatchInfo | undefined {
+    const gate = this.gateKeyForEvalType(evalType);
+    if (gate === undefined) {
+      return undefined;
+    }
+
+    const own = this.gateValidators?.[gate];
+    if (own) {
+      return { agent: own.agent, model: own.model, tier: 'gate' };
+    }
+    // Mirrors resolveGatePair tier-for-tier; keep the two walks in sync.
+    const sibling = this.gateValidators?.[gate === 'clarity' ? 'readiness' : 'clarity'];
+    if (sibling) {
+      return { agent: sibling.agent, model: sibling.model, tier: 'sibling' };
+    }
+    if (this.adviser) {
+      return { agent: this.adviser.agent, model: this.adviser.model, tier: 'adviser' };
+    }
+
+    const agent = this.resolveAgentName('eval');
+    if (!agent) {
+      return undefined;
+    }
+    const model =
+      this.defaultAgentModel && agent === this.stateStore.getConfig('default_agent')
+        ? this.defaultAgentModel
+        : undefined;
+    return { agent, model, tier: 'default' };
   }
 
   /**
@@ -529,6 +622,48 @@ export class JobManager {
     }
 
     return this.stateStore.getConfig('default_agent') ?? undefined;
+  }
+
+  /** The eval_type values that mark a job as one of the two interview validation gates. */
+  private static readonly GATE_EVAL_TYPES: ReadonlySet<string> = new Set([
+    'clarity_validation',
+    'readiness_validation',
+  ]);
+
+  /**
+   * Map a validator eval_type to its gate key. The test critic shares job type
+   * 'eval' but carries eval_stage (never eval_type), so keying on eval_type
+   * isolates the gates from critics, interaction_e2e jobs, and ad-hoc evals.
+   */
+  private gateKeyForEvalType(evalType: unknown): GateKey | undefined {
+    if (typeof evalType !== 'string' || !JobManager.GATE_EVAL_TYPES.has(evalType)) {
+      return undefined;
+    }
+    return evalType === 'clarity_validation' ? 'clarity' : 'readiness';
+  }
+
+  /**
+   * The effective gate pair for a job (own pair -> sibling pair -> adviser
+   * pair), or undefined when the job is not a gate job or no tier resolves.
+   */
+  private effectiveGatePairForJob(job: Pick<Job, 'type' | 'params'>): { agent: string; model: string } | undefined {
+    if (job.type !== 'eval') {
+      return undefined;
+    }
+    const gate = this.gateKeyForEvalType(job.params.eval_type);
+    if (gate === undefined) {
+      return undefined;
+    }
+    return resolveGatePair(this.gateValidators, this.adviser, gate);
+  }
+
+  /**
+   * The agent a validator gate job must run on (the effective pair's agent),
+   * or undefined so the caller falls through to resolveAgentName. Checked at
+   * every agent-resolution point so gate routing survives retries.
+   */
+  private effectiveGateAgent(type: JobType, params: Record<string, unknown>): string | undefined {
+    return this.effectiveGatePairForJob({ type, params })?.agent;
   }
 
   private async executeJob(jobId: string): Promise<void> {
@@ -829,18 +964,28 @@ export class JobManager {
     // themselves, so pass a copy rather than the stored values.
     const extraArgs = [...this.adapterRegistry.getJobExtraArgs(adapterName, job.type)];
     // A pinned model rides invocation.model (adapters strip any manual --model from
-    // *_args and place theirs — codex rejects duplicate model flags). The adviser
-    // model binds to the configured adviser agent only, so a stray adviser job
+    // *_args and place theirs — codex rejects duplicate model flags). Adviser and
+    // validator-gate models bind to their configured agent only, so a stray job
     // dispatched by any other path never re-targets the model at a different CLI.
     let model: string | undefined;
     if (job.type === 'adviser') {
       if (this.adviser && adapterName === this.adviser.agent) {
         model = this.adviser.model;
       }
-    } else if (this.defaultAgentModel && adapterName === this.stateStore.getConfig('default_agent')) {
-      // Worker model applies only to jobs actually running on the default agent —
-      // per-type override agents keep their own CLI default unless *_args say otherwise.
-      model = this.defaultAgentModel;
+    } else {
+      // Validator gates: the effective pair's model wins when it resolved (it
+      // also beats default_agent_model when the pair's agent IS the default
+      // agent — branch order decides); no pair resolved = today's path untouched.
+      const gatePair = this.effectiveGatePairForJob(job);
+      if (gatePair) {
+        if (adapterName === gatePair.agent) {
+          model = gatePair.model;
+        }
+      } else if (this.defaultAgentModel && adapterName === this.stateStore.getConfig('default_agent')) {
+        // Worker model applies only to jobs actually running on the default agent —
+        // per-type override agents keep their own CLI default unless *_args say otherwise.
+        model = this.defaultAgentModel;
+      }
     }
 
     return {

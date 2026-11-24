@@ -482,12 +482,18 @@ export const registerTenetValidateReadinessTool = (
         artifact_paths: artifactPaths,
       });
 
+      // Report which agent+model will judge the gate (whichever tier resolved:
+      // the readiness pair, the clarity pair, the adviser, or the default path).
+      // The orchestrator journals gate results; without this field nothing
+      // records the judging model anywhere.
+      const gate = jobManager.getGateDispatchInfo('readiness_validation');
       return jsonResult({
         job_id: job.id,
         message:
           'Readiness validation dispatched. Use tenet_job_wait + tenet_job_result to get the verdict.',
         artifact_paths: artifactPaths,
         ...(warning ? { warning } : {}),
+        ...(gate ? { validator_agent: gate.agent, validator_model: gate.model ?? 'CLI default' } : {}),
       });
     },
   );

@@ -235,9 +235,15 @@ export const registerTenetValidateClarityTool = (
         eval_type: 'clarity_validation',
       });
 
+      // Report which agent+model will judge the gate (whichever tier resolved:
+      // the clarity pair, the readiness pair, the adviser, or the default path).
+      // The orchestrator journals gate results; without this field nothing
+      // records the judging model anywhere.
+      const gate = jobManager.getGateDispatchInfo('clarity_validation');
       return jsonResult({
         job_id: job.id,
         message: 'Clarity validation dispatched. Use tenet_job_wait + tenet_job_result to get the score.',
+        ...(gate ? { validator_agent: gate.agent, validator_model: gate.model ?? 'CLI default' } : {}),
       });
     },
   );
