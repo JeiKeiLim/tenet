@@ -4,10 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from '../adapters/base.js';
-import { AdapterRegistry, type AdapterExtraArgs } from '../adapters/index.js';
-import { JobManager, jobManagerConfigFromStateConfig } from './job-manager.js';
-import type { GateValidatorsConfig } from './runtime-config.js';
-import { UNLIMITED_RETRIES } from './runtime-config.js';
+import { AdapterRegistry } from '../adapters/index.js';
+import { JobManager, jobManagerConfigForLiveReads, jobManagerConfigFromStateConfig } from './job-manager.js';
+import { stateConfigFilePath, UNLIMITED_RETRIES } from './runtime-config.js';
 import { StateStore } from './state-store.js';
 
 class MockAdapter implements AgentAdapter {
@@ -58,9 +57,6 @@ const createHarness = (
   tempDirs.push(tempDir);
   stores.push(store);
 
-  store.setConfig('agent_override_dev', 'mock-adapter');
-  store.setConfig('agent_override_eval', 'mock-adapter');
-
   const registry = new AdapterRegistry();
   const adapter = new MockAdapter('mock-adapter', adapterDelayMs, outputOverride);
   registry.register(adapter);
@@ -69,6 +65,12 @@ const createHarness = (
     heartbeatTimeoutMs: 100,
     defaultJobTimeoutMs: 2_000,
     maxParallelAgents: 2,
+    // Live-config shape: agent selection comes from the per-dispatch config
+    // snapshot, exactly as the MCP server's config.json reader provides it.
+    readStateConfig: () => ({
+      agent_override_dev: 'mock-adapter',
+      agent_override_eval: 'mock-adapter',
+    }),
   });
 
   return { store, manager, adapter };
@@ -88,41 +90,43 @@ const getServerId = (manager: JobManager): string =>
   (manager as unknown as { serverId: string }).serverId;
 
 /**
- * Adviser/worker-model harness: lets each test pick the adapters, the JobManager
- * config (adviser / defaultAgentModel) and the SQLite config values explicitly.
+ * Adviser/worker-model harness: lets each test pick the adapters and the raw
+ * config.json object explicitly — the same object the live reader returns per
+ * dispatch, so adviser/gate/worker/args/scalar surfaces all come from one
+ * pinned provider.
  */
 const createModelHarness = (
   adapters: MockAdapter[],
-  managerConfig: {
-    adviser?: { agent: string; model: string };
-    defaultAgentModel?: string;
-    gateValidators?: GateValidatorsConfig;
-  } = {},
-  storeConfig: Record<string, string> = {},
-  extraArgs?: AdapterExtraArgs,
-): { projectPath: string; store: StateStore; manager: JobManager } => {
+  rawConfig: Record<string, unknown> = {},
+): { projectPath: string; store: StateStore; manager: JobManager; setConfig: (next: Record<string, unknown>) => void } => {
   const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-adviser-test-'));
   tempDirs.push(projectPath);
 
   const store = new StateStore(projectPath);
   stores.push(store);
-  for (const [key, value] of Object.entries(storeConfig)) {
-    store.setConfig(key, value);
-  }
 
-  const registry = extraArgs ? new AdapterRegistry(extraArgs) : new AdapterRegistry();
+  const registry = new AdapterRegistry();
   (registry as unknown as { adapters: Map<string, AgentAdapter> }).adapters.clear();
   for (const adapter of adapters) {
     registry.register(adapter);
   }
 
+  // Mutable holder: liveness tests swap the config object between dispatches.
+  let currentConfig = rawConfig;
   const manager = new JobManager(store, registry, {
     heartbeatTimeoutMs: 1_000,
     defaultJobTimeoutMs: 2_000,
-    ...managerConfig,
+    readStateConfig: () => currentConfig,
   });
 
-  return { projectPath, store, manager };
+  return {
+    projectPath,
+    store,
+    manager,
+    setConfig: (next) => {
+      currentConfig = next;
+    },
+  };
 };
 
 const writeRunDocs = (projectPath: string, runPath: string): void => {
@@ -229,13 +233,13 @@ describe('JobManager', () => {
     tempDirs.push(tempDir);
     const store = new StateStore(tempDir);
     stores.push(store);
-    store.setConfig('default_agent', 'codex');
 
     const codex = new MockAdapter('codex', 0, undefined, false);
     const claude = new MockAdapter('claude-code');
     const manager = new JobManager(store, createRegistry(codex, claude), {
       heartbeatTimeoutMs: 100,
       defaultJobTimeoutMs: 2_000,
+      readStateConfig: () => ({ default_agent: 'codex' }),
     });
 
     const job = manager.startJob('dev', { prompt: 'build with codex' });
@@ -254,29 +258,32 @@ describe('JobManager', () => {
     tempDirs.push(tempDir);
     const store = new StateStore(tempDir);
     stores.push(store);
-    store.setConfig('default_agent', 'codex');
 
     const codex = new MockAdapter('codex');
-    const registry = new AdapterRegistry({
-      byJobType: {
-        codex: {
-          interaction_e2e: ['--dangerously-bypass-approvals-and-sandbox'],
-        },
-      },
-    });
+    const registry = new AdapterRegistry();
     const holder = registry as unknown as { adapters: Map<string, AgentAdapter> };
     holder.adapters.clear();
     registry.register(codex);
 
+    // Job-scoped args ride the live config, resolved per dispatch.
     const manager = new JobManager(store, registry, {
       heartbeatTimeoutMs: 100,
       defaultJobTimeoutMs: 2_000,
+      readStateConfig: () => ({
+        default_agent: 'codex',
+        codex_args_interaction_e2e: '--dangerously-bypass-approvals-and-sandbox',
+      }),
     });
 
     const job = manager.startJob('interaction_e2e', { prompt: 'verify browser' });
     await manager.waitForJob(job.id, null, 5_000);
 
     expect(codex.lastInvocation?.extraArgs).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
+
+    // Other job types on the same adapter do not get the scoped args.
+    const devJob = manager.startJob('dev', { prompt: 'implement' });
+    await manager.waitForJob(devJob.id, null, 5_000);
+    expect(codex.lastInvocation?.extraArgs).toEqual([]);
   });
 
   it('does not pick an installed adapter when no agent is configured', async () => {
@@ -793,8 +800,11 @@ describe('JobManager', () => {
       const adviser = new MockAdapter('claude-code');
       const { projectPath, manager } = createModelHarness(
         [worker, adviser],
-        { adviser: { agent: 'claude-code', model: 'opus' } },
-        { default_agent: 'mock-worker' },
+        {
+          default_agent: 'mock-worker',
+          adviser_agent: 'claude-code',
+          adviser_model: 'opus',
+        },
       );
       const runPath = '.tenet/runs/2026-11-16-adviser-ctx';
       writeRunDocs(projectPath, runPath);
@@ -821,9 +831,13 @@ describe('JobManager', () => {
       const adviser = new MockAdapter('claude-code');
       const { manager } = createModelHarness(
         [worker, adviser],
-        { adviser: { agent: 'claude-code', model: 'opus[1m]' }, defaultAgentModel: 'sonnet' },
-        { default_agent: 'mock-worker' },
-        { byJobType: { claude: { adviser: ['--allowedTools', 'Read'] } } },
+        {
+          default_agent: 'mock-worker',
+          default_agent_model: 'sonnet',
+          adviser_agent: 'claude-code',
+          adviser_model: 'opus[1m]',
+          claude_args_adviser: '--allowedTools Read',
+        },
       );
 
       const adviserJob = manager.startAdviserJob({ name: 'escalation', prompt: 'Which option?' });
@@ -850,8 +864,11 @@ describe('JobManager', () => {
       const overrideAdapter = new MockAdapter('mock-override');
       const { manager } = createModelHarness(
         [defaultAdapter, overrideAdapter],
-        { defaultAgentModel: 'sonnet' },
-        { default_agent: 'mock-default', agent_override_eval: 'mock-override' },
+        {
+          default_agent: 'mock-default',
+          default_agent_model: 'sonnet',
+          agent_override_eval: 'mock-override',
+        },
       );
 
       const evalJob = manager.startJob('eval', { name: 'code-critic', prompt: 'evaluate' });
@@ -881,7 +898,6 @@ describe('JobManager', () => {
       const adviser = new MockAdapter('claude-code');
       const store = new StateStore(projectPath);
       stores.push(store);
-      store.setConfig('default_agent', 'mock-worker');
       const registry = new AdapterRegistry();
       (registry as unknown as { adapters: Map<string, AgentAdapter> }).adapters.clear();
       registry.register(worker);
@@ -889,7 +905,11 @@ describe('JobManager', () => {
       const manager = new JobManager(store, registry, {
         heartbeatTimeoutMs: 1_000,
         defaultJobTimeoutMs: 2_000,
-        adviser: { agent: 'claude-code', model: 'opus' },
+        readStateConfig: () => ({
+          default_agent: 'mock-worker',
+          adviser_agent: 'claude-code',
+          adviser_model: 'opus',
+        }),
       });
 
       // Sanity: the deliverables check is active — a text-only dev job fails.
@@ -910,7 +930,6 @@ describe('JobManager', () => {
       const explicitAdapter = new MockAdapter('mock-explicit');
       const { store, manager } = createModelHarness(
         [defaultAdapter, explicitAdapter],
-        {},
         { default_agent: 'mock-default' },
       );
 
@@ -929,8 +948,11 @@ describe('JobManager', () => {
       const adviser = new MockAdapter('claude-code');
       const { store, manager } = createModelHarness(
         [adviser],
-        { adviser: { agent: 'claude-code', model: 'opus' } },
-        { default_agent: 'some-other-agent' },
+        {
+          default_agent: 'some-other-agent',
+          adviser_agent: 'claude-code',
+          adviser_model: 'opus',
+        },
       );
 
       const job = manager.startAdviserJob({ name: 'escalation', prompt: 'Which option?' });
@@ -948,32 +970,52 @@ describe('JobManager', () => {
   });
 
   describe('validator gate dispatch and model injection', () => {
-    it('jobManagerConfigFromStateConfig carries every agent-model surface into the JobManager config', () => {
-      const config = jobManagerConfigFromStateConfig(
-        {
-          adviser_agent: 'codex',
-          adviser_model: 'gpt-6-astra',
-          default_agent_model: 'sonnet',
-          clarity_agent: 'claude-code',
-          clarity_model: 'opus',
-        },
-        'server-1',
+    it('jobManagerConfigFromStateConfig pins the raw config behind a frozen provider', () => {
+      const raw = {
+        adviser_agent: 'codex',
+        adviser_model: 'gpt-6-astra',
+        default_agent_model: 'sonnet',
+        clarity_agent: 'claude-code',
+        clarity_model: 'opus',
+      };
+      const config = jobManagerConfigFromStateConfig(raw, 'server-1');
+
+      // The frozen variant hands the JobManager the exact raw object — every
+      // dispatch surface (pairs, args, scalars) parses from it per dispatch, so
+      // no surface can be silently dropped at factory time.
+      expect(config.serverId).toBe('server-1');
+      expect(config.readStateConfig?.()).toBe(raw);
+
+      // Null/undefined degrade to an empty config, not a crash.
+      expect(jobManagerConfigFromStateConfig(null, 'server-2').readStateConfig?.()).toEqual({});
+      expect(jobManagerConfigFromStateConfig(undefined, 'server-3').readStateConfig?.()).toEqual({});
+    });
+
+    it('jobManagerConfigForLiveReads wires the keep-last-good config.json reader both entry points install', () => {
+      const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-live-factory-test-'));
+      tempDirs.push(projectPath);
+      fs.mkdirSync(path.join(projectPath, '.tenet', '.state'), { recursive: true });
+      fs.writeFileSync(
+        stateConfigFilePath(projectPath),
+        JSON.stringify({ default_agent: 'codex', adviser_agent: 'claude-code', adviser_model: 'opus' }),
+        'utf8',
       );
 
-      // Both server entry points consume exactly this helper, so the full
-      // derivation is pinned here: an entry-point edit that silently drops a
-      // surface (e.g. a "cleanup" that destructures instead of spreading) is
-      // now a loud break against this shape, not a silent no-op.
-      expect(config).toEqual({
-        serverId: 'server-1',
-        adviser: { agent: 'codex', model: 'gpt-6-astra' },
-        defaultAgentModel: 'sonnet',
-        gateValidators: { clarity: { agent: 'claude-code', model: 'opus' } },
+      const config = jobManagerConfigForLiveReads(projectPath, 'server-live');
+      expect(config.serverId).toBe('server-live');
+      expect(config.readStateConfig?.()).toEqual({
+        default_agent: 'codex',
+        adviser_agent: 'claude-code',
+        adviser_model: 'opus',
       });
 
-      // Nothing configured: the helper must not invent surfaces.
-      expect(jobManagerConfigFromStateConfig({}, 'server-2')).toEqual({ serverId: 'server-2' });
-      expect(jobManagerConfigFromStateConfig(null, 'server-3')).toEqual({ serverId: 'server-3' });
+      // Live: the next read sees an edit; a torn file keeps the last good
+      // object. This is the exact provider src/mcp/index.ts + src/cli/serve.ts
+      // install, pinned here because no test can import either entry point.
+      fs.writeFileSync(stateConfigFilePath(projectPath), JSON.stringify({ default_agent: 'opencode' }), 'utf8');
+      expect(config.readStateConfig?.()).toEqual({ default_agent: 'opencode' });
+      fs.writeFileSync(stateConfigFilePath(projectPath), '{ torn', 'utf8');
+      expect(config.readStateConfig?.()).toEqual({ default_agent: 'opencode' });
     });
 
     it('the two gate eval_type literals have no writers outside the validator tools and the core reader', () => {
@@ -1013,12 +1055,12 @@ describe('JobManager', () => {
       const { store, manager } = createModelHarness(
         [clarityGate, readinessGate, worker],
         {
-          gateValidators: {
-            clarity: { agent: 'gate-clarity', model: 'opus' },
-            readiness: { agent: 'gate-readiness', model: 'gpt-6-astra' },
-          },
+          default_agent: 'mock-worker',
+          clarity_agent: 'gate-clarity',
+          clarity_model: 'opus',
+          readiness_agent: 'gate-readiness',
+          readiness_model: 'gpt-6-astra',
         },
-        { default_agent: 'mock-worker' },
       );
 
       const clarityJob = manager.startJob('eval', {
@@ -1048,8 +1090,11 @@ describe('JobManager', () => {
       const readinessGate = new MockAdapter('gate-readiness');
       const { manager } = createModelHarness(
         [readinessGate, new MockAdapter('mock-worker')],
-        { gateValidators: { readiness: { agent: 'gate-readiness', model: 'gpt-6-astra' } } },
-        { default_agent: 'mock-worker' },
+        {
+          default_agent: 'mock-worker',
+          readiness_agent: 'gate-readiness',
+          readiness_model: 'gpt-6-astra',
+        },
       );
 
       const clarityJob = manager.startJob('eval', {
@@ -1065,8 +1110,11 @@ describe('JobManager', () => {
       const clarityGate = new MockAdapter('gate-clarity');
       const { manager: manager2 } = createModelHarness(
         [clarityGate, new MockAdapter('mock-worker')],
-        { gateValidators: { clarity: { agent: 'gate-clarity', model: 'opus' } } },
-        { default_agent: 'mock-worker' },
+        {
+          default_agent: 'mock-worker',
+          clarity_agent: 'gate-clarity',
+          clarity_model: 'opus',
+        },
       );
 
       const readinessJob = manager2.startJob('eval', {
@@ -1083,8 +1131,11 @@ describe('JobManager', () => {
       const adviser = new MockAdapter('gate-adviser');
       const { manager } = createModelHarness(
         [adviser, new MockAdapter('mock-worker')],
-        { adviser: { agent: 'gate-adviser', model: 'opus' } },
-        { default_agent: 'mock-worker' },
+        {
+          default_agent: 'mock-worker',
+          adviser_agent: 'gate-adviser',
+          adviser_model: 'opus',
+        },
       );
 
       for (const evalType of ['clarity_validation', 'readiness_validation'] as const) {
@@ -1103,8 +1154,7 @@ describe('JobManager', () => {
       const worker = new MockAdapter('mock-worker');
       const { manager } = createModelHarness(
         [worker],
-        { defaultAgentModel: 'sonnet' },
-        { default_agent: 'mock-worker' },
+        { default_agent: 'mock-worker', default_agent_model: 'sonnet' },
       );
 
       // Tier 4: default agent + default_agent_model pin, exactly as before.
@@ -1121,7 +1171,6 @@ describe('JobManager', () => {
       const unpinnedWorker = new MockAdapter('mock-worker-2');
       const { manager: manager2 } = createModelHarness(
         [unpinnedWorker],
-        {},
         { default_agent: 'mock-worker-2' },
       );
       const unpinned = manager2.startJob('eval', {
@@ -1137,8 +1186,11 @@ describe('JobManager', () => {
       const override = new MockAdapter('mock-override');
       const { manager } = createModelHarness(
         [override, new MockAdapter('mock-worker')],
-        { defaultAgentModel: 'sonnet' },
-        { default_agent: 'mock-worker', agent_override_eval: 'mock-override' },
+        {
+          default_agent: 'mock-worker',
+          default_agent_model: 'sonnet',
+          agent_override_eval: 'mock-override',
+        },
       );
 
       const job = manager.startJob('eval', {
@@ -1157,10 +1209,11 @@ describe('JobManager', () => {
       const { manager } = createModelHarness(
         [worker],
         {
-          defaultAgentModel: 'sonnet',
-          gateValidators: { clarity: { agent: 'mock-worker', model: 'opus' } },
+          default_agent: 'mock-worker',
+          default_agent_model: 'sonnet',
+          clarity_agent: 'mock-worker',
+          clarity_model: 'opus',
         },
-        { default_agent: 'mock-worker' },
       );
 
       const gateJob = manager.startJob('eval', {
@@ -1181,8 +1234,11 @@ describe('JobManager', () => {
       const gate = new MockAdapter('gate-clarity');
       const { store, manager } = createModelHarness(
         [gate, new MockAdapter('mock-worker')],
-        { gateValidators: { clarity: { agent: 'gate-clarity', model: 'opus' } } },
-        { default_agent: 'mock-worker' },
+        {
+          default_agent: 'mock-worker',
+          clarity_agent: 'gate-clarity',
+          clarity_model: 'opus',
+        },
       );
 
       const job = manager.startJob('eval', {
@@ -1207,8 +1263,11 @@ describe('JobManager', () => {
     it('stamps the effective gate agent on createPendingJob (preflight display consistency)', () => {
       const { manager } = createModelHarness(
         [new MockAdapter('gate-readiness'), new MockAdapter('mock-worker')],
-        { gateValidators: { readiness: { agent: 'gate-readiness', model: 'gpt-6-astra' } } },
-        { default_agent: 'mock-worker' },
+        {
+          default_agent: 'mock-worker',
+          readiness_agent: 'gate-readiness',
+          readiness_model: 'gpt-6-astra',
+        },
       );
 
       const preflight = manager.createPendingJob('eval', {
@@ -1234,14 +1293,15 @@ describe('JobManager', () => {
       const { store, manager } = createModelHarness(
         [gate, adviser, worker],
         {
-          adviser: { agent: 'gate-adviser', model: 'adviser-opus' },
-          defaultAgentModel: 'sonnet',
-          gateValidators: {
-            clarity: { agent: 'gate-clarity', model: 'opus' },
-            readiness: { agent: 'gate-clarity', model: 'opus' },
-          },
+          default_agent: 'mock-worker',
+          default_agent_model: 'sonnet',
+          adviser_agent: 'gate-adviser',
+          adviser_model: 'adviser-opus',
+          clarity_agent: 'gate-clarity',
+          clarity_model: 'opus',
+          readiness_agent: 'gate-clarity',
+          readiness_model: 'opus',
         },
-        { default_agent: 'mock-worker' },
       );
       const agentOf = (jobId: string): string | undefined => store.getJob(jobId)?.agentName;
 
@@ -1314,11 +1374,13 @@ describe('JobManager', () => {
       const { manager } = createModelHarness(
         [new MockAdapter('gate-readiness'), new MockAdapter('gate-adviser'), new MockAdapter('mock-worker')],
         {
-          adviser: { agent: 'gate-adviser', model: 'adviser-opus' },
-          defaultAgentModel: 'sonnet',
-          gateValidators: { readiness: { agent: 'gate-readiness', model: 'gpt-6-astra' } },
+          default_agent: 'mock-worker',
+          default_agent_model: 'sonnet',
+          adviser_agent: 'gate-adviser',
+          adviser_model: 'adviser-opus',
+          readiness_agent: 'gate-readiness',
+          readiness_model: 'gpt-6-astra',
         },
-        { default_agent: 'mock-worker' },
       );
 
       // Tier 1: own pair.
@@ -1337,7 +1399,7 @@ describe('JobManager', () => {
       // Tier 3: adviser pair.
       const { manager: adviserOnly } = createModelHarness(
         [new MockAdapter('gate-adviser')],
-        { adviser: { agent: 'gate-adviser', model: 'adviser-opus' } },
+        { adviser_agent: 'gate-adviser', adviser_model: 'adviser-opus' },
       );
       expect(adviserOnly.getGateDispatchInfo('clarity_validation')).toEqual({
         agent: 'gate-adviser',
@@ -1348,8 +1410,7 @@ describe('JobManager', () => {
       // Tier 4: default path (override ?? default agent, model pinned on default agent).
       const { manager: noGates } = createModelHarness(
         [new MockAdapter('mock-worker')],
-        { defaultAgentModel: 'sonnet' },
-        { default_agent: 'mock-worker' },
+        { default_agent: 'mock-worker', default_agent_model: 'sonnet' },
       );
       expect(noGates.getGateDispatchInfo('clarity_validation')).toEqual({
         agent: 'mock-worker',
@@ -1358,12 +1419,270 @@ describe('JobManager', () => {
       });
 
       // No agent resolves at all: undefined (the dispatch would fail with the stub).
-      const { manager: noAgent } = createModelHarness([new MockAdapter('mock-worker')], {}, {});
+      const { manager: noAgent } = createModelHarness([new MockAdapter('mock-worker')]);
       expect(noAgent.getGateDispatchInfo('clarity_validation')).toBeUndefined();
 
       // Non-gate eval_types are not gate jobs.
       expect(noAgent.getGateDispatchInfo('something_else')).toBeUndefined();
       expect(noAgent.getGateDispatchInfo(undefined)).toBeUndefined();
+    });
+  });
+
+  describe('live config reads (per-dispatch snapshot)', () => {
+    it('picks up a config edit between two dispatches on the same JobManager — no restart', async () => {
+      const worker = new MockAdapter('mock-worker');
+      const gate = new MockAdapter('gate-clarity');
+      const { manager, setConfig } = createModelHarness(
+        [worker, gate],
+        {
+          default_agent: 'mock-worker',
+          default_agent_model: 'sonnet',
+          clarity_agent: 'gate-clarity',
+          clarity_model: 'opus',
+        },
+      );
+
+      const devJob = manager.startJob('dev', { name: 'before-edit', prompt: 'implement' });
+      await manager.waitForJob(devJob.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('sonnet');
+
+      // One CLI edit, no restart: the worker model moves and the gate pair flips
+      // — both reflected by the NEXT dispatch of the same JobManager.
+      setConfig({
+        default_agent: 'mock-worker',
+        default_agent_model: 'opus-2',
+        clarity_agent: 'gate-clarity',
+        clarity_model: 'haiku',
+      });
+
+      const devJob2 = manager.startJob('dev', { name: 'after-edit', prompt: 'implement' });
+      await manager.waitForJob(devJob2.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('opus-2');
+
+      const gateJob = manager.startJob('eval', { name: 'clarity-gate', prompt: 'score', eval_type: 'clarity_validation' });
+      await manager.waitForJob(gateJob.id, null, 5_000);
+      expect(gate.lastInvocation?.model).toBe('haiku');
+      // The reported pair matches the executed one — same live source.
+      expect(manager.getGateDispatchInfo('clarity_validation')).toMatchObject({
+        agent: 'gate-clarity',
+        model: 'haiku',
+      });
+    });
+
+    it('resolves agent+model from ONE snapshot: a mid-dispatch edit never splits the pair', async () => {
+      // Pause INSIDE adapter availability (where a <cli> --version subprocess
+      // runs in production): executeJob has taken its snapshot, the adapter has
+      // not been invoked yet. An edit landing exactly in that gap must not
+      // change what this dispatch runs.
+      let signalEntered: () => void = () => {};
+      let proceed: () => void = () => {};
+      const entered = new Promise<void>((resolve) => {
+        signalEntered = resolve;
+      });
+      const proceeding = new Promise<void>((resolve) => {
+        proceed = resolve;
+      });
+      const gate = new (class extends MockAdapter {
+        override async isAvailable(): Promise<boolean> {
+          signalEntered();
+          await proceeding;
+          return true;
+        }
+      })('gate-clarity');
+      const worker = new MockAdapter('mock-worker');
+      const { store, manager, setConfig } = createModelHarness(
+        [gate, worker],
+        {
+          default_agent: 'mock-worker',
+          clarity_agent: 'gate-clarity',
+          clarity_model: 'opus',
+        },
+      );
+
+      const job = manager.startJob('eval', { name: 'clarity-gate', prompt: 'score', eval_type: 'clarity_validation' });
+      await entered; // executeJob is mid-gap: snapshot taken, adapter not invoked
+      setConfig({
+        default_agent: 'mock-worker',
+        clarity_agent: 'gate-clarity',
+        clarity_model: 'haiku',
+      });
+      proceed();
+
+      await manager.waitForJob(job.id, null, 5_000);
+      // The in-flight dispatch kept its snapshot's consistent pair...
+      expect(gate.lastInvocation?.model).toBe('opus');
+      expect(store.getJob(job.id)?.agentName).toBe('gate-clarity');
+      expect(worker.calls).toBe(0);
+      // ...while the NEXT dispatch sees the edit (one era per dispatch).
+      expect(manager.takeConfigSnapshot().pairs.gateValidators).toEqual({
+        clarity: { agent: 'gate-clarity', model: 'haiku' },
+      });
+    });
+
+    it('uses the dispatch-era snapshot through execution: an edit in the dispatch->execute gap does not change what runs', async () => {
+      const worker = new MockAdapter('mock-worker');
+      const { manager, setConfig } = createModelHarness(
+        [worker],
+        { default_agent: 'mock-worker', default_agent_model: 'sonnet' },
+      );
+
+      // startJob resolves + stamps from the dispatch-era snapshot and schedules
+      // executeJob on a setTimeout(0); this synchronous edit lands exactly in
+      // that gap. The executed invocation must come from the DISPATCH snapshot
+      // (pending jobs pick up config at dispatch) — never a fresh
+      // execution-time read, which would also desync the validator tools'
+      // reported pair from what really runs.
+      const job = manager.startJob('dev', { name: 'gap-edit', prompt: 'implement' });
+      setConfig({ default_agent: 'mock-worker', default_agent_model: 'opus-2' });
+
+      await manager.waitForJob(job.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('sonnet');
+    });
+
+    it('stamps max_retries per job at creation — an edit applies to future jobs only', async () => {
+      const worker = new MockAdapter('mock-worker');
+      const { store, manager, setConfig } = createModelHarness(
+        [worker],
+        { default_agent: 'mock-worker', max_retries: 1 },
+      );
+
+      const first = manager.startJob('dev', { name: 'stamped-1', prompt: 'implement' });
+      expect(first.maxRetries).toBe(1);
+
+      setConfig({ default_agent: 'mock-worker', max_retries: 4 });
+      const second = manager.startJob('dev', { name: 'stamped-4', prompt: 'implement' });
+      expect(second.maxRetries).toBe(4);
+      // The already-created job keeps its own creation-time stamp.
+      expect(store.getJob(first.id)?.maxRetries).toBe(1);
+
+      await manager.waitForJob(second.id, null, 5_000);
+      await manager.waitForJob(first.id, null, 5_000);
+    });
+
+    it('applies timeout_minutes per invocation at execution', async () => {
+      const worker = new MockAdapter('mock-worker');
+      const { manager, setConfig } = createModelHarness(
+        [worker],
+        { default_agent: 'mock-worker', timeout_minutes: 5 },
+      );
+
+      const first = manager.startJob('dev', { name: 'timeout-5', prompt: 'implement' });
+      await manager.waitForJob(first.id, null, 5_000);
+      expect(worker.lastInvocation?.timeoutMs).toBe(5 * 60 * 1000);
+
+      setConfig({ default_agent: 'mock-worker', timeout_minutes: 90 });
+      const second = manager.startJob('dev', { name: 'timeout-90', prompt: 'implement' });
+      await manager.waitForJob(second.id, null, 5_000);
+      expect(worker.lastInvocation?.timeoutMs).toBe(90 * 60 * 1000);
+    });
+
+    it('global and job-scoped args apply per dispatch', async () => {
+      const codex = new MockAdapter('codex');
+      const { manager, setConfig } = createModelHarness(
+        [codex],
+        { default_agent: 'codex', codex_args: '--sandbox danger-full-access' },
+      );
+
+      const first = manager.startJob('dev', { name: 'args-global', prompt: 'implement' });
+      await manager.waitForJob(first.id, null, 5_000);
+      expect(codex.lastInvocation?.extraArgs).toEqual(['--sandbox', 'danger-full-access']);
+
+      // Both an args edit AND a previously-unset job-scoped key apply live:
+      // global args first, then job-scoped args.
+      setConfig({
+        default_agent: 'codex',
+        codex_args: '--sandbox workspace-write',
+        codex_args_interaction_e2e: '--dangerously-bypass-approvals-and-sandbox',
+      });
+      const second = manager.startJob('interaction_e2e', { name: 'args-e2e', prompt: 'verify' });
+      await manager.waitForJob(second.id, null, 5_000);
+      expect(codex.lastInvocation?.extraArgs).toEqual([
+        '--sandbox',
+        'workspace-write',
+        '--dangerously-bypass-approvals-and-sandbox',
+      ]);
+    });
+
+    it('a malformed config file keeps the last good dispatch semantics (server keep-last-good)', async () => {
+      const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-live-manager-test-'));
+      tempDirs.push(projectPath);
+      fs.mkdirSync(path.join(projectPath, '.tenet', '.state'), { recursive: true });
+      const store = new StateStore(projectPath);
+      stores.push(store);
+      const worker = new MockAdapter('mock-worker');
+      const registry = new AdapterRegistry();
+      (registry as unknown as { adapters: Map<string, AgentAdapter> }).adapters.clear();
+      registry.register(worker);
+      const writeConfig = (content: Record<string, unknown> | string): void => {
+        fs.writeFileSync(
+          stateConfigFilePath(projectPath),
+          typeof content === 'string' ? content : JSON.stringify(content),
+          'utf8',
+        );
+      };
+
+      writeConfig({ default_agent: 'mock-worker', default_agent_model: 'sonnet' });
+      // Exactly what both server entry points install (jobManagerConfigForLiveReads).
+      const manager = new JobManager(store, registry, jobManagerConfigForLiveReads(projectPath, 'live-server'));
+
+      const first = manager.startJob('dev', { name: 'good-config', prompt: 'implement' });
+      await manager.waitForJob(first.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('sonnet');
+
+      // Torn write mid-session: the running server must keep the last good
+      // snapshot, never reset to defaults.
+      writeConfig('{ "default_agent": "cod');
+      const second = manager.startJob('dev', { name: 'torn-config', prompt: 'implement' });
+      await manager.waitForJob(second.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('sonnet');
+
+      // Recovery once the file parses again.
+      writeConfig({ default_agent: 'mock-worker', default_agent_model: 'opus-2' });
+      const third = manager.startJob('dev', { name: 'recovered', prompt: 'implement' });
+      await manager.waitForJob(third.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('opus-2');
+    });
+
+    it('two concurrent managers converge per dispatch instead of diverging per boot', async () => {
+      const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-concurrent-test-'));
+      tempDirs.push(projectPath);
+      const store = new StateStore(projectPath);
+      stores.push(store);
+      const worker = new MockAdapter('mock-worker');
+
+      // Two server processes over one project: separate providers, one shared
+      // config source (the file). Before live reads, an edit after both booted
+      // left both frozen on the old values until restart.
+      let current: Record<string, unknown> = {
+        default_agent: 'mock-worker',
+        default_agent_model: 'sonnet',
+      };
+      const makeManager = (): JobManager => {
+        const registry = new AdapterRegistry();
+        (registry as unknown as { adapters: Map<string, AgentAdapter> }).adapters.clear();
+        registry.register(worker);
+        return new JobManager(store, registry, {
+          heartbeatTimeoutMs: 1_000,
+          defaultJobTimeoutMs: 2_000,
+          readStateConfig: () => current,
+        });
+      };
+      const managerA = makeManager();
+      const managerB = makeManager();
+
+      const before = managerA.startJob('dev', { name: 'before-edit', prompt: 'implement' });
+      await managerA.waitForJob(before.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('sonnet');
+
+      current = { default_agent: 'mock-worker', default_agent_model: 'opus-2' };
+
+      const viaB = managerB.startJob('dev', { name: 'after-edit-b', prompt: 'implement' });
+      await managerB.waitForJob(viaB.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('opus-2');
+
+      const viaA = managerA.startJob('dev', { name: 'after-edit-a', prompt: 'implement' });
+      await managerA.waitForJob(viaA.id, null, 5_000);
+      expect(worker.lastInvocation?.model).toBe('opus-2');
     });
   });
 });

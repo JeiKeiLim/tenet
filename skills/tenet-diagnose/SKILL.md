@@ -130,14 +130,14 @@ sqlite3 .tenet/.state/tenet.db "SELECT * FROM events WHERE event='orphaned_jobs_
 ### 7. Config check
 
 ```bash
-# SQLite config
-sqlite3 .tenet/.state/tenet.db "SELECT * FROM config"
-
 # JSON config (source of truth)
 cat .tenet/.state/config.json
+
+# SQLite config (runtime-written keys only: db_schema_version, eval_parallel_safe:*)
+sqlite3 .tenet/.state/tenet.db "SELECT * FROM config"
 ```
 
-The JSON config file is the source of truth. On server startup, it overwrites SQLite config values. If they disagree, the JSON values win.
+The JSON config file is the single source of truth for agent/model/args/retry/timeout settings — the MCP server reads it live at every dispatched job, so edits apply from the next dispatch with no restart. The SQLite config table only carries runtime-written state (schema version, per-feature eval_parallel_safe flags); older projects may still hold legacy agent/retry rows there from the retired file→SQLite sync, purged by the schema-v3 migration on `tenet init --upgrade`. They are never read for dispatch.
 
 ### 8. Steer messages
 
@@ -192,8 +192,8 @@ Check adapter timeout: `tenet config`. Default is 120 min. For Playwright e2e jo
 
 ### Agent using wrong CLI
 ```bash
-# Check configured agent
-sqlite3 .tenet/.state/tenet.db "SELECT * FROM config WHERE key='default_agent'"
+# Check configured agent — .tenet/.state/config.json is the single source of
+# truth (read live at every dispatch); the SQLite config table never holds it.
 cat .tenet/.state/config.json
 
 # Verify agent is available
@@ -268,7 +268,7 @@ tenet config --claude-args "--allowedTools Bash,Read,Write,Edit"
 
 Pass an empty string to clear a setting: `tenet config --opencode-args ""`.
 
-**Restart the Tenet MCP server after changing adapter args** — they're read at server startup.
+**No restart needed after changing adapter args** — they're read live from `.tenet/.state/config.json` at every dispatched job, so an edit applies from the next dispatch (a job already running keeps its spawn-time arguments).
 
 Notes on the mechanism:
 - Extra args are stored in `.tenet/.state/config.json` under `claude_args` / `opencode_args` / `codex_args`, with optional job-scoped keys such as `codex_args_interaction_e2e`.

@@ -31,7 +31,6 @@ const createHarness = (): { store: StateStore; handler: Handler } => {
 
   const store = new StateStore(tempDir);
   stores.push(store);
-  store.setConfig('agent_override_dev', 'mock-adapter');
 
   const registry = new AdapterRegistry();
   registry.register(new MockAdapter());
@@ -39,6 +38,7 @@ const createHarness = (): { store: StateStore; handler: Handler } => {
   const manager = new JobManager(store, registry, {
     heartbeatTimeoutMs: 1_000,
     defaultJobTimeoutMs: 2_000,
+    readStateConfig: () => ({ agent_override_dev: 'mock-adapter' }),
   });
 
   let captured: Handler | undefined;

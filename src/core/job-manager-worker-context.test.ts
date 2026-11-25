@@ -27,8 +27,6 @@ const setup = (): {
 
   const store = new StateStore(projectPath);
   stores.push(store);
-  store.setConfig('agent_override_dev', 'fake');
-  store.setConfig('agent_override_eval', 'fake');
 
   const captured: AgentInvocation[] = [];
   const registry = new AdapterRegistry();
@@ -45,6 +43,10 @@ const setup = (): {
   const manager = new JobManager(store, registry, {
     heartbeatTimeoutMs: 5_000,
     defaultJobTimeoutMs: 5_000,
+    readStateConfig: () => ({
+      agent_override_dev: 'fake',
+      agent_override_eval: 'fake',
+    }),
   });
 
   return { projectPath, store, manager, captured };

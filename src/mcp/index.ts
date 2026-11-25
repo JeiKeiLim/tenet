@@ -1,30 +1,16 @@
 #!/usr/bin/env node
 
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server';
 import { registerAllTools } from './tools/index.js';
 import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { DbHealthError } from '../core/state-store.js';
 import { StateStore } from '../core/state-store.js';
-import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
-import { JobManager, jobManagerConfigFromStateConfig } from '../core/job-manager.js';
+import { AdapterRegistry } from '../adapters/index.js';
+import { JobManager, jobManagerConfigForLiveReads } from '../core/job-manager.js';
 import { getPackageVersion } from '../cli/version.js';
 
 const PROJECT_PATH = process.env.TENET_PROJECT_PATH || process.cwd();
-
-const loadRawStateConfig = (projectPath: string): Record<string, unknown> => {
-  const configPath = path.join(projectPath, '.tenet', '.state', 'config.json');
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-  try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-};
 
 const server = new McpServer(
   {
@@ -52,12 +38,14 @@ try {
   }
   throw error;
 }
-const rawStateConfig = loadRawStateConfig(PROJECT_PATH);
-const adapterRegistry = new AdapterRegistry(parseAdapterExtraArgs(rawStateConfig));
+// No boot-time config parse: the JobManager reads .tenet/.state/config.json
+// live (keep-last-good) once per dispatch, so CLI config edits apply from the
+// next dispatched job without restarting this server.
+const adapterRegistry = new AdapterRegistry();
 const jobManager = new JobManager(
   stateStore,
   adapterRegistry,
-  jobManagerConfigFromStateConfig(rawStateConfig, serverId),
+  jobManagerConfigForLiveReads(PROJECT_PATH, serverId),
 );
 
 registerAllTools(server, jobManager, stateStore);

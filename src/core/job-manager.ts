@@ -1,18 +1,18 @@
 import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import type { ContinuationState, Job, JobResult, JobType, JobWaitResponse, PendingReason } from '../types/index.js';
-import { AdapterRegistry } from '../adapters/index.js';
+import { AdapterRegistry, parseAdapterExtraArgs, ADAPTER_NAME_TO_KEY } from '../adapters/index.js';
 import type { AgentAdapter, AgentInvocation } from '../adapters/base.js';
 import {
+  buildDispatchConfigSnapshot,
+  createLiveStateConfigReader,
   formatMaxRetries,
   hasRetryBudgetRemaining,
-  parseAgentModelConfig,
-  parseMaxRetries,
-  parseTimeoutMinutes,
+  nonEmptyString,
   resolveGatePair,
-  type AdviserConfig,
+  stateConfigFilePath,
+  type DispatchConfigSnapshot,
   type GateKey,
-  type GateValidatorsConfig,
 } from './runtime-config.js';
 import { StateStore } from './state-store.js';
 import { DEFAULT_EVAL_STAGES } from './critic-roster.js';
@@ -70,35 +70,38 @@ export type JobManagerConfig = {
   heartbeatTimeoutMs?: number;
   defaultJobTimeoutMs?: number;
   serverId?: string;
-  /** Adviser escalation target — present only when both adviser keys are configured. */
-  adviser?: AdviserConfig;
-  /** Model injected for jobs running on the configured default_agent (unset = CLI default). */
-  defaultAgentModel?: string;
   /**
-   * Per-gate validator pairs (interview clarity / implementation readiness),
-   * resolved from config.json at server startup — see parseAgentModelConfig.
-   * Gates fall through own pair -> sibling pair -> adviser pair, then today's
-   * eval path; see resolveGatePair and GATE_EVAL_TYPES.
+   * Live raw `.tenet/.state/config.json` provider — called once per dispatch to
+   * build a DispatchConfigSnapshot (agent/model pairs, default/override agents,
+   * adapter args, retry/timeout scalars). Entry points pass the keep-last-good
+   * reader (jobManagerConfigForLiveReads), so config edits apply from the next
+   * dispatched job with no restart; tests pin a constant object. Defaults to a
+   * no-config provider.
    */
-  gateValidators?: GateValidatorsConfig;
+  readStateConfig?: () => Record<string, unknown>;
 };
 
 /**
  * The JobManager config both server entry points (src/mcp/index.ts and
- * src/cli/serve.ts) build at startup: the server id plus every agent/model
- * surface parsed from the raw config.json (file-read — never the StateStore
- * loadFileConfig whitelist, which silently drops all of these keys).
- *
- * One factory so the two entry points cannot drift: a field added to
- * parseAgentModelConfig's return type flows here without an entry-point edit,
- * and an entry point that stops consuming the helper is a loud refactor
- * instead of a silently dropped spread. Unit-tested directly — no test can
- * import either entry point (both boot the MCP server at module scope).
+ * src/cli/serve.ts) build: the server id plus a live, keep-last-good
+ * config.json reader. One factory so the two entry points cannot drift — an
+ * entry point that stops consuming it is a loud refactor. Unit-tested
+ * directly — no test can import either entry point (both boot the MCP
+ * server at module scope).
+ */
+export const jobManagerConfigForLiveReads = (projectPath: string, serverId: string): JobManagerConfig => ({
+  serverId,
+  readStateConfig: createLiveStateConfigReader(stateConfigFilePath(projectPath)),
+});
+
+/**
+ * Frozen-config variant for tests and embedders that pin one raw config
+ * object: the provider returns the same parsed object on every dispatch.
  */
 export const jobManagerConfigFromStateConfig = (
   rawStateConfig: Record<string, unknown> | null | undefined,
   serverId: string,
-): JobManagerConfig => ({ serverId, ...parseAgentModelConfig(rawStateConfig) });
+): JobManagerConfig => ({ serverId, readStateConfig: () => rawStateConfig ?? {} });
 
 /** Which agent+model will judge a validation gate, and which tier resolved it. */
 export type GateDispatchInfo = {
@@ -140,9 +143,7 @@ export class JobManager {
   private readonly heartbeatTimeoutMs: number;
   private readonly defaultJobTimeoutMs: number;
   private readonly serverId: string;
-  private readonly adviser?: AdviserConfig;
-  private readonly defaultAgentModel?: string;
-  private readonly gateValidators?: GateValidatorsConfig;
+  private readonly readStateConfig: () => Record<string, unknown>;
 
   constructor(stateStore: StateStore, adapterRegistry: AdapterRegistry, config?: JobManagerConfig) {
     this.stateStore = stateStore;
@@ -151,9 +152,7 @@ export class JobManager {
     this.heartbeatTimeoutMs = config?.heartbeatTimeoutMs ?? 30 * 60 * 1000;
     this.defaultJobTimeoutMs = config?.defaultJobTimeoutMs ?? 30_000;
     this.serverId = config?.serverId ?? crypto.randomUUID();
-    this.adviser = config?.adviser;
-    this.defaultAgentModel = config?.defaultAgentModel;
-    this.gateValidators = config?.gateValidators;
+    this.readStateConfig = config?.readStateConfig ?? (() => ({}));
 
     // Reset only stale jobs left "running" by a previous server instance.
     // A different server_id alone is not enough: nested MCP clients can start
@@ -167,7 +166,20 @@ export class JobManager {
     }
   }
 
-  dispatchJob(jobId: string): Job {
+  /**
+   * One per-dispatch config snapshot: read the live raw config.json once and
+   * parse every view from that single read. Every dispatch entry point
+   * (startJob, dispatchJob, executeJob, the validator tools' reports, the
+   * adviser gate) resolves agent + model + args + scalars through exactly one
+   * snapshot, so a config edit can never split what runs from what was
+   * reported. Pickup semantics: pending jobs pick up config at dispatch;
+   * running jobs never do (argv is frozen at spawn).
+   */
+  takeConfigSnapshot(): DispatchConfigSnapshot {
+    return buildDispatchConfigSnapshot(this.readStateConfig());
+  }
+
+  dispatchJob(jobId: string, configSnapshot?: DispatchConfigSnapshot): Job {
     const job = this.stateStore.getJob(jobId);
     if (!job) {
       throw new Error(`job not found: ${jobId}`);
@@ -178,17 +190,21 @@ export class JobManager {
     }
 
     const now = Date.now();
+    // One snapshot per dispatch: the stamp below, the execution resolution, and
+    // the adapter args/model all come from the same config read.
+    const snapshot = configSnapshot ?? this.takeConfigSnapshot();
     // Adviser jobs are created with an explicit adviser agent; re-resolving here would
     // overwrite it with default_agent and silently run the adviser on a different CLI
     // than its --model was chosen for. Validator gates share job type 'eval' with
     // critics, so their chain must be re-checked here too — without this, a retry
     // (retryJob -> dispatchJob) would overwrite the stored gate agent with
     // resolveAgentName('eval') and silently drop the gate pair. Ordinary jobs keep
-    // today's resolve-at-dispatch.
+    // resolve-at-dispatch. The stamp is display state; executeJob re-resolves from
+    // the same snapshot authoritatively.
     const dispatchAgentName =
       job.type === 'adviser'
-        ? job.agentName ?? this.adviser?.agent ?? this.resolveAgentName(job.type)
-        : this.effectiveGateAgent(job.type, job.params) ?? this.resolveAgentName(job.type);
+        ? job.agentName ?? snapshot.pairs.adviser?.agent ?? this.resolveAgentName(job.type, snapshot)
+        : this.effectiveGateAgent(job.type, job.params, snapshot) ?? this.resolveAgentName(job.type, snapshot);
     // Atomic pending -> running: only one process can win. If another process
     // dispatched it between our read and this update, return the current job
     // instead of double-executing.
@@ -203,7 +219,7 @@ export class JobManager {
     this.stateStore.appendEvent(jobId, 'job_started', { type: job.type });
 
     setTimeout(() => {
-      this.executeJob(jobId).catch(() => {
+      this.executeJob(jobId, snapshot).catch(() => {
         // executeJob handles its own errors via job status; swallow any late failures
         // (e.g. state-store closed during test teardown) to avoid unhandled rejections.
       });
@@ -217,15 +233,12 @@ export class JobManager {
     return updated;
   }
 
-  private getMaxRetries(): number {
-    return parseMaxRetries(this.stateStore.getConfig('max_retries'));
-  }
-
   createPendingJob(type: JobType, params: Record<string, unknown>, parentJobId?: string): Job {
     if (!params.name || typeof params.name !== 'string') {
       params = { ...params, name: `${type}-${Date.now().toString(36)}` };
     }
 
+    const snapshot = this.takeConfigSnapshot();
     const job = this.stateStore.createJob({
       type,
       status: 'pending',
@@ -233,16 +246,20 @@ export class JobManager {
       // Validator gate jobs (the tools' deterministic preflight creations) stamp
       // the effective gate agent for display consistency even though they never
       // dispatch; every other type keeps resolveAgentName's behavior.
-      agentName: this.effectiveGateAgent(type, params) ?? this.resolveAgentName(type),
+      agentName: this.effectiveGateAgent(type, params, snapshot) ?? this.resolveAgentName(type, snapshot),
       retryCount: 0,
-      maxRetries: this.getMaxRetries(),
+      maxRetries: snapshot.maxRetries,
       parentJobId,
     });
 
     return job;
   }
 
-  startJob(type: JobType, params: Record<string, unknown>, opts?: { agentName?: string }): Job {
+  startJob(
+    type: JobType,
+    params: Record<string, unknown>,
+    opts?: { agentName?: string; configSnapshot?: DispatchConfigSnapshot },
+  ): Job {
     // Ensure every job has a human-readable name
     if (!params.name || typeof params.name !== 'string') {
       const sourceJobId = typeof params.source_job_id === 'string' ? params.source_job_id : undefined;
@@ -257,6 +274,9 @@ export class JobManager {
       }
     }
 
+    // One snapshot per dispatch: the creation stamps (agent + max_retries) and
+    // the execution resolution below all come from the same config read.
+    const snapshot = opts?.configSnapshot ?? this.takeConfigSnapshot();
     const job = this.stateStore.createJob({
       type,
       status: 'pending',
@@ -265,9 +285,9 @@ export class JobManager {
       // resolve their pair from params.eval_type (see effectiveGateAgent); every
       // other caller (ad-hoc jobs, critics, retries) keeps resolveAgentName.
       agentName:
-        opts?.agentName ?? this.effectiveGateAgent(type, params) ?? this.resolveAgentName(type),
+        opts?.agentName ?? this.effectiveGateAgent(type, params, snapshot) ?? this.resolveAgentName(type, snapshot),
       retryCount: 0,
-      maxRetries: this.getMaxRetries(),
+      maxRetries: snapshot.maxRetries,
     });
 
     const now = Date.now();
@@ -280,7 +300,7 @@ export class JobManager {
     this.stateStore.appendEvent(job.id, 'job_started', { type });
 
     setTimeout(() => {
-      this.executeJob(job.id).catch(() => {
+      this.executeJob(job.id, snapshot).catch(() => {
         // See setTimeout in dispatchJob for rationale
       });
     }, 0);
@@ -293,9 +313,9 @@ export class JobManager {
     return created;
   }
 
-  /** True iff both adviser keys were configured at server startup. */
-  isAdviserConfigured(): boolean {
-    return this.adviser !== undefined;
+  /** True iff both adviser keys are configured in the live config. */
+  isAdviserConfigured(configSnapshot?: DispatchConfigSnapshot): boolean {
+    return (configSnapshot ?? this.takeConfigSnapshot()).pairs.adviser !== undefined;
   }
 
   /**
@@ -304,37 +324,40 @@ export class JobManager {
    * pair, or today's default eval path (agent_override_eval ?? default_agent,
    * with default_agent_model pinned when that path lands on the default agent).
    * The validator tools report this in their dispatch responses — nothing else
-   * records the judging model anywhere.
+   * records the judging model anywhere. Pass the SAME snapshot the dispatch
+   * uses (the tools take one per dispatch and thread it through startJob) so
+   * validator_agent/validator_model always match what really runs.
    *
    * Returns undefined only when no agent resolves at all (the dispatch itself
    * would fail with the no-agent stub).
    */
-  getGateDispatchInfo(evalType: unknown): GateDispatchInfo | undefined {
+  getGateDispatchInfo(evalType: unknown, configSnapshot?: DispatchConfigSnapshot): GateDispatchInfo | undefined {
     const gate = this.gateKeyForEvalType(evalType);
     if (gate === undefined) {
       return undefined;
     }
 
-    const own = this.gateValidators?.[gate];
+    const snapshot = configSnapshot ?? this.takeConfigSnapshot();
+    const own = snapshot.pairs.gateValidators?.[gate];
     if (own) {
       return { agent: own.agent, model: own.model, tier: 'gate' };
     }
     // Mirrors resolveGatePair tier-for-tier; keep the two walks in sync.
-    const sibling = this.gateValidators?.[gate === 'clarity' ? 'readiness' : 'clarity'];
+    const sibling = snapshot.pairs.gateValidators?.[gate === 'clarity' ? 'readiness' : 'clarity'];
     if (sibling) {
       return { agent: sibling.agent, model: sibling.model, tier: 'sibling' };
     }
-    if (this.adviser) {
-      return { agent: this.adviser.agent, model: this.adviser.model, tier: 'adviser' };
+    if (snapshot.pairs.adviser) {
+      return { agent: snapshot.pairs.adviser.agent, model: snapshot.pairs.adviser.model, tier: 'adviser' };
     }
 
-    const agent = this.resolveAgentName('eval');
+    const agent = this.resolveAgentName('eval', snapshot);
     if (!agent) {
       return undefined;
     }
     const model =
-      this.defaultAgentModel && agent === this.stateStore.getConfig('default_agent')
-        ? this.defaultAgentModel
+      snapshot.pairs.defaultAgentModel && agent === snapshot.defaultAgent
+        ? snapshot.pairs.defaultAgentModel
         : undefined;
     return { agent, model, tier: 'default' };
   }
@@ -343,9 +366,12 @@ export class JobManager {
    * Dispatch an adviser escalation job on the explicitly configured adviser agent
    * (never resolved from default_agent / agent_override_adviser). The tool layer
    * checks isAdviserConfigured() first; the throw here is a fail-closed guard.
+   * Pass the same snapshot the tool's isAdviserConfigured check used so the
+   * gate check and the dispatch cannot straddle a config edit.
    */
-  startAdviserJob(params: Record<string, unknown>): Job {
-    if (!this.adviser) {
+  startAdviserJob(params: Record<string, unknown>, configSnapshot?: DispatchConfigSnapshot): Job {
+    const snapshot = configSnapshot ?? this.takeConfigSnapshot();
+    if (!snapshot.pairs.adviser) {
       throw new Error('adviser is not configured (both adviser_agent and adviser_model must be set)');
     }
 
@@ -353,7 +379,7 @@ export class JobManager {
       ? params
       : { ...params, name: `adviser-${Date.now().toString(36)}` };
 
-    return this.startJob('adviser', namedParams, { agentName: this.adviser.agent });
+    return this.startJob('adviser', namedParams, { agentName: snapshot.pairs.adviser.agent, configSnapshot: snapshot });
   }
 
   checkJobStatus(jobId: string, cursor: string | null): JobWaitResponse {
@@ -615,13 +641,13 @@ export class JobManager {
     }
   }
 
-  private resolveAgentName(type: JobType): string | undefined {
-    const typeOverride = this.stateStore.getConfig(`agent_override_${type}`);
-    if (typeOverride) {
-      return typeOverride;
-    }
-
-    return this.stateStore.getConfig('default_agent') ?? undefined;
+  /**
+   * The agent for a non-gate job, from the dispatch snapshot: an explicit
+   * agent_override_<type> (a phantom knob with no live setter — kept for
+   * hand-edited configs) or default_agent. Undefined fails closed at dispatch.
+   */
+  private resolveAgentName(type: JobType, snapshot: DispatchConfigSnapshot): string | undefined {
+    return nonEmptyString(snapshot.raw[`agent_override_${type}`]) ?? snapshot.defaultAgent;
   }
 
   /** The eval_type values that mark a job as one of the two interview validation gates. */
@@ -646,7 +672,10 @@ export class JobManager {
    * The effective gate pair for a job (own pair -> sibling pair -> adviser
    * pair), or undefined when the job is not a gate job or no tier resolves.
    */
-  private effectiveGatePairForJob(job: Pick<Job, 'type' | 'params'>): { agent: string; model: string } | undefined {
+  private effectiveGatePairForJob(
+    job: Pick<Job, 'type' | 'params'>,
+    snapshot: DispatchConfigSnapshot,
+  ): { agent: string; model: string } | undefined {
     if (job.type !== 'eval') {
       return undefined;
     }
@@ -654,7 +683,7 @@ export class JobManager {
     if (gate === undefined) {
       return undefined;
     }
-    return resolveGatePair(this.gateValidators, this.adviser, gate);
+    return resolveGatePair(snapshot.pairs.gateValidators, snapshot.pairs.adviser, gate);
   }
 
   /**
@@ -662,11 +691,15 @@ export class JobManager {
    * or undefined so the caller falls through to resolveAgentName. Checked at
    * every agent-resolution point so gate routing survives retries.
    */
-  private effectiveGateAgent(type: JobType, params: Record<string, unknown>): string | undefined {
-    return this.effectiveGatePairForJob({ type, params })?.agent;
+  private effectiveGateAgent(
+    type: JobType,
+    params: Record<string, unknown>,
+    snapshot: DispatchConfigSnapshot,
+  ): string | undefined {
+    return this.effectiveGatePairForJob({ type, params }, snapshot)?.agent;
   }
 
-  private async executeJob(jobId: string): Promise<void> {
+  private async executeJob(jobId: string, configSnapshot?: DispatchConfigSnapshot): Promise<void> {
     const job = this.stateStore.getJob(jobId);
     if (!job || job.status !== 'running') {
       return;
@@ -686,16 +719,40 @@ export class JobManager {
     }, 2_000);
 
     try {
-      const adapter = await this.selectAdapter(job.agentName);
+      // One snapshot governs the whole execution: the agent resolution, the
+      // adapter selection, the pinned model, the args, and the timeout all read
+      // the same config object, so an edit mid-dispatch (e.g. during the
+      // isAvailable subprocess round-trip below) can never pair one config
+      // era's agent with another era's model. Passed in by dispatchJob/startJob
+      // (the dispatch snapshot); a caller that somehow reaches here without one
+      // takes a fresh snapshot.
+      const snapshot = configSnapshot ?? this.takeConfigSnapshot();
+      // Authoritative execution resolution, all from the ONE snapshot:
+      // - adviser jobs keep their creation-stamped agent (deliberate asymmetry);
+      // - validator gates re-resolve their chain (retry safety: a stale stamp
+      //   from an earlier dispatch era must not pin the gate to an old pair);
+      // - every other job keeps its dispatch-time stamp — it was resolved from
+      //   this same snapshot at dispatch (or forced explicitly by the caller,
+      //   which re-resolution must not override).
+      const executionAgent =
+        job.type === 'adviser'
+          ? job.agentName ?? snapshot.pairs.adviser?.agent ?? this.resolveAgentName(job.type, snapshot)
+          : this.effectiveGateAgent(job.type, job.params, snapshot) ?? job.agentName ?? this.resolveAgentName(job.type, snapshot);
+      if (executionAgent !== undefined && executionAgent !== job.agentName) {
+        // Keep the row's display stamp in sync with what really runs.
+        this.stateStore.updateJob(jobId, { agentName: executionAgent });
+      }
+
+      const adapter = await this.selectAdapter(executionAgent, snapshot);
 
       if (!adapter) {
         const available = await this.adapterRegistry.listAvailable();
         const availableNames = available.filter((a) => a.available).map((a) => a.name);
         const allNames = available.map((a) => `${a.name}(${a.available ? 'available' : 'unavailable'})`);
         const requestedAgent =
-          job.agentName && job.agentName !== 'default'
-            ? job.agentName
-            : this.stateStore.getConfig('default_agent');
+          executionAgent && executionAgent !== 'default'
+            ? executionAgent
+            : snapshot.defaultAgent;
 
         const stubOutput = {
           message: requestedAgent
@@ -726,7 +783,7 @@ export class JobManager {
         return;
       }
 
-      const invocation = this.toInvocation(job, adapter.name);
+      const invocation = this.toInvocation(job, adapter.name, snapshot);
       const response = await adapter.invoke(invocation);
       const finishedAt = Date.now();
 
@@ -805,11 +862,14 @@ export class JobManager {
     }
   }
 
-  private async selectAdapter(agentName?: string): Promise<AgentAdapter | null> {
+  private async selectAdapter(
+    agentName: string | undefined,
+    snapshot: DispatchConfigSnapshot,
+  ): Promise<AgentAdapter | null> {
     const requestedAgent =
       agentName && agentName !== 'default'
         ? agentName
-        : this.stateStore.getConfig('default_agent');
+        : snapshot.defaultAgent;
 
     if (!requestedAgent) {
       return null;
@@ -907,7 +967,7 @@ export class JobManager {
     return true;
   }
 
-  private toInvocation(job: Job, adapterName: string): AgentInvocation {
+  private toInvocation(job: Job, adapterName: string, snapshot: DispatchConfigSnapshot): AgentInvocation {
     const rawPrompt = typeof job.params.prompt === 'string' ? job.params.prompt : `Execute ${job.type} job ${job.id}`;
     const prompt = job.type === 'dev'
       ? this.withDevPreamble(rawPrompt, job)
@@ -927,7 +987,7 @@ export class JobManager {
 
     const workdir = typeof job.params.workdir === 'string' ? job.params.workdir : this.stateStore.projectPath;
 
-    const configuredTimeout = parseTimeoutMinutes(this.stateStore.getConfig('timeout_minutes'));
+    const configuredTimeout = snapshot.timeoutMinutes;
     const timeoutMs = configuredTimeout ? configuredTimeout * 60 * 1000 : undefined;
 
     // The interaction-e2e critic gets the Playwright MCP tool allowlist so it can
@@ -960,31 +1020,37 @@ export class JobManager {
         ]
       : undefined;
 
-    // Copy the job-scoped args: getJobExtraArgs returns the parsed config arrays
-    // themselves, so pass a copy rather than the stored values.
-    const extraArgs = [...this.adapterRegistry.getJobExtraArgs(adapterName, job.type)];
+    // Global + job-scoped *_args resolve per dispatch from the same snapshot
+    // (parseAdapterExtraArgs is pure over the raw object) — an args edit applies
+    // from the next dispatched job, no restart. Global args come first so they
+    // can influence mode/model before job-scoped flags.
+    const argsConfig = parseAdapterExtraArgs(snapshot.raw);
+    const adapterKey = ADAPTER_NAME_TO_KEY[adapterName as keyof typeof ADAPTER_NAME_TO_KEY];
+    const globalArgs = (adapterKey ? argsConfig[adapterKey] : undefined) ?? [];
+    const jobArgs = (adapterKey ? argsConfig.byJobType?.[adapterKey]?.[job.type] : undefined) ?? [];
+    const extraArgs = [...globalArgs, ...jobArgs];
     // A pinned model rides invocation.model (adapters strip any manual --model from
     // *_args and place theirs — codex rejects duplicate model flags). Adviser and
     // validator-gate models bind to their configured agent only, so a stray job
     // dispatched by any other path never re-targets the model at a different CLI.
     let model: string | undefined;
     if (job.type === 'adviser') {
-      if (this.adviser && adapterName === this.adviser.agent) {
-        model = this.adviser.model;
+      if (snapshot.pairs.adviser && adapterName === snapshot.pairs.adviser.agent) {
+        model = snapshot.pairs.adviser.model;
       }
     } else {
       // Validator gates: the effective pair's model wins when it resolved (it
       // also beats default_agent_model when the pair's agent IS the default
       // agent — branch order decides); no pair resolved = today's path untouched.
-      const gatePair = this.effectiveGatePairForJob(job);
+      const gatePair = this.effectiveGatePairForJob(job, snapshot);
       if (gatePair) {
         if (adapterName === gatePair.agent) {
           model = gatePair.model;
         }
-      } else if (this.defaultAgentModel && adapterName === this.stateStore.getConfig('default_agent')) {
+      } else if (snapshot.pairs.defaultAgentModel && adapterName === snapshot.defaultAgent) {
         // Worker model applies only to jobs actually running on the default agent —
         // per-type override agents keep their own CLI default unless *_args say otherwise.
-        model = this.defaultAgentModel;
+        model = snapshot.pairs.defaultAgentModel;
       }
     }
 

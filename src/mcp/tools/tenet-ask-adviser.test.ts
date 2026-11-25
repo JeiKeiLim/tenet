@@ -4,8 +4,7 @@ import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from '../../adapters/base.js';
 import { AdapterRegistry } from '../../adapters/index.js';
-import { JobManager } from '../../core/job-manager.js';
-import { parseAgentModelConfig } from '../../core/runtime-config.js';
+import { JobManager, jobManagerConfigForLiveReads } from '../../core/job-manager.js';
 import { StateStore } from '../../core/state-store.js';
 import { registerTenetJobResultTool } from './tenet-job-result.js';
 import { registerTenetAskAdviserTool } from './tenet-ask-adviser.js';
@@ -15,12 +14,12 @@ import { jobTypeSchema, parseJobType, type RegisterTool } from './utils.js';
  * TASK-058: tenet_ask_adviser dispatch contract.
  *
  * Non-spawning doubles only: the adviser path is exercised with an inline
- * MockAdapter, so no real agent CLI is ever launched. The AC #7 test in the
- * last describe block is deliberately written against a real
- * `.tenet/.state/config.json` file + `parseAgentModelConfig` (the helper both
- * server entry points use). Seeding via `stateStore.setConfig` would pass while
- * production is broken — the StateStore loadFileConfig whitelist does not carry
- * adviser_agent / adviser_model.
+ * MockAdapter, so no real agent CLI is ever launched. The AC #7 tests in the
+ * last describe block are deliberately written against a real
+ * `.tenet/.state/config.json` file + the live reader both server entry points
+ * install (jobManagerConfigForLiveReads). Seeding via `stateStore.setConfig`
+ * would pass while production is broken — agent config never lives in the
+ * SQLite config table.
  */
 
 class MockAdapter implements AgentAdapter {
@@ -64,11 +63,19 @@ type Harness = {
 };
 
 type HarnessOptions = {
-  /** Written to .tenet/.state/config.json before StateStore starts (server-startup shape). */
+  /**
+   * Written to .tenet/.state/config.json; the JobManager reads it through the
+   * live reader both server entry points install (jobManagerConfigForLiveReads).
+   * When set, the adviser/defaultAgent/defaultAgentModel options are ignored —
+   * the file is the single source of truth, exactly as in production.
+   */
   configFile?: Record<string, unknown>;
+  /** Adviser pair — also written to the raw config as adviser_agent/adviser_model. */
   adviser?: { agent: string; model: string };
-  defaultAgentModel?: string;
+  /** Written to the raw config as default_agent. */
   defaultAgent?: string;
+  /** Written to the raw config as default_agent_model. */
+  defaultAgentModel?: string;
   adviserOutput?: string;
 };
 
@@ -87,9 +94,6 @@ const createHarness = (options: HarnessOptions = {}): Harness => {
 
   const store = new StateStore(projectPath);
   stores.push(store);
-  if (options.defaultAgent) {
-    store.setConfig('default_agent', options.defaultAgent);
-  }
 
   const adviserAgent = options.adviser?.agent ?? 'claude-code';
   const adviserAdapter = new MockAdapter(
@@ -102,12 +106,22 @@ const createHarness = (options: HarnessOptions = {}): Harness => {
   registry.register(adviserAdapter);
   registry.register(workerAdapter);
 
-  const manager = new JobManager(store, registry, {
-    heartbeatTimeoutMs: 1_000,
-    defaultJobTimeoutMs: 2_000,
-    adviser: options.adviser,
-    defaultAgentModel: options.defaultAgentModel,
-  });
+  const rawConfig: Record<string, unknown> = {
+    ...(options.defaultAgent ? { default_agent: options.defaultAgent } : {}),
+    ...(options.defaultAgentModel ? { default_agent_model: options.defaultAgentModel } : {}),
+    ...(options.adviser ? { adviser_agent: options.adviser.agent, adviser_model: options.adviser.model } : {}),
+  };
+  const manager = new JobManager(
+    store,
+    registry,
+    options.configFile
+      ? jobManagerConfigForLiveReads(projectPath, 'ask-adviser-test-server')
+      : {
+          heartbeatTimeoutMs: 1_000,
+          defaultJobTimeoutMs: 2_000,
+          readStateConfig: () => rawConfig,
+        },
+  );
 
   const handlers = new Map<string, (args: never) => Promise<CallToolResult>>();
   const registerTool = ((name: string, _def: unknown, handler: (args: never) => Promise<CallToolResult>) => {
@@ -410,7 +424,7 @@ describe('tenet_ask_adviser answer-return path', () => {
   });
 });
 
-describe('adviser config reaches the tool via the server-startup config file (AC #7)', () => {
+describe('adviser config reaches the tool via the live config file (AC #7)', () => {
   it('reads adviser_agent/adviser_model from .tenet/.state/config.json, not StateStore config', async () => {
     const configFile = {
       default_agent: 'mock-worker',
@@ -419,18 +433,19 @@ describe('adviser config reaches the tool via the server-startup config file (AC
       adviser_model: 'opus[1m]',
     };
 
-    // Exactly what src/mcp/index.ts / src/cli/serve.ts do at startup: read the raw
-    // JSON file, then derive the JobManager config with parseAgentModelConfig.
+    // Exactly what src/mcp/index.ts / src/cli/serve.ts install: the live reader
+    // over the raw JSON file, read per dispatch.
     const harness = createHarness({
       configFile,
-      defaultAgent: 'mock-worker',
-      ...parseAgentModelConfig(configFile),
     });
 
-    // The trap this test pins: StateStore's loadFileConfig whitelist did NOT carry
-    // the new keys, so a test that seeds via setConfig would prove nothing.
+    // The trap this test pins: agent config never lives in the SQLite config
+    // table — the file's keys never sync into it, and a bogus DB row cannot
+    // steer dispatch toward a different agent.
     expect(harness.store.getConfig('adviser_agent')).toBeNull();
     expect(harness.store.getConfig('adviser_model')).toBeNull();
+    harness.store.setConfig('adviser_agent', 'bogus-agent');
+    harness.store.setConfig('default_agent', 'bogus-worker');
     expect(harness.manager.isAdviserConfigured()).toBe(true);
 
     const result = await harness.askAdviser({ question: 'Which option satisfies the frozen tests?' });
@@ -449,11 +464,9 @@ describe('adviser config reaches the tool via the server-startup config file (AC
       adviser_agent: 'claude-code',
       adviser_model: 'opus[1m]',
     };
-    const harness = createHarness({
-      configFile,
-      defaultAgent: 'mock-worker',
-      ...parseAgentModelConfig(configFile),
-    });
+    const harness = createHarness({ configFile });
+    // A bogus DB default_agent must be ignored — the file resolves the agent.
+    harness.store.setConfig('default_agent', 'bogus-worker');
 
     const workerJob = harness.manager.startJob('dev', { name: 'plain-worker', prompt: 'implement' });
     await harness.manager.waitForJob(workerJob.id, null, 5_000);
@@ -465,19 +478,35 @@ describe('adviser config reaches the tool via the server-startup config file (AC
       default_agent: 'mock-worker',
       adviser_agent: 'claude-code',
     };
-    const parsedConfig = parseAgentModelConfig(configFile);
-    expect(parsedConfig.adviser).toBeUndefined();
-
-    const harness = createHarness({
-      configFile,
-      defaultAgent: 'mock-worker',
-      ...parsedConfig,
-    });
+    const harness = createHarness({ configFile });
 
     expect(harness.manager.isAdviserConfigured()).toBe(false);
     const result = await harness.askAdviser({ question: 'partial config must not dispatch' });
     expect(parseResult(result).adviser_configured).toBe(false);
     expect(harness.adviserAdapter.calls).toBe(0);
+    expect(harness.store.getJobsByStatus('running')).toHaveLength(0);
+  });
+
+  it('picks up an adviser config edit between calls with no restart (live config)', async () => {
+    const configFile = { default_agent: 'mock-worker', adviser_agent: 'claude-code', adviser_model: 'opus[1m]' };
+    const harness = createHarness({ configFile });
+    const question = 'Which option satisfies the frozen tests?';
+
+    const first = parseResult(await harness.askAdviser({ question }));
+    expect(first.adviser_configured).toBeUndefined();
+    await harness.manager.waitForJob(first.job_id as string, null, 5_000);
+    expect(harness.adviserAdapter.lastInvocation?.model).toBe('opus[1m]');
+
+    // A CLI edit clears the adviser pair mid-session: the NEXT call sees it —
+    // no restart.
+    const stateDir = path.join(harness.projectPath, '.tenet', '.state');
+    fs.writeFileSync(path.join(stateDir, 'config.json'), JSON.stringify({
+      default_agent: 'mock-worker',
+    }), 'utf8');
+
+    const second = parseResult(await harness.askAdviser({ question }));
+    expect(second.adviser_configured).toBe(false);
+    expect(second.message).toContain('No adviser is configured');
     expect(harness.store.getJobsByStatus('running')).toHaveLength(0);
   });
 });

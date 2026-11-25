@@ -28,6 +28,8 @@ import {
   mergeOpenCodePlaywrightPermission,
   previewLegacyMigration,
   readStateConfig,
+  readStateConfigStrict,
+  CorruptStateConfigError,
   writeStateConfig,
 } from './init.js';
 import type { StateConfig } from './init.js';
@@ -962,6 +964,50 @@ describe('agent/model config', () => {
     });
   });
 
+  it('writeStateConfig writes atomically: no temp residue, overwrites in place', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+
+    writeStateConfig(tenetRoot, { default_agent: 'codex' });
+    writeStateConfig(tenetRoot, { default_agent: 'opencode', max_retries: 2 });
+
+    const stateDir = path.join(tenetRoot, '.state');
+    const files = fs.readdirSync(stateDir);
+    expect(files).toEqual(['config.json']);
+    expect(readStateConfig(tenetRoot)).toEqual({ default_agent: 'opencode', max_retries: 2 });
+  });
+
+  it('readStateConfig degrades a torn file to {} (display paths stay lenient)', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    fs.mkdirSync(path.join(tenetRoot, '.state'), { recursive: true });
+    fs.writeFileSync(path.join(tenetRoot, '.state', 'config.json'), '{ "default_agent": "cod');
+
+    expect(readStateConfig(tenetRoot)).toEqual({});
+  });
+
+  it('readStateConfigStrict aborts on a torn file — the write base must not drop keys', () => {
+    const projectPath = createTempDir();
+    const tenetRoot = path.join(projectPath, '.tenet');
+    const stateDir = path.join(tenetRoot, '.state');
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    // Missing file: a valid fresh project, not an error.
+    expect(readStateConfigStrict(tenetRoot)).toEqual({});
+
+    fs.writeFileSync(path.join(stateDir, 'config.json'), '{ "default_agent": "cod');
+    expect(() => readStateConfigStrict(tenetRoot)).toThrow(CorruptStateConfigError);
+
+    // Valid JSON that is not an object is just as corrupt for a writer.
+    for (const malformed of ['[]', 'null', '"a string"']) {
+      fs.writeFileSync(path.join(stateDir, 'config.json'), malformed);
+      expect(() => readStateConfigStrict(tenetRoot)).toThrow(CorruptStateConfigError);
+    }
+
+    fs.writeFileSync(path.join(stateDir, 'config.json'), JSON.stringify({ default_agent: 'codex' }));
+    expect(readStateConfigStrict(tenetRoot)).toEqual({ default_agent: 'codex' });
+  });
+
   it('isAdviserConfigured requires BOTH keys (partial config is inactive)', () => {
     expect(isAdviserConfigured({})).toBe(false);
     expect(isAdviserConfigured({ adviser_agent: 'claude-code' })).toBe(false);
@@ -1203,7 +1249,7 @@ describe('tenet config gate flag semantics', () => {
       readinessModel: 'gpt-6-astra',
     });
 
-    expect(result).toEqual({ changed: true, restartNeeded: true });
+    expect(result).toEqual({ changed: true });
     expect(config).toEqual({
       clarity_agent: 'claude-code',
       clarity_model: 'opus',
@@ -1308,7 +1354,7 @@ describe('tenet config flag semantics', () => {
       adviserModel: 'gpt-6-astra',
     });
 
-    expect(result).toEqual({ changed: true, restartNeeded: true });
+    expect(result).toEqual({ changed: true });
     expect(config).toEqual({
       default_agent_model: 'sonnet',
       adviser_agent: 'codex',
@@ -1340,7 +1386,7 @@ describe('tenet config flag semantics', () => {
     const config: StateConfig = { adviser_agent: 'claude-code', adviser_model: 'opus' };
     const result = applyAgentModelFlags(config, {});
 
-    expect(result).toEqual({ changed: false, restartNeeded: false });
+    expect(result).toEqual({ changed: false });
     expect(config).toEqual({ adviser_agent: 'claude-code', adviser_model: 'opus' });
   });
 

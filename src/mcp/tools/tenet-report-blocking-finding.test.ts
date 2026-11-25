@@ -96,10 +96,6 @@ const createHarness = (): { store: StateStore; manager: JobManager; handler: Han
 
   const store = new StateStore(tempDir);
   stores.push(store);
-  store.setConfig('agent_override_dev', 'mock-adapter');
-  store.setConfig('agent_override_eval', 'mock-adapter');
-  store.setConfig('agent_override_critic_eval', 'mock-adapter');
-  store.setConfig('agent_override_interaction_e2e', 'mock-adapter');
 
   const registry = new AdapterRegistry();
   registry.register(new PassingAdapter());
@@ -108,6 +104,12 @@ const createHarness = (): { store: StateStore; manager: JobManager; handler: Han
     heartbeatTimeoutMs: 500,
     defaultJobTimeoutMs: 2_000,
     maxParallelAgents: 4,
+    readStateConfig: () => ({
+      agent_override_dev: 'mock-adapter',
+      agent_override_eval: 'mock-adapter',
+      agent_override_critic_eval: 'mock-adapter',
+      agent_override_interaction_e2e: 'mock-adapter',
+    }),
   });
 
   let captured: Handler | undefined;
@@ -129,10 +131,6 @@ const createHarnessWithAdapter = (
 
   const store = new StateStore(tempDir);
   stores.push(store);
-  store.setConfig('agent_override_dev', adapter.name);
-  store.setConfig('agent_override_eval', adapter.name);
-  store.setConfig('agent_override_critic_eval', adapter.name);
-  store.setConfig('agent_override_interaction_e2e', adapter.name);
 
   const registry = new AdapterRegistry();
   registry.register(adapter);
@@ -141,6 +139,12 @@ const createHarnessWithAdapter = (
     heartbeatTimeoutMs: 500,
     defaultJobTimeoutMs: 2_000,
     maxParallelAgents: 4,
+    readStateConfig: () => ({
+      agent_override_dev: adapter.name,
+      agent_override_eval: adapter.name,
+      agent_override_critic_eval: adapter.name,
+      agent_override_interaction_e2e: adapter.name,
+    }),
   });
 
   let captured: Handler | undefined;

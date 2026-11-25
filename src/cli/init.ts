@@ -305,9 +305,10 @@ const ensureTemplateFiles = (tenetRoot: string): void => {
 export type StateConfig = {
   default_agent?: string;
   /**
-   * Model for jobs dispatched on the default agent. Read at MCP server startup
-   * (not via StateStore's loadFileConfig whitelist) and injected as
-   * ['--model', <value>] in the adapter invocation. Unset = adapter CLI default.
+   * Model for jobs dispatched on the default agent. Read live from this file at
+   * every dispatch (see parseAgentModelConfig / JobManager.takeConfigSnapshot)
+   * and injected as ['--model', <value>] in the adapter invocation.
+   * Unset = adapter CLI default.
    */
   default_agent_model?: string;
   /** Adviser adapter key (claude-code | opencode | codex). Active only with adviser_model. */
@@ -316,8 +317,8 @@ export type StateConfig = {
   adviser_model?: string;
   /**
    * Clarity-validator pair (interview gate). Active only when both keys are set;
-   * read at MCP server startup via parseAgentModelConfig, never via StateStore's
-   * loadFileConfig whitelist. Falls back: readiness pair -> adviser -> default path.
+   * read live from this file at every dispatch via parseAgentModelConfig.
+   * Falls back: readiness pair -> adviser -> default path.
    */
   clarity_agent?: string;
   clarity_model?: string;
@@ -532,7 +533,6 @@ export type AgentModelFlagUpdates = {
 
 export type AgentModelFlagResult = {
   changed: boolean;
-  restartNeeded: boolean;
   /** Set when an agent flag was invalid; nothing is applied in that case. */
   error?: string;
 };
@@ -542,6 +542,8 @@ export type AgentModelFlagResult = {
  * key (the documented convention for every value flag); an invalid agent key
  * (--adviser-agent / --clarity-agent / --readiness-agent) is rejected BEFORE
  * any mutation, so a mixed flag set never leaves a half-written config behind.
+ * The MCP server reads config.json live at every dispatch, so applied changes
+ * take effect from the next dispatched job — no restart.
  *
  * Pure on purpose: src/cli/index.ts executes the CLI at import time and cannot
  * be imported by a test, so the flag semantics live here where they are testable.
@@ -567,7 +569,6 @@ export const applyAgentModelFlags = (
       if (trimmed.length > 0 && !isAdapterKey(trimmed)) {
         return {
           changed: false,
-          restartNeeded: false,
           error: `${entry.flag} must be one of: ${ADAPTER_KEYS.join(', ')} (got "${entry.value}")`,
         };
       }
@@ -588,7 +589,7 @@ export const applyAgentModelFlags = (
     changed = true;
   }
 
-  return { changed, restartNeeded: changed };
+  return { changed };
 };
 
 /**
@@ -644,7 +645,20 @@ export const writeStateConfig = (tenetRoot: string, config: StateConfig): void =
   if (!fs.existsSync(stateDir)) {
     fs.mkdirSync(stateDir, { recursive: true });
   }
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  // Atomic temp+rename so the MCP server (reading the file at every dispatch)
+  // never observes a torn half-written config (precedent: src/cli/db.ts snapshots).
+  const tempPath = path.join(stateDir, `config.json.tmp-${process.pid}-${Date.now()}`);
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+    fs.renameSync(tempPath, configPath);
+  } catch (error) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      /* best-effort temp cleanup */
+    }
+    throw error;
+  }
 };
 
 export const readStateConfig = (tenetRoot: string): StateConfig => {
@@ -657,6 +671,41 @@ export const readStateConfig = (tenetRoot: string): StateConfig => {
   } catch {
     return {};
   }
+};
+
+/** A config.json that exists but does not parse — writers must abort, not rewrite. */
+export class CorruptStateConfigError extends Error {
+  constructor(public readonly configPath: string) {
+    super(
+      `Failed to parse ${configPath}. Refusing to read or rewrite a corrupt config — ` +
+        'fix the JSON manually, then retry.',
+    );
+    this.name = 'CorruptStateConfigError';
+  }
+}
+
+/**
+ * Strict read for config WRITERS (the `tenet config` command, the star-nudge
+ * read-modify-write): a missing file is a valid fresh project, but an
+ * unparseable one aborts loudly instead of degrading to {} — a lenient read
+ * here becomes the base of the next whole-file write and would permanently
+ * drop every agent/model/args key after a single torn read.
+ */
+export const readStateConfigStrict = (tenetRoot: string): StateConfig => {
+  const configPath = path.join(tenetRoot, '.state', 'config.json');
+  if (!fs.existsSync(configPath)) {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch {
+    throw new CorruptStateConfigError(configPath);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new CorruptStateConfigError(configPath);
+  }
+  return parsed as StateConfig;
 };
 
 export const promptYesNo = (question: string, defaultYes = true): Promise<boolean> => {

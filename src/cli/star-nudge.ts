@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import path from 'node:path';
-import { promptYesNo, readStateConfig, writeStateConfig } from './init.js';
+import { promptYesNo, readStateConfig, readStateConfigStrict, writeStateConfig } from './init.js';
 
 const TENET_REPO = 'JeiKeiLim/tenet';
 const REPO_URL = 'https://github.com/JeiKeiLim/tenet';
@@ -20,10 +20,14 @@ const readStarredAt = (projectPath: string): string | undefined => {
  * Record the stargazer timestamp into .tenet/.state/config.json, preserving all
  * other config fields. Lives under .state/ (gitignored) so it is local
  * machine state, not committed or shared.
+ *
+ * Strict read: this is a read-modify-WRITE, so a torn/unparseable config aborts
+ * (maybeStarNudge swallows it — the nudge must never break init) instead of
+ * becoming the base of a write that drops every agent/model/args key.
  */
 const writeStarredAt = (projectPath: string, starredAt: string): void => {
   const tenetRoot = path.join(projectPath, '.tenet');
-  const config = readStateConfig(tenetRoot);
+  const config = readStateConfigStrict(tenetRoot);
   writeStateConfig(tenetRoot, {
     ...config,
     star_nudge: { ...(config.star_nudge ?? {}), starredAt },

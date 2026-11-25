@@ -141,7 +141,11 @@ export const registerTenetAskAdviserTool = (
       }),
     },
     async ({ question, source_job_ids, context_pointers }) => {
-      if (!jobManager.isAdviserConfigured()) {
+      // One config snapshot for the whole escalation: the configured check and
+      // the dispatch below read the same config, so an edit between them can
+      // never produce a configured-check-then-unconfigured-dispatch mismatch.
+      const config = jobManager.takeConfigSnapshot();
+      if (!jobManager.isAdviserConfigured(config)) {
         return jsonResult({
           adviser_configured: false,
           message:
@@ -186,7 +190,7 @@ export const registerTenetAskAdviserTool = (
         ...(pointers?.artifactPaths ? { artifact_paths: pointers.artifactPaths } : {}),
       };
 
-      const job = jobManager.startAdviserJob(params);
+      const job = jobManager.startAdviserJob(params, config);
       return jsonResult(startJobResponse(job));
     },
   );

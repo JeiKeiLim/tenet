@@ -67,6 +67,22 @@ describe('maybeStarNudge', () => {
     expect(starredAt(projectPath)).toBe('t0');
   });
 
+  it('skips recording (never breaks init) when config.json is torn', async () => {
+    // The write path is a strict read-modify-write: a torn config must abort
+    // the RMW — silently, since the nudge must never break init — instead of
+    // writing back a near-empty file that drops every agent/model/args key.
+    const projectPath = createProject();
+    const stateDir = path.join(projectPath, '.tenet', '.state');
+    fs.writeFileSync(path.join(stateDir, 'config.json'), '{ "default_agent": "cod');
+    const ghCheck = vi.fn(() => true);
+    const prompt = vi.fn(async () => true);
+    await maybeStarNudge(projectPath, { isTty: true, ghCheck, prompt, now: () => 't0' });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(starredAt(projectPath)).toBeUndefined();
+    // The torn bytes are left exactly as they were — not rewritten, not "fixed".
+    expect(fs.readFileSync(path.join(stateDir, 'config.json'), 'utf8')).toBe('{ "default_agent": "cod');
+  });
+
   it('a decline ("no") writes nothing so it asks again next time', async () => {
     const projectPath = createProject();
     const ghCheck = vi.fn(() => false);

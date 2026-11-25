@@ -239,9 +239,48 @@ describe('DB migrations', () => {
     const job = migrated.getJob('e2e-job');
     expect(job?.type).toBe('interaction_e2e');
     expect(job?.params.expected_eval_stages).toEqual(['code_critic', 'test_critic', 'interaction_e2e']);
-    expect(migrated.getConfig('agent_override_interaction_e2e')).toBe('claude');
+    // v2 renamed the agent_override row in the DB... and the v3 purge that runs
+    // after it then deletes it: agent overrides are file-only config now. The
+    // rename is still observable — the legacy key is gone (renamed away before
+    // the purge), and the args key rename (not a purged key) survives.
+    expect(migrated.getConfig('agent_override_interaction_e2e')).toBeNull();
     expect(migrated.getConfig('agent_override_playwright_eval')).toBeNull();
     expect(migrated.getConfig('codex_args_interaction_e2e')).toBe('--foo');
     expect(migrated.getConfig('codex_args_playwright_eval')).toBeNull();
+  });
+
+  it('purges stale file-synced config rows (v3) while keeping runtime-written keys', () => {
+    const projectPath = createTempDir();
+    const dbPath = path.join(projectPath, '.tenet', '.state', 'tenet.db');
+
+    // Bootstrap a current-shape DB, seed the stale rows the retired
+    // loadFileConfig sync + one-day tenet_set_agent tool used to write, then
+    // regress the schema stamp so v3 runs on reopen.
+    const bootstrap = new StateStore(projectPath);
+    stores.push(bootstrap);
+    bootstrap.setConfig('eval_parallel_safe:oauth', 'true');
+    bootstrap.close();
+
+    const seed = new Database(dbPath);
+    seed.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run('default_agent', 'codex');
+    seed.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run('max_retries', '3');
+    seed.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run('timeout_minutes', '90');
+    seed.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run('agent_override_eval', 'claude');
+    seed.prepare('INSERT INTO config (key, value) VALUES (?, ?)').run('agent_override_interaction_e2e', 'opencode');
+    seed.prepare('UPDATE config SET value = ? WHERE key = ?').run('2', DB_SCHEMA_VERSION_KEY);
+    seed.close();
+
+    const migrated = new StateStore(projectPath, { migrate: true });
+    stores.push(migrated);
+
+    expect(migrated.getConfig(DB_SCHEMA_VERSION_KEY)).toBe(String(CURRENT_DB_SCHEMA_VERSION));
+    // Stale file-synced rows are gone — the file is the single source of truth.
+    expect(migrated.getConfig('default_agent')).toBeNull();
+    expect(migrated.getConfig('max_retries')).toBeNull();
+    expect(migrated.getConfig('timeout_minutes')).toBeNull();
+    expect(migrated.getConfig('agent_override_eval')).toBeNull();
+    expect(migrated.getConfig('agent_override_interaction_e2e')).toBeNull();
+    // Runtime-written keys survive the purge.
+    expect(migrated.getConfig('eval_parallel_safe:oauth')).toBe('true');
   });
 });

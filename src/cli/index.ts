@@ -13,6 +13,7 @@ import {
   applyAgentModelFlags,
   clearGatePair,
   configDisplayLines,
+  CorruptStateConfigError,
   defaultAgentModelArgsWarning,
   describeGateChoice,
   gateConfigWarning,
@@ -29,6 +30,7 @@ import {
   promptAgent,
   promptYesNo,
   readStateConfig,
+  readStateConfigStrict,
   writeStateConfig,
 } from './init.js';
 import type { LegacyMigrationPreview, StateConfig } from './init.js';
@@ -281,8 +283,13 @@ const printConfigDisplay = (config: StateConfig): void => {
   printConfigWarnings(config);
 };
 
-const restartHint = (): void => {
-  console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
+/**
+ * Printed after every config write: the MCP server reads config.json live at
+ * each dispatch, so edits apply from the next dispatched job (running jobs keep
+ * their spawn-time argv) — the restart ritual is gone.
+ */
+const configLiveHint = (): void => {
+  console.log('Saved — changes apply from the next dispatched job (no restart needed).');
 };
 
 /**
@@ -311,7 +318,6 @@ const runDefaultAgentMenu = async (config: StateConfig): Promise<boolean> => {
     config.default_agent_model = model;
   }
   console.log(`Default agent set to: ${agent} (model: ${model.length > 0 ? model : 'CLI default'})`);
-  restartHint();
   return true;
 };
 
@@ -328,7 +334,6 @@ const runAdviserMenu = async (config: StateConfig): Promise<boolean> => {
   config.adviser_agent = selection.agent;
   config.adviser_model = selection.model;
   console.log(`Adviser set to: ${selection.agent} / ${selection.model}`);
-  restartHint();
   return true;
 };
 
@@ -352,7 +357,6 @@ const runGateValidatorMenu = async (config: StateConfig, gate: GateKey): Promise
   if (choice === 'clear') {
     clearGatePair(config, gate);
     console.log(`Cleared ${gate}_agent and ${gate}_model.`);
-    restartHint();
     return true;
   }
 
@@ -367,7 +371,6 @@ const runGateValidatorMenu = async (config: StateConfig, gate: GateKey): Promise
   config[`${gate}_agent`] = selection.agent;
   config[`${gate}_model`] = selection.model;
   console.log(`${gateLabel} validator set to: ${selection.agent} / ${selection.model}`);
-  restartHint();
   return true;
 };
 
@@ -440,7 +443,6 @@ const runAdapterArgsMenu = async (config: StateConfig): Promise<boolean> => {
     config[choice] = trimmed;
     console.log(`${choice} set to: ${trimmed}`);
   }
-  restartHint();
   return true;
 };
 
@@ -500,6 +502,7 @@ const runInteractiveConfigMenu = async (
 
     if (changed) {
       writeStateConfig(tenetRoot, config);
+      configLiveHint();
       printConfigWarnings(config);
     }
   }
@@ -966,6 +969,12 @@ Model precedence:
   default_agent_model overrides a manual "--model" written into the default
   agent's *_args; tenet config warns when both are present. The same applies
   to a configured validator pair's model against its agent's *_args.
+
+Live config:
+  Every setting is read live from .tenet/.state/config.json at each dispatched
+  job — no restart. Edits apply from the next dispatch; a job already running
+  keeps its spawn-time arguments. A torn/unparseable config file aborts this
+  command loudly instead of rewriting over your settings.
 `,
     )
     .action(async (options: {
@@ -996,7 +1005,20 @@ Model precedence:
         process.exit(1);
       }
 
-      const config = readStateConfig(tenetRoot);
+      // Strict read: this object is the base of every whole-file write below, so
+      // a torn/unparseable config must abort the command loudly (non-zero exit,
+      // no write) — a lenient read here would permanently drop every
+      // agent/model/args key.
+      let config: StateConfig;
+      try {
+        config = readStateConfigStrict(tenetRoot);
+      } catch (error) {
+        if (error instanceof CorruptStateConfigError) {
+          console.error(error.message);
+          process.exit(1);
+        }
+        throw error;
+      }
 
       // --show is the display-only form; value flags are ignored when it is present.
       if (options.show) {
@@ -1035,7 +1057,6 @@ Model precedence:
       }
 
       let changed = false;
-      let restartNeeded = false;
 
       if (options.agent) {
         config.default_agent = options.agent;
@@ -1093,7 +1114,6 @@ Model precedence:
       gateFlagLog(options.readinessAgent, 'readiness_agent');
       gateFlagLog(options.readinessModel, 'readiness_model');
       changed = changed || modelFlags.changed;
-      restartNeeded = restartNeeded || modelFlags.restartNeeded;
 
       if (options.maxRetries) {
         const raw = options.maxRetries.trim();
@@ -1129,7 +1149,6 @@ Model precedence:
           console.log(`claude_args set to: ${trimmed}`);
         }
         changed = true;
-        restartNeeded = true;
       }
 
       if (options.opencodeArgs !== undefined) {
@@ -1142,7 +1161,6 @@ Model precedence:
           console.log(`opencode_args set to: ${trimmed}`);
         }
         changed = true;
-        restartNeeded = true;
       }
 
       if (options.codexArgs !== undefined) {
@@ -1155,7 +1173,6 @@ Model precedence:
           console.log(`codex_args set to: ${trimmed}`);
         }
         changed = true;
-        restartNeeded = true;
       }
 
       const setScopedArgs = (
@@ -1175,7 +1192,6 @@ Model precedence:
           console.log(`${key} set to: ${trimmed}`);
         }
         changed = true;
-        restartNeeded = true;
       };
 
       setScopedArgs(options.claudeArgsInteractionE2e, 'claude_args_interaction_e2e');
@@ -1184,9 +1200,7 @@ Model precedence:
 
       if (changed) {
         writeStateConfig(tenetRoot, config);
-        if (restartNeeded) {
-          console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
-        }
+        configLiveHint();
         printConfigWarnings(config);
         return;
       }

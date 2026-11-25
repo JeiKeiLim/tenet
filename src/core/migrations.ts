@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 
 export const DB_SCHEMA_VERSION_KEY = 'db_schema_version';
-export const CURRENT_DB_SCHEMA_VERSION = 2;
+export const CURRENT_DB_SCHEMA_VERSION = 3;
 
 export class UpgradeRequiredError extends Error {
   constructor(
@@ -124,6 +124,26 @@ const renamePlaywrightEvalToInteractionE2e = (db: Database.Database): void => {
   }
 };
 
+/**
+ * Purge the stale file-synced rows from the SQLite config table. Dispatch now
+ * reads `.tenet/.state/config.json` live (single source of truth); these rows
+ * were last written by the retired loadFileConfig file->SQLite sync and by the
+ * one-day tenet_set_agent tool. Leaving them would leave a phantom class of
+ * divergence forever: a deleted file key (or a config.json-less project whose
+ * DB row was the only default_agent) would still steer dispatch from the DB
+ * while the file says otherwise — or silently change behavior when the purge
+ * eventually landed. Runtime-written keys (db_schema_version,
+ * eval_parallel_safe:<feature>) are NOT touched.
+ */
+const purgeFileSyncedConfigRows = (db: Database.Database): void => {
+  db
+    .prepare(
+      "DELETE FROM config WHERE key IN ('default_agent', 'max_retries', 'timeout_minutes') " +
+        "OR key LIKE 'agent_override_%'",
+    )
+    .run();
+};
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -134,5 +154,10 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 2,
     name: 'rename_playwright_eval_to_interaction_e2e',
     up: renamePlaywrightEvalToInteractionE2e,
+  },
+  {
+    version: 3,
+    name: 'purge_file_synced_config_rows',
+    up: purgeFileSyncedConfigRows,
   },
 ];

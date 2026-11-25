@@ -273,22 +273,26 @@ describe('StateStore', () => {
     expect(store.getConfig('agent_override_dev')).toBe('mock-adapter');
   });
 
-  it('syncs JSON config values into SQLite config', () => {
+  it('does not sync JSON config into SQLite — dispatch reads the file live', () => {
+    // The loadFileConfig file->SQLite sync is retired: config.json is the
+    // single source of truth, read per dispatch by the JobManager provider.
+    // A writable open must never copy file keys into the config table.
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-test-'));
     tempDirs.push(tempDir);
     const stateDir = path.join(tempDir, '.tenet', '.state');
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(
       path.join(stateDir, 'config.json'),
-      JSON.stringify({ max_retries: 'unlimited', timeout_minutes: 120 }),
+      JSON.stringify({ default_agent: 'codex', max_retries: 'unlimited', timeout_minutes: 120 }),
       'utf8',
     );
 
     const store = new StateStore(tempDir);
     stores.push(store);
 
-    expect(store.getConfig('max_retries')).toBe('-1');
-    expect(store.getConfig('timeout_minutes')).toBe('120');
+    expect(store.getConfig('default_agent')).toBeNull();
+    expect(store.getConfig('max_retries')).toBeNull();
+    expect(store.getConfig('timeout_minutes')).toBeNull();
   });
 
   it('round-trips job output', () => {
@@ -438,6 +442,8 @@ describe('StateStore', () => {
     const readonlyStore = StateStore.openReadonly(tempDir);
     stores.push(readonlyStore);
 
+    // No open mode syncs file config — the runtime keys the table still holds
+    // (db_schema_version, eval_parallel_safe:*) are the only rows that matter.
     expect(readonlyStore.getConfig('max_retries')).toBeNull();
   });
 

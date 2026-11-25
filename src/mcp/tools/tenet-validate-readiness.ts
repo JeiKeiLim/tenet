@@ -475,18 +475,22 @@ export const registerTenetValidateReadinessTool = (
 
       const prompt = sections.join('\n');
 
+      // One config snapshot for the whole dispatch: the stamped agent, the
+      // executed agent+model, and the reported pair below all come from the
+      // same read, so validator_agent/validator_model always match what runs.
+      const config = jobManager.takeConfigSnapshot();
       const job = jobManager.startJob('eval', {
         prompt,
         eval_type: 'readiness_validation',
         feature,
         artifact_paths: artifactPaths,
-      });
+      }, { configSnapshot: config });
 
       // Report which agent+model will judge the gate (whichever tier resolved:
       // the readiness pair, the clarity pair, the adviser, or the default path).
       // The orchestrator journals gate results; without this field nothing
       // records the judging model anywhere.
-      const gate = jobManager.getGateDispatchInfo('readiness_validation');
+      const gate = jobManager.getGateDispatchInfo('readiness_validation', config);
       return jsonResult({
         job_id: job.id,
         message:

@@ -10,7 +10,6 @@ import {
   UnsupportedDbVersionError,
   UpgradeRequiredError,
 } from './migrations.js';
-import { parseMaxRetries, parseTimeoutMinutes } from './runtime-config.js';
 import { writeStatusFiles } from './status-writer.js';
 
 type JobRow = {
@@ -55,7 +54,6 @@ type EventRecord = { id: string; jobId: string; event: string; data: unknown; ti
 export type StateStoreOptions = {
   migrate?: boolean;
   readonly?: boolean;
-  loadFileConfig?: boolean;
   healthCheck?: boolean;
 };
 
@@ -308,14 +306,10 @@ export class StateStore {
       this.db.close();
       throw error;
     }
-
-    if (!readonlyMode && options?.loadFileConfig !== false) {
-      this.loadFileConfig(stateDir);
-    }
   }
 
   static openReadonly(projectPath: string): StateStore {
-    return new StateStore(projectPath, { readonly: true, loadFileConfig: false });
+    return new StateStore(projectPath, { readonly: true });
   }
 
   static checkDatabase(projectPath: string, options?: { integrityCheck?: boolean; indexConsistency?: boolean }): DbHealthReport {
@@ -1211,38 +1205,6 @@ export class StateStore {
 
   close(): void {
     this.db.close();
-  }
-
-  private loadFileConfig(stateDir: string): void {
-    const configPath = path.join(stateDir, 'config.json');
-    if (!fs.existsSync(configPath)) {
-      return;
-    }
-
-    try {
-      const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-      // JSON config file is the source of truth — always sync to SQLite
-      if (typeof raw.default_agent === 'string' && raw.default_agent.length > 0) {
-        this.setConfig('default_agent', raw.default_agent);
-      }
-      const maxRetries =
-        typeof raw.max_retries === 'number' || typeof raw.max_retries === 'string'
-          ? parseMaxRetries(raw.max_retries)
-          : null;
-      if (maxRetries !== null) {
-        this.setConfig('max_retries', String(maxRetries));
-      }
-
-      const timeoutMinutes =
-        typeof raw.timeout_minutes === 'number' || typeof raw.timeout_minutes === 'string'
-          ? parseTimeoutMinutes(raw.timeout_minutes)
-          : null;
-      if (timeoutMinutes !== null) {
-        this.setConfig('timeout_minutes', String(timeoutMinutes));
-      }
-    } catch {
-      return;
-    }
   }
 
   private initSchema(): void {

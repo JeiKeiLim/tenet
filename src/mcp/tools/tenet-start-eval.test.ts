@@ -40,9 +40,6 @@ const createHarness = (): {
 
   const store = new StateStore(tempDir);
   stores.push(store);
-  store.setConfig('agent_override_eval', 'mock-adapter');
-  store.setConfig('agent_override_critic_eval', 'mock-adapter');
-  store.setConfig('agent_override_interaction_e2e', 'mock-adapter');
 
   const registry = new AdapterRegistry();
   registry.register(new MockAdapter('mock-adapter'));
@@ -51,6 +48,11 @@ const createHarness = (): {
     heartbeatTimeoutMs: 500,
     defaultJobTimeoutMs: 2_000,
     maxParallelAgents: 4,
+    readStateConfig: () => ({
+      agent_override_eval: 'mock-adapter',
+      agent_override_critic_eval: 'mock-adapter',
+      agent_override_interaction_e2e: 'mock-adapter',
+    }),
   });
 
   let captured: CapturedHandler | undefined;

@@ -230,16 +230,20 @@ export const registerTenetValidateClarityTool = (
 
       const prompt = `${CLARITY_RUBRIC}\n\n---\n\n# Interview Transcript\n\n${transcript}`;
 
+      // One config snapshot for the whole dispatch: the stamped agent, the
+      // executed agent+model, and the reported pair below all come from the
+      // same read, so validator_agent/validator_model always match what runs.
+      const config = jobManager.takeConfigSnapshot();
       const job = jobManager.startJob('eval', {
         prompt,
         eval_type: 'clarity_validation',
-      });
+      }, { configSnapshot: config });
 
       // Report which agent+model will judge the gate (whichever tier resolved:
       // the clarity pair, the readiness pair, the adviser, or the default path).
       // The orchestrator journals gate results; without this field nothing
       // records the judging model anywhere.
-      const gate = jobManager.getGateDispatchInfo('clarity_validation');
+      const gate = jobManager.getGateDispatchInfo('clarity_validation', config);
       return jsonResult({
         job_id: job.id,
         message: 'Clarity validation dispatched. Use tenet_job_wait + tenet_job_result to get the score.',

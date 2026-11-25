@@ -1,14 +1,12 @@
 import crypto from 'node:crypto';
 import { McpServer, StdioServerTransport } from '@modelcontextprotocol/server';
-import { AdapterRegistry, parseAdapterExtraArgs } from '../adapters/index.js';
-import { JobManager, jobManagerConfigFromStateConfig } from '../core/job-manager.js';
+import { AdapterRegistry } from '../adapters/index.js';
+import { JobManager, jobManagerConfigForLiveReads } from '../core/job-manager.js';
 import { UpgradeRequiredError, UnsupportedDbVersionError } from '../core/migrations.js';
 import { DbHealthError } from '../core/state-store.js';
 import { StateStore } from '../core/state-store.js';
 import { registerAllTools } from '../mcp/tools/index.js';
-import { readStateConfig } from './init.js';
 import { getPackageVersion } from './version.js';
-import path from 'node:path';
 
 export async function startServer(projectPath: string): Promise<void> {
   process.env.TENET_PROJECT_PATH = projectPath;
@@ -39,12 +37,14 @@ export async function startServer(projectPath: string): Promise<void> {
     }
     throw error;
   }
-  const stateConfig = readStateConfig(path.join(projectPath, '.tenet'));
-  const adapterRegistry = new AdapterRegistry(parseAdapterExtraArgs(stateConfig));
+  // No boot-time config parse: the JobManager reads .tenet/.state/config.json
+  // live (keep-last-good) once per dispatch, so CLI config edits apply from the
+  // next dispatched job without restarting this server.
+  const adapterRegistry = new AdapterRegistry();
   const jobManager = new JobManager(
     stateStore,
     adapterRegistry,
-    jobManagerConfigFromStateConfig(stateConfig, serverId),
+    jobManagerConfigForLiveReads(projectPath, serverId),
   );
 
   registerAllTools(server, jobManager, stateStore);

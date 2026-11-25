@@ -27,12 +27,6 @@ const JOB_TYPES: JobType[] = [
   'adviser',
 ];
 
-const ADAPTER_NAME_TO_KEY = {
-  'claude-code': 'claude',
-  opencode: 'opencode',
-  codex: 'codex',
-} as const;
-
 type ExtraArgsConfig = Record<string, unknown> & {
   claude_args?: string;
   opencode_args?: string;
@@ -72,16 +66,25 @@ export const parseAdapterExtraArgs = (config: ExtraArgsConfig): AdapterExtraArgs
   },
 });
 
+/**
+ * Adapter lookup by CLI name. Global and job-scoped `*_args` are NOT baked into
+ * the adapters here — they resolve per dispatch from the live config snapshot
+ * (see JobManager.toInvocation), so an args edit applies from the next job.
+ */
+export const ADAPTER_NAME_TO_KEY = {
+  'claude-code': 'claude',
+  opencode: 'opencode',
+  codex: 'codex',
+} as const;
+
 export class AdapterRegistry {
   private readonly adapters: Map<string, AgentAdapter>;
-  private readonly extraArgs: AdapterExtraArgs;
 
-  constructor(extraArgs: AdapterExtraArgs = {}) {
-    this.extraArgs = extraArgs;
+  constructor() {
     this.adapters = new Map<string, AgentAdapter>();
-    this.register(new ClaudeAdapter(undefined, extraArgs.claude));
-    this.register(new OpenCodeAdapter(undefined, extraArgs.opencode));
-    this.register(new CodexAdapter(undefined, extraArgs.codex));
+    this.register(new ClaudeAdapter());
+    this.register(new OpenCodeAdapter());
+    this.register(new CodexAdapter());
   }
 
   register(adapter: AgentAdapter): void {
@@ -90,15 +93,6 @@ export class AdapterRegistry {
 
   get(name: string): AgentAdapter | undefined {
     return this.adapters.get(name);
-  }
-
-  getJobExtraArgs(adapterName: string, jobType: JobType): string[] {
-    const key = ADAPTER_NAME_TO_KEY[adapterName as keyof typeof ADAPTER_NAME_TO_KEY];
-    if (!key) {
-      return [];
-    }
-
-    return this.extraArgs.byJobType?.[key]?.[jobType] ?? [];
   }
 
   async getDefault(): Promise<AgentAdapter> {

@@ -4,8 +4,7 @@ import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from '../../adapters/base.js';
 import { AdapterRegistry } from '../../adapters/index.js';
-import { JobManager, jobManagerConfigFromStateConfig } from '../../core/job-manager.js';
-import type { GateValidatorsConfig } from '../../core/runtime-config.js';
+import { JobManager, jobManagerConfigForLiveReads } from '../../core/job-manager.js';
 import { StateStore } from '../../core/state-store.js';
 import { registerTenetValidateClarityTool } from './tenet-validate-clarity.js';
 
@@ -32,16 +31,19 @@ class MockAdapter implements AgentAdapter {
 type CapturedHandler = (args: { feature?: string }) => Promise<CallToolResult>;
 
 type HarnessOptions = {
-  /** JobManager config spread, as both server entry points derive it via jobManagerConfigFromStateConfig. */
-  managerConfig?: {
-    adviser?: { agent: string; model: string };
-    defaultAgentModel?: string;
-    gateValidators?: GateValidatorsConfig;
-    serverId?: string;
-  };
+  /**
+   * Raw config the JobManager's live provider returns, merged over the
+   * harness's agent_override_eval default — the same object
+   * .tenet/.state/config.json would hold. Ignored when configFile is set.
+   */
+  rawConfig?: Record<string, unknown>;
   /** Extra adapter names to register beyond the default mock-adapter. */
   extraAdapters?: string[];
-  /** Written to .tenet/.state/config.json before StateStore starts (server-startup shape). */
+  /**
+   * Written to .tenet/.state/config.json; the JobManager then reads it through
+   * the keep-last-good live reader both server entry points install
+   * (jobManagerConfigForLiveReads) — the real server wiring.
+   */
   configFile?: Record<string, unknown>;
 };
 
@@ -68,7 +70,6 @@ const createHarness = (
 
   const store = new StateStore(tempDir);
   stores.push(store);
-  store.setConfig('agent_override_eval', 'mock-adapter');
 
   const registry = new AdapterRegistry();
   const adapters = new Map<string, MockAdapter>();
@@ -82,7 +83,14 @@ const createHarness = (
     heartbeatTimeoutMs: 100,
     defaultJobTimeoutMs: 2_000,
     maxParallelAgents: 2,
-    ...(options.managerConfig ?? {}),
+    ...(options.configFile
+      ? jobManagerConfigForLiveReads(tempDir, 'clarity-test-server')
+      : {
+          readStateConfig: () => ({
+            agent_override_eval: 'mock-adapter',
+            ...(options.rawConfig ?? {}),
+          }),
+        }),
   });
 
   let captured: CapturedHandler | undefined;
@@ -360,7 +368,7 @@ describe('tenet_validate_clarity gate model config', () => {
 
   it('dispatches on the clarity pair and reports the effective agent+model (tier 1)', async () => {
     const { handler, projectPath, store, manager, adapters } = createHarness({
-      managerConfig: { gateValidators: { clarity: { agent: 'mock-gate-clarity', model: 'opus' } } },
+      rawConfig: { clarity_agent: 'mock-gate-clarity', clarity_model: 'opus' },
       extraAdapters: ['mock-gate-clarity'],
     });
     writeDispatchableTranscript(projectPath);
@@ -382,7 +390,7 @@ describe('tenet_validate_clarity gate model config', () => {
 
   it('inherits the readiness pair when clarity is unset (tier 2)', async () => {
     const { handler, projectPath, store, manager, adapters } = createHarness({
-      managerConfig: { gateValidators: { readiness: { agent: 'mock-gate-readiness', model: 'gpt-6-astra' } } },
+      rawConfig: { readiness_agent: 'mock-gate-readiness', readiness_model: 'gpt-6-astra' },
       extraAdapters: ['mock-gate-readiness'],
     });
     writeDispatchableTranscript(projectPath);
@@ -414,10 +422,9 @@ describe('tenet_validate_clarity gate model config', () => {
     expect(adapters.get('mock-adapter')?.lastInvocation?.model).toBeUndefined();
   });
 
-  it('reads the gate pair from .tenet/.state/config.json, not StateStore config (server-startup wiring)', async () => {
-    // Exactly what src/mcp/index.ts / src/cli/serve.ts do at startup: write the
-    // raw JSON file, then derive the JobManager config with the shared helper
-    // both entry points consume (jobManagerConfigFromStateConfig).
+  it('reads the gate pair from the live .tenet/.state/config.json, not StateStore config (server wiring)', async () => {
+    // Exactly what src/mcp/index.ts / src/cli/serve.ts install: the
+    // keep-last-good live reader over the raw JSON file.
     const configFile = {
       default_agent: 'mock-adapter',
       clarity_agent: 'mock-gate-clarity',
@@ -425,16 +432,16 @@ describe('tenet_validate_clarity gate model config', () => {
     };
     const { handler, projectPath, store, manager, adapters } = createHarness({
       configFile,
-      managerConfig: jobManagerConfigFromStateConfig(configFile, 'test-server'),
       extraAdapters: ['mock-gate-clarity'],
     });
     writeDispatchableTranscript(projectPath);
 
-    // The trap this test pins: StateStore's loadFileConfig whitelist does NOT
-    // carry the gate keys, so seeding via setConfig would prove nothing.
+    // The trap this test pins: no code path reads agent config from the SQLite
+    // config table — a bogus DB row must not steer dispatch, and the file's
+    // keys must never appear in the table.
+    store.setConfig('agent_override_eval', 'bogus-agent');
     expect(store.getConfig('clarity_agent')).toBeNull();
-    expect(store.getConfig('clarity_model')).toBeNull();
-    expect(store.getConfig('default_agent')).toBe('mock-adapter');
+    expect(store.getConfig('default_agent')).toBeNull();
 
     const result = await handler({ feature: 'tetris' });
     const parsed = parseResult(result);
@@ -445,16 +452,44 @@ describe('tenet_validate_clarity gate model config', () => {
     expect(adapters.get('mock-gate-clarity')?.lastInvocation?.model).toBe('opus');
   });
 
+  it('picks up a gate-pair edit between dispatches with no restart (live config)', async () => {
+    const { handler, projectPath, manager, adapters } = createHarness({
+      configFile: { default_agent: 'mock-adapter', clarity_agent: 'mock-gate-clarity', clarity_model: 'opus' },
+      extraAdapters: ['mock-gate-clarity'],
+    });
+    writeDispatchableTranscript(projectPath);
+
+    const first = parseResult(await handler({ feature: 'tetris' }));
+    expect(first.validator_agent).toBe('mock-gate-clarity');
+    expect(first.validator_model).toBe('opus');
+    await manager.waitForJob(first.job_id as string, null, 5_000);
+    expect(adapters.get('mock-gate-clarity')?.calls).toBe(1);
+
+    // A CLI edit lands mid-session: the NEXT dispatch reflects it — no restart.
+    const stateDir = path.join(projectPath, '.tenet', '.state');
+    fs.writeFileSync(path.join(stateDir, 'config.json'), JSON.stringify({
+      default_agent: 'mock-adapter',
+      clarity_agent: 'mock-gate-clarity',
+      clarity_model: 'haiku',
+    }), 'utf8');
+
+    const second = parseResult(await handler({ feature: 'tetris' }));
+    expect(second.validator_agent).toBe('mock-gate-clarity');
+    expect(second.validator_model).toBe('haiku');
+    await manager.waitForJob(second.job_id as string, null, 5_000);
+    expect(adapters.get('mock-gate-clarity')?.lastInvocation?.model).toBe('haiku');
+  });
+
   it('reports its OWN pair when both gates are configured to distinct pairs (tier-1 reporting)', async () => {
     // With sibling-symmetric configs a swapped getGateDispatchInfo key in the
     // tool resolves to the same pair and passes every other test — only distinct
     // pairs pin that the clarity tool reports the clarity pair, not the sibling's.
     const { handler, projectPath, manager, adapters } = createHarness({
-      managerConfig: {
-        gateValidators: {
-          clarity: { agent: 'mock-gate-clarity', model: 'opus' },
-          readiness: { agent: 'mock-gate-readiness', model: 'gpt-6-astra' },
-        },
+      rawConfig: {
+        clarity_agent: 'mock-gate-clarity',
+        clarity_model: 'opus',
+        readiness_agent: 'mock-gate-readiness',
+        readiness_model: 'gpt-6-astra',
       },
       extraAdapters: ['mock-gate-clarity', 'mock-gate-readiness'],
     });
@@ -471,7 +506,7 @@ describe('tenet_validate_clarity gate model config', () => {
 
   it('reports the inherited adviser pair in the dispatch response (tier 3)', async () => {
     const { handler, projectPath, manager, adapters } = createHarness({
-      managerConfig: { adviser: { agent: 'mock-gate-adviser', model: 'adviser-opus' } },
+      rawConfig: { adviser_agent: 'mock-gate-adviser', adviser_model: 'adviser-opus' },
       extraAdapters: ['mock-gate-adviser'],
     });
     writeDispatchableTranscript(projectPath);
@@ -486,11 +521,9 @@ describe('tenet_validate_clarity gate model config', () => {
 
   it('reports the default_agent_model pin at the default tier (tier 4)', async () => {
     const { handler, projectPath, manager, adapters } = createHarness({
-      // default_agent synced via the loadFileConfig whitelist; the harness's
-      // agent_override_eval resolves the agent and it IS the default agent, so
-      // the pin is reported instead of "CLI default".
-      configFile: { default_agent: 'mock-adapter' },
-      managerConfig: { defaultAgentModel: 'sonnet' },
+      // The resolved default-tier agent IS the default agent, so the
+      // default_agent_model pin is reported instead of "CLI default".
+      rawConfig: { default_agent: 'mock-adapter', default_agent_model: 'sonnet' },
     });
     writeDispatchableTranscript(projectPath);
 
