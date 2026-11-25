@@ -11,8 +11,13 @@ import {
   addPlaywrightAgentConfigs,
   adviserConfigWarning,
   applyAgentModelFlags,
+  clearGatePair,
   configDisplayLines,
+  CorruptStateConfigError,
   defaultAgentModelArgsWarning,
+  describeGateChoice,
+  gateConfigWarning,
+  gateModelArgsWarning,
   initProject,
   installPlaywrightMcp,
   isAdapterArgsConfigKey,
@@ -25,6 +30,7 @@ import {
   promptAgent,
   promptYesNo,
   readStateConfig,
+  readStateConfigStrict,
   writeStateConfig,
 } from './init.js';
 import type { LegacyMigrationPreview, StateConfig } from './init.js';
@@ -32,6 +38,7 @@ import {
   ADAPTER_KEYS,
   isAdapterKey,
   pickAdviserConfig,
+  pickAgentPair,
   pickModelForAgent,
 } from './model-picker.js';
 import { promptText, selectFromList } from './select.js';
@@ -42,6 +49,7 @@ import {
   formatMaxRetries,
   parseMaxRetries,
   parseTimeoutMinutes,
+  type GateKey,
   UNLIMITED_RETRIES,
 } from '../core/runtime-config.js';
 import { runDbBackup, runDbCheck, runDbRestoreSnapshot, runDbSnapshot } from './db.js';
@@ -233,13 +241,19 @@ const describeAdviserChoice = (config: StateConfig): string => {
 };
 
 const printConfigWarnings = (config: StateConfig): void => {
-  const adviserWarning = adviserConfigWarning(config);
-  if (adviserWarning) {
-    console.warn(`\nWarning: ${adviserWarning}`);
-  }
-  const conflictWarning = defaultAgentModelArgsWarning(config);
-  if (conflictWarning) {
-    console.warn(`\nWarning: ${conflictWarning}`);
+  const warnings = [
+    adviserConfigWarning(config),
+    defaultAgentModelArgsWarning(config),
+    // Validator-gate warnings fire per gate (partial pair; resolved-pair args conflict).
+    gateConfigWarning(config, 'clarity'),
+    gateConfigWarning(config, 'readiness'),
+    gateModelArgsWarning(config, 'clarity'),
+    gateModelArgsWarning(config, 'readiness'),
+  ];
+  for (const warning of warnings) {
+    if (warning) {
+      console.warn(`\nWarning: ${warning}`);
+    }
   }
 };
 
@@ -254,6 +268,12 @@ const printConfigDisplay = (config: StateConfig): void => {
     '                         --adviser-agent <claude-code|opencode|codex> --adviser-model <model> \\',
   );
   console.log(
+    '                         --clarity-agent <claude-code|opencode|codex> --clarity-model <model> \\',
+  );
+  console.log(
+    '                         --readiness-agent <claude-code|opencode|codex> --readiness-model <model> \\',
+  );
+  console.log(
     '                         --claude-args "..." --opencode-args "..." --codex-args "..." \\',
   );
   console.log('                         --codex-args-interaction-e2e "..."');
@@ -263,8 +283,13 @@ const printConfigDisplay = (config: StateConfig): void => {
   printConfigWarnings(config);
 };
 
-const restartHint = (): void => {
-  console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
+/**
+ * Printed after every config write: the MCP server reads config.json live at
+ * each dispatch, so edits apply from the next dispatched job (running jobs keep
+ * their spawn-time argv) — the restart ritual is gone.
+ */
+const configLiveHint = (): void => {
+  console.log('Saved — changes apply from the next dispatched job (no restart needed).');
 };
 
 /**
@@ -293,7 +318,6 @@ const runDefaultAgentMenu = async (config: StateConfig): Promise<boolean> => {
     config.default_agent_model = model;
   }
   console.log(`Default agent set to: ${agent} (model: ${model.length > 0 ? model : 'CLI default'})`);
-  restartHint();
   return true;
 };
 
@@ -310,7 +334,43 @@ const runAdviserMenu = async (config: StateConfig): Promise<boolean> => {
   config.adviser_agent = selection.agent;
   config.adviser_model = selection.model;
   console.log(`Adviser set to: ${selection.agent} / ${selection.model}`);
-  restartHint();
+  return true;
+};
+
+/**
+ * Validator-gate entry: configure the pair together (agent picker, then that
+ * agent's model picker) or clear both keys. Cancel anywhere writes nothing.
+ * The label and clear semantics live in init.ts (describeGateChoice /
+ * clearGatePair) so they are unit-testable; only the interactive wiring is here.
+ */
+const runGateValidatorMenu = async (config: StateConfig, gate: GateKey): Promise<boolean> => {
+  const gateLabel = gate === 'clarity' ? 'Clarity' : 'Readiness';
+  const choice = await selectFromList(`${gateLabel} validator`, [
+    { label: 'Configure the pair (agent, then model)', value: 'configure' },
+    { label: 'Clear (unset both keys)', value: 'clear' },
+    { label: 'Back', value: 'back' },
+  ]);
+  if (choice === null || choice === 'back') {
+    return false;
+  }
+
+  if (choice === 'clear') {
+    clearGatePair(config, gate);
+    console.log(`Cleared ${gate}_agent and ${gate}_model.`);
+    return true;
+  }
+
+  const selection = await pickAgentPair(`${gateLabel} validator agent`, {
+    agent: config[`${gate}_agent`],
+    model: config[`${gate}_model`],
+  });
+  if (selection === null) {
+    return false;
+  }
+
+  config[`${gate}_agent`] = selection.agent;
+  config[`${gate}_model`] = selection.model;
+  console.log(`${gateLabel} validator set to: ${selection.agent} / ${selection.model}`);
   return true;
 };
 
@@ -383,7 +443,6 @@ const runAdapterArgsMenu = async (config: StateConfig): Promise<boolean> => {
     config[choice] = trimmed;
     console.log(`${choice} set to: ${trimmed}`);
   }
-  restartHint();
   return true;
 };
 
@@ -403,6 +462,8 @@ const runInteractiveConfigMenu = async (
         value: 'default_agent',
       },
       { label: `Adviser: ${describeAdviserChoice(config)}`, value: 'adviser' },
+      { label: `Clarity validator: ${describeGateChoice(config, 'clarity')}`, value: 'clarity_validator' },
+      { label: `Readiness validator: ${describeGateChoice(config, 'readiness')}`, value: 'readiness_validator' },
       { label: `Max retries: ${formatMaxRetries(currentMaxRetries(config))}`, value: 'max_retries' },
       { label: `Timeout: ${currentTimeoutMinutes(config)} minutes`, value: 'timeout' },
       { label: 'Adapter args', value: 'adapter_args' },
@@ -420,6 +481,12 @@ const runInteractiveConfigMenu = async (
       case 'adviser':
         changed = await runAdviserMenu(config);
         break;
+      case 'clarity_validator':
+        changed = await runGateValidatorMenu(config, 'clarity');
+        break;
+      case 'readiness_validator':
+        changed = await runGateValidatorMenu(config, 'readiness');
+        break;
       case 'max_retries':
         changed = await runMaxRetriesMenu(config);
         break;
@@ -435,6 +502,7 @@ const runInteractiveConfigMenu = async (
 
     if (changed) {
       writeStateConfig(tenetRoot, config);
+      configLiveHint();
       printConfigWarnings(config);
     }
   }
@@ -826,6 +894,22 @@ only when both --adviser-agent and --adviser-model are set.
       '--adviser-model <model>',
       'Set the adviser model (required with --adviser-agent; the adviser is active only when both are set). Use "" to clear.',
     )
+    .option(
+      '--clarity-agent <key>',
+      'Set the interview clarity validator agent (claude-code, opencode, codex). Requires --clarity-model. Use "" to clear.',
+    )
+    .option(
+      '--clarity-model <model>',
+      'Set the clarity validator model (active only when both clarity keys are set). Use "" to clear.',
+    )
+    .option(
+      '--readiness-agent <key>',
+      'Set the implementation readiness validator agent (claude-code, opencode, codex). Requires --readiness-model. Use "" to clear.',
+    )
+    .option(
+      '--readiness-model <model>',
+      'Set the readiness validator model (active only when both readiness keys are set). Use "" to clear.',
+    )
     .option('--show', 'Display the current configuration and exit (display-only form; value flags are ignored)')
     .option('--max-retries <n|unlimited>', 'Set max retries per job (default: unlimited)')
     .option('--timeout <minutes>', `Set job timeout in minutes (default: ${DEFAULT_JOB_TIMEOUT_MINUTES})`)
@@ -867,16 +951,30 @@ Display-only form:
 
 Clearing a value:
   Pass an empty string, e.g. tenet config --agent-model "" (also --adviser-agent "",
-  --adviser-model "", and every --*-args flag).
+  --adviser-model "", the --clarity-*/--readiness-* flags, and every --*-args flag).
 
 Adviser:
   Valid adviser agent keys: claude-code, opencode, codex. The adviser is active
   only when BOTH adviser_agent and adviser_model are set; a partial configuration
   is treated as unset and reported with a warning.
 
+Validator gates:
+  The two interview validators (clarity, readiness) each accept their own
+  agent+model pair (valid agent keys: claude-code, opencode, codex). Fallback
+  per gate: its own pair, the sibling gate's pair, the adviser pair, then the
+  default agent. A pair is active only when BOTH its agent and model keys are
+  set; a partial pair is treated as unset and reported with a warning.
+
 Model precedence:
   default_agent_model overrides a manual "--model" written into the default
-  agent's *_args; tenet config warns when both are present.
+  agent's *_args; tenet config warns when both are present. The same applies
+  to a configured validator pair's model against its agent's *_args.
+
+Live config:
+  Every setting is read live from .tenet/.state/config.json at each dispatched
+  job — no restart. Edits apply from the next dispatch; a job already running
+  keeps its spawn-time arguments. A torn/unparseable config file aborts this
+  command loudly instead of rewriting over your settings.
 `,
     )
     .action(async (options: {
@@ -885,6 +983,10 @@ Model precedence:
       agentModel?: string;
       adviserAgent?: string;
       adviserModel?: string;
+      clarityAgent?: string;
+      clarityModel?: string;
+      readinessAgent?: string;
+      readinessModel?: string;
       show?: boolean;
       maxRetries?: string;
       timeout?: string;
@@ -903,7 +1005,20 @@ Model precedence:
         process.exit(1);
       }
 
-      const config = readStateConfig(tenetRoot);
+      // Strict read: this object is the base of every whole-file write below, so
+      // a torn/unparseable config must abort the command loudly (non-zero exit,
+      // no write) — a lenient read here would permanently drop every
+      // agent/model/args key.
+      let config: StateConfig;
+      try {
+        config = readStateConfigStrict(tenetRoot);
+      } catch (error) {
+        if (error instanceof CorruptStateConfigError) {
+          console.error(error.message);
+          process.exit(1);
+        }
+        throw error;
+      }
 
       // --show is the display-only form; value flags are ignored when it is present.
       if (options.show) {
@@ -916,6 +1031,10 @@ Model precedence:
         options.agentModel !== undefined ||
         options.adviserAgent !== undefined ||
         options.adviserModel !== undefined ||
+        options.clarityAgent !== undefined ||
+        options.clarityModel !== undefined ||
+        options.readinessAgent !== undefined ||
+        options.readinessModel !== undefined ||
         options.maxRetries !== undefined ||
         options.timeout !== undefined ||
         options.claudeArgs !== undefined ||
@@ -938,7 +1057,6 @@ Model precedence:
       }
 
       let changed = false;
-      let restartNeeded = false;
 
       if (options.agent) {
         config.default_agent = options.agent;
@@ -950,6 +1068,10 @@ Model precedence:
         agentModel: options.agentModel,
         adviserAgent: options.adviserAgent,
         adviserModel: options.adviserModel,
+        clarityAgent: options.clarityAgent,
+        clarityModel: options.clarityModel,
+        readinessAgent: options.readinessAgent,
+        readinessModel: options.readinessModel,
       });
       if (modelFlags.error) {
         console.error(modelFlags.error);
@@ -976,8 +1098,22 @@ Model precedence:
             : `adviser_model set to: ${config.adviser_model}`,
         );
       }
+      const gateFlagLog = (
+        optionValue: string | undefined,
+        key: 'clarity_agent' | 'clarity_model' | 'readiness_agent' | 'readiness_model',
+      ): void => {
+        if (optionValue === undefined) {
+          return;
+        }
+        console.log(
+          config[key] === undefined ? `Cleared ${key}.` : `${key} set to: ${config[key]}`,
+        );
+      };
+      gateFlagLog(options.clarityAgent, 'clarity_agent');
+      gateFlagLog(options.clarityModel, 'clarity_model');
+      gateFlagLog(options.readinessAgent, 'readiness_agent');
+      gateFlagLog(options.readinessModel, 'readiness_model');
       changed = changed || modelFlags.changed;
-      restartNeeded = restartNeeded || modelFlags.restartNeeded;
 
       if (options.maxRetries) {
         const raw = options.maxRetries.trim();
@@ -1013,7 +1149,6 @@ Model precedence:
           console.log(`claude_args set to: ${trimmed}`);
         }
         changed = true;
-        restartNeeded = true;
       }
 
       if (options.opencodeArgs !== undefined) {
@@ -1026,7 +1161,6 @@ Model precedence:
           console.log(`opencode_args set to: ${trimmed}`);
         }
         changed = true;
-        restartNeeded = true;
       }
 
       if (options.codexArgs !== undefined) {
@@ -1039,7 +1173,6 @@ Model precedence:
           console.log(`codex_args set to: ${trimmed}`);
         }
         changed = true;
-        restartNeeded = true;
       }
 
       const setScopedArgs = (
@@ -1059,7 +1192,6 @@ Model precedence:
           console.log(`${key} set to: ${trimmed}`);
         }
         changed = true;
-        restartNeeded = true;
       };
 
       setScopedArgs(options.claudeArgsInteractionE2e, 'claude_args_interaction_e2e');
@@ -1068,9 +1200,7 @@ Model precedence:
 
       if (changed) {
         writeStateConfig(tenetRoot, config);
-        if (restartNeeded) {
-          console.log('Restart the Tenet MCP server for adapter arg changes to take effect.');
-        }
+        configLiveHint();
         printConfigWarnings(config);
         return;
       }

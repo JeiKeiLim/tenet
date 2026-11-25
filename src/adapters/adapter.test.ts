@@ -4,7 +4,7 @@ import path from 'node:path';
 import { vi } from 'vitest';
 import type { AgentAdapter, AgentInvocation, AgentResponse } from './base.js';
 import { mergeExtraArgs, stripModelFlags } from './base.js';
-import { AdapterRegistry, parseAdapterExtraArgs } from './index.js';
+import { ADAPTER_NAME_TO_KEY, AdapterRegistry, parseAdapterExtraArgs } from './index.js';
 
 const spawnMock = vi.fn();
 
@@ -79,20 +79,14 @@ describe('AdapterRegistry', () => {
     expect(selected).toBe(second);
   });
 
-  it('returns job-scoped extra args by adapter and job type', () => {
-    const registry = new AdapterRegistry({
-      byJobType: {
-        codex: {
-          interaction_e2e: ['--dangerously-bypass-approvals-and-sandbox'],
-        },
-      },
-    });
-
-    expect(registry.getJobExtraArgs('codex', 'interaction_e2e')).toEqual([
-      '--dangerously-bypass-approvals-and-sandbox',
-    ]);
-    expect(registry.getJobExtraArgs('codex', 'dev')).toEqual([]);
-    expect(registry.getJobExtraArgs('mock-adapter', 'interaction_e2e')).toEqual([]);
+  it('exposes the adapter-name→args-key mapping for per-dispatch arg resolution', () => {
+    // Args are no longer constructor-baked into the registry: JobManager resolves
+    // them per dispatch from the live config snapshot via parseAdapterExtraArgs +
+    // this mapping. Unknown adapter names resolve no args, exactly as before.
+    expect(ADAPTER_NAME_TO_KEY['claude-code']).toBe('claude');
+    expect(ADAPTER_NAME_TO_KEY.opencode).toBe('opencode');
+    expect(ADAPTER_NAME_TO_KEY.codex).toBe('codex');
+    expect((ADAPTER_NAME_TO_KEY as Record<string, string | undefined>)['mock-adapter']).toBeUndefined();
   });
 
   it('throws when no adapters are available for default selection', async () => {

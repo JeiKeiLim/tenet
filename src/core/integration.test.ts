@@ -54,10 +54,6 @@ const createHarness = (rules: FakeFixtureRule[]): Harness => {
 
   const store = new StateStore(tempDir);
   stores.push(store);
-  store.setConfig('agent_override_dev', 'fake');
-  store.setConfig('agent_override_eval', 'fake');
-  store.setConfig('agent_override_critic_eval', 'fake');
-  store.setConfig('agent_override_interaction_e2e', 'fake');
 
   const registry = new AdapterRegistry();
   (registry as unknown as { adapters: Map<string, unknown> }).adapters.clear();
@@ -67,6 +63,12 @@ const createHarness = (rules: FakeFixtureRule[]): Harness => {
     heartbeatTimeoutMs: 5_000,
     defaultJobTimeoutMs: 5_000,
     maxParallelAgents: 4,
+    readStateConfig: () => ({
+      agent_override_dev: 'fake',
+      agent_override_eval: 'fake',
+      agent_override_critic_eval: 'fake',
+      agent_override_interaction_e2e: 'fake',
+    }),
   });
 
   const captureHandler = <T>(registerFn: (rt: unknown) => void): T => {

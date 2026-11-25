@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { parseMaxRetries } from '../../core/runtime-config.js';
+import { JobManager } from '../../core/job-manager.js';
 import { StateStore } from '../../core/state-store.js';
 import {
   artifactPathsSchema,
@@ -44,7 +44,11 @@ const normalizeRunSlug = (raw: string | undefined): string | undefined => {
   return trimmed;
 };
 
-export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateStore: StateStore): void => {
+export const registerTenetRegisterJobsTool = (
+  registerTool: RegisterTool,
+  jobManager: JobManager,
+  stateStore: StateStore,
+): void => {
   registerTool(
     'tenet_register_jobs',
     {
@@ -94,7 +98,9 @@ export const registerTenetRegisterJobsTool = (registerTool: RegisterTool, stateS
           ? `run_path "${normalizedRunPath}" is inside the project but outside .tenet/runs/; this is supported for compatibility, but new runs should use .tenet/runs/<run-slug>.`
           : undefined;
 
-      const maxRetries = parseMaxRetries(stateStore.getConfig('max_retries'));
+      // max_retries is creation-time state read from the live config snapshot —
+      // a later config change applies to future jobs only.
+      const maxRetries = jobManager.takeConfigSnapshot().maxRetries;
 
       for (const entry of jobs) {
         const job = stateStore.createJob({

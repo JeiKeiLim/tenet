@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/server';
+import { AdapterRegistry } from '../../adapters/index.js';
+import { JobManager } from '../../core/job-manager.js';
 import { UNLIMITED_RETRIES } from '../../core/runtime-config.js';
 import { StateStore } from '../../core/state-store.js';
 import { registerTenetRegisterJobsTool } from './tenet-register-jobs.js';
@@ -31,12 +33,21 @@ type Handler = (args: {
 const tempDirs: string[] = [];
 const stores: StateStore[] = [];
 
-const createHarness = (): { store: StateStore; handler: Handler } => {
+const createHarness = (
+  rawConfig: Record<string, unknown> = {},
+): { store: StateStore; handler: Handler } => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenet-register-jobs-test-'));
   tempDirs.push(tempDir);
 
   const store = new StateStore(tempDir);
   stores.push(store);
+
+  // The max_retries creation stamp comes from the live config snapshot.
+  const manager = new JobManager(store, new AdapterRegistry(), {
+    heartbeatTimeoutMs: 1_000,
+    defaultJobTimeoutMs: 2_000,
+    readStateConfig: () => rawConfig,
+  });
 
   let captured: Handler | undefined;
   const registerTool = ((_name: string, _def: unknown, handler: Handler) => {
@@ -44,7 +55,7 @@ const createHarness = (): { store: StateStore; handler: Handler } => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any;
 
-  registerTenetRegisterJobsTool(registerTool, store);
+  registerTenetRegisterJobsTool(registerTool, manager, store);
   if (!captured) throw new Error('handler not captured');
 
   return { store, handler: captured };
@@ -72,8 +83,7 @@ afterEach(() => {
 
 describe('tenet_register_jobs', () => {
   it('preserves zero as an explicit no-retry budget', async () => {
-    const { store, handler } = createHarness();
-    store.setConfig('max_retries', '0');
+    const { store, handler } = createHarness({ max_retries: 0 });
 
     const result = await handler({
       feature: 'zero-retry',

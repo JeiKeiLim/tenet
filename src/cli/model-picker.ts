@@ -289,14 +289,18 @@ export type AdviserSelection = {
 };
 
 /**
- * The adviser is one logical unit (the model menu depends on the agent), so the
- * pickers are chained and return both values together. Cancel at either step
- * cancels the whole flow — callers must not write a partial adviser.
+ * An agent+model pair is one logical unit (the model menu depends on the agent),
+ * so the pickers are chained and return both values together. Cancel at either
+ * step cancels the whole flow — callers must not write a partial pair.
+ *
+ * Used by the adviser flow and the validator-gate config menu (clarity /
+ * readiness). No unsets: every pair consumer requires a real model.
  */
-export const pickAdviserConfig = async (
+export const pickAgentPair = async (
+  title: string,
   current: { agent?: string; model?: string } = {},
 ): Promise<AdviserSelection | null> => {
-  const agent = await selectFromList('Adviser agent', adapterKeyOptions(), {
+  const agent = await selectFromList(title, adapterKeyOptions(), {
     initialValue: current.agent !== undefined && isAdapterKey(current.agent)
       ? current.agent
       : undefined,
@@ -305,7 +309,7 @@ export const pickAdviserConfig = async (
     return null;
   }
 
-  // No unsets: the adviser requires a real model (both keys must be set).
+  // No unsets: a pair consumer requires a real model (both keys must be set).
   const model = await pickModelForAgent(agent, {
     allowUnset: false,
     // A model configured for a different adapter would not match anything here.
@@ -316,3 +320,8 @@ export const pickAdviserConfig = async (
   }
   return { agent, model };
 };
+
+/** Adviser pair picker — pickAgentPair with the adviser's agent-picker title. */
+export const pickAdviserConfig = async (
+  current: { agent?: string; model?: string } = {},
+): Promise<AdviserSelection | null> => pickAgentPair('Adviser agent', current);

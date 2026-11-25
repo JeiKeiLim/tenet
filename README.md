@@ -106,6 +106,8 @@ Three classes: `context` (informational), `directive` (priority change), `emerge
 
 The critic set is a project file: `.tenet/critics.json`, scaffolded by `tenet init` and read live on every eval — edit it, no restart. A missing or invalid file falls back to the 3 built-ins.
 
+Agent, model, args, retry and timeout settings in `.tenet/.state/config.json` are read the same way — live, at every dispatched job. Edits apply from the next dispatch, no restart (`tenet config` is the writer; a job already running keeps its spawn-time arguments).
+
 ```json
 {
   "version": 1,
